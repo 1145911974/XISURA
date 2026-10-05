@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Jiaolong.ControlCenter (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Jiaolong.ControlCenter (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

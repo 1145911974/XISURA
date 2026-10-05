@@ -1,0 +1,200 @@
+[
+  {
+    "key": "Office",
+    "name": "办公",
+    "accent": "#1677FF",
+    "upper": [
+      "#183565",
+      "#2E78E3",
+      "#224F96"
+    ],
+    "lower": [
+      "#237EF0",
+      "#245297",
+      "#182D55"
+    ],
+    "upper_sheen": "#82BFFF",
+    "lower_sheen": "#348CFF",
+    "wave_rear_left": [
+      "#86B8FF",
+      "#D5E7FF",
+      "#FFFFFF"
+    ],
+    "wave_rear_right": [
+      "#FFFFFF",
+      "#E3EFFF",
+      "#86B8FF"
+    ],
+    "wave_front": [
+      "#FFFFFF",
+      "#F9FCFF",
+      "#EBF3FF",
+      "#FFFFFF"
+    ]
+  },
+  {
+    "key": "Gaming",
+    "name": "游戏",
+    "accent": "#FF8A1F",
+    "upper": [
+      "#633322",
+      "#D7802E",
+      "#8B4725"
+    ],
+    "lower": [
+      "#E98627",
+      "#AA5925",
+      "#572D22"
+    ],
+    "upper_sheen": "#FFD098",
+    "lower_sheen": "#FFAE41",
+    "wave_rear_left": [
+      "#FFC28B",
+      "#FFEAD7",
+      "#FFFFFF"
+    ],
+    "wave_rear_right": [
+      "#FFFFFF",
+      "#FFF1E4",
+      "#FFC28B"
+    ],
+    "wave_front": [
+      "#FFFFFF",
+      "#FFFCF9",
+      "#FFF5EC",
+      "#FFFFFF"
+    ]
+  },
+  {
+    "key": "Turbo",
+    "name": "狂飙",
+    "accent": "#FF3141",
+    "upper": [
+      "#641A35",
+      "#D63C50",
+      "#8C253D"
+    ],
+    "lower": [
+      "#E03B51",
+      "#A32942",
+      "#4F152F"
+    ],
+    "upper_sheen": "#FF99AD",
+    "lower_sheen": "#FF536D",
+    "wave_rear_left": [
+      "#FF949C",
+      "#FFDADD",
+      "#FFFFFF"
+    ],
+    "wave_rear_right": [
+      "#FFFFFF",
+      "#FFE6E8",
+      "#FF949C"
+    ],
+    "wave_front": [
+      "#FFFFFF",
+      "#FFFAFA",
+      "#FFEDEF",
+      "#FFFFFF"
+    ]
+  },
+  {
+    "key": "Custom1",
+    "name": "自定义 1",
+    "accent": "#8C949F",
+    "upper": [
+      "#303A4B",
+      "#8795AA",
+      "#44516B"
+    ],
+    "lower": [
+      "#8694AC",
+      "#58667F",
+      "#2B3547"
+    ],
+    "upper_sheen": "#D6DFEC",
+    "lower_sheen": "#B8C4D6",
+    "wave_rear_left": [
+      "#C3C7CD",
+      "#EAECEE",
+      "#FFFFFF"
+    ],
+    "wave_rear_right": [
+      "#FFFFFF",
+      "#F1F2F3",
+      "#C3C7CD"
+    ],
+    "wave_front": [
+      "#FFFFFF",
+      "#FCFCFD",
+      "#F5F6F7",
+      "#FFFFFF"
+    ]
+  },
+  {
+    "key": "Custom2",
+    "name": "自定义 2",
+    "accent": "#27D980",
+    "upper": [
+      "#134F48",
+      "#28A57B",
+      "#146749"
+    ],
+    "lower": [
+      "#28BC84",
+      "#1A7A5C",
+      "#113E35"
+    ],
+    "upper_sheen": "#8CF4B2",
+    "lower_sheen": "#38E39D",
+    "wave_rear_left": [
+      "#8FEBBD",
+      "#D8F8E8",
+      "#FFFFFF"
+    ],
+    "wave_rear_right": [
+      "#FFFFFF",
+      "#E5FAF0",
+      "#8FEBBD"
+    ],
+    "wave_front": [
+      "#FFFFFF",
+      "#FAFEFC",
+      "#EDFCF4",
+      "#FFFFFF"
+    ]
+  },
+  {
+    "key": "Custom3",
+    "name": "自定义 3",
+    "accent": "#9A5CFF",
+    "upper": [
+      "#282262",
+      "#6741C5",
+      "#401D83"
+    ],
+    "lower": [
+      "#6436CC",
+      "#452894",
+      "#24154F"
+    ],
+    "upper_sheen": "#C388FF",
+    "lower_sheen": "#9251FF",
+    "wave_rear_left": [
+      "#CAAAFF",
+      "#EDE2FF",
+      "#FFFFFF"
+    ],
+    "wave_rear_right": [
+      "#FFFFFF",
+      "#F3EBFF",
+      "#CAAAFF"
+    ],
+    "wave_front": [
+      "#FFFFFF",
+      "#FCFBFF",
+      "#F6F1FF",
+      "#FFFFFF"
+    ]
+  }
+]

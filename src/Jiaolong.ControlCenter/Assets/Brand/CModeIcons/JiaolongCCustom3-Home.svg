@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="jlw-title jlw-description">
+  <title id="jlw-title">蛟龙 · C 材质 · 自定义 3 · Home</title>
+  <desc id="jlw-description">修正版波形与 C 材质光照结构；背景和波形阴影随模式色，银白主高光固定，纯矢量。</desc>
+  <defs>
+    <clipPath id="jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="164" y1="210" x2="1090" y2="710"><stop offset="0.000" stop-color="#8A50EB" /><stop offset="0.500" stop-color="#AE7AFF" /><stop offset="1.000" stop-color="#9258EF" /></linearGradient>
+    <linearGradient id="jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="210" y1="745" x2="1020" y2="1120"><stop offset="0.000" stop-color="#A268F7" /><stop offset="0.500" stop-color="#8348DA" /><stop offset="1.000" stop-color="#935BE8" /></linearGradient>
+    <linearGradient id="jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#CAAAFF" />
+      <stop offset="0.48" stop-color="#EDE2FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#F3EBFF" />
+      <stop offset="1" stop-color="#CAAAFF" />
+    </linearGradient>
+    <linearGradient id="jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#FCFBFF" />
+      <stop offset="0.78" stop-color="#F6F1FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="jlw-rear-ribbon" d="M164 566C249 626 327 591 382 531C403 518 423 514 443 514C508 514 530 577 574 681C628 736 688 724 765 667C882 596 971 449 1090 570V736C1024.64 693.44 993.3584 698.2432 956.64736 730.65568C890.567488 788.998144 821 855 765 855C725 855 705 806 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    
+    
+  <radialGradient id="upper-sheen" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(435 210) rotate(-12) scale(620 440)"><stop offset="0" stop-color="#DCC5FF" stop-opacity="0.38" /><stop offset=".42" stop-color="#DCC5FF" stop-opacity="0.171" /><stop offset="1" stop-color="#DCC5FF" stop-opacity="0" /></radialGradient><radialGradient id="lower-sheen" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(410 825) rotate(12) scale(650 340)"><stop offset="0" stop-color="#C6AAFF" stop-opacity="0.3" /><stop offset=".42" stop-color="#C6AAFF" stop-opacity="0.135" /><stop offset="1" stop-color="#C6AAFF" stop-opacity="0" /></radialGradient></defs>
+  <g id="jlw-app-padding" transform="translate(51.2 51.2) scale(0.9)">
+  <g transform="translate(-115 -126)" clip-path="url(#jlw-outline)">
+    <g id="jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#jlw-upper-gradient)" /><rect x="164" y="138" width="926" height="1000" fill="url(#upper-sheen)" /></g>
+    <g id="jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#jlw-lower-gradient)" />
+    <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#lower-sheen)" /></g>
+    
+    <g id="jlw-wave-fixed">
+      <use id="jlw-wave-rear-left" xlink:href="#jlw-rear-ribbon" clip-path="url(#jlw-rear-left-clip)" fill="url(#jlw-rear-left-gradient)" />
+      <use id="jlw-wave-rear-right" xlink:href="#jlw-rear-ribbon" clip-path="url(#jlw-rear-right-clip)" fill="url(#jlw-rear-right-gradient)" />
+      <path id="jlw-wave-front" d="M382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C902 758 932.785184 751.837792 956.64736 730.65568C890.567488 788.998144 821 855 765 855C670 855 619 793 574 681C530 577 508 514 443 514C423 514 403 518 382 531Z" fill="url(#jlw-front-gradient)" />
+    </g>
+  </g>
+  </g>
+</svg>

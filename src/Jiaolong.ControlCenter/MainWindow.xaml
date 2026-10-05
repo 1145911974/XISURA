@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="Jiaolong_ControlCenter.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="蛟龙控制中心">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid Background="{ThemeResource BackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TitleBar x:Name="AppTitleBar" Title="蛟龙控制中心" Grid.Row="0" />
+
+        <NavigationView
+            x:Name="ShellNavigation"
+            Grid.Row="1"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="False"
+            PaneDisplayMode="Left"
+            OpenPaneLength="232"
+            SelectionFollowsFocus="Enabled"
+            ItemInvoked="OnNavigationItemInvoked">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="主页" Tag="Home" Style="{StaticResource NavigationItemStyle}" AutomationProperties.AutomationId="Nav.Home">
+                    <NavigationViewItem.Icon><BitmapIcon UriSource="ms-appx:///Assets/Icons/Home.svg" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="性能" Tag="Performance" Style="{StaticResource NavigationItemStyle}" AutomationProperties.AutomationId="Nav.Performance">
+                    <NavigationViewItem.Icon><BitmapIcon UriSource="ms-appx:///Assets/Icons/Performance.svg" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="显卡" Tag="Gpu" Style="{StaticResource NavigationItemStyle}" AutomationProperties.AutomationId="Nav.Gpu">
+                    <NavigationViewItem.Icon><BitmapIcon UriSource="ms-appx:///Assets/Icons/Gpu.svg" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="风扇" Tag="Fan" Style="{StaticResource NavigationItemStyle}" AutomationProperties.AutomationId="Nav.Fan">
+                    <NavigationViewItem.Icon><BitmapIcon UriSource="ms-appx:///Assets/Icons/Fan.svg" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="灯光" Tag="Lighting" Style="{StaticResource NavigationItemStyle}" AutomationProperties.AutomationId="Nav.Lighting">
+                    <NavigationViewItem.Icon><BitmapIcon UriSource="ms-appx:///Assets/Icons/Lighting.svg" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="自动化" Tag="Automation" Style="{StaticResource NavigationItemStyle}" AutomationProperties.AutomationId="Nav.Automation">
+                    <NavigationViewItem.Icon><BitmapIcon UriSource="ms-appx:///Assets/Icons/Automation.svg" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="设置" Tag="Settings" Style="{StaticResource NavigationItemStyle}" AutomationProperties.AutomationId="Nav.Settings">
+                    <NavigationViewItem.Icon><BitmapIcon UriSource="ms-appx:///Assets/Icons/Settings.svg" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+            <NavigationView.PaneFooter>
+                <StackPanel Padding="16,12" Spacing="8">
+                    <TextBlock Text="快捷设置" Style="{StaticResource SecondaryTextStyle}" />
+                    <Grid AutomationProperties.AutomationId="QuickSettingsGrid">
+                        <Grid.RowDefinitions><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                        <Button Grid.Row="0" Grid.Column="0" Content="平衡" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="平衡模式" />
+                        <Button Grid.Row="0" Grid.Column="1" Content="安静" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="安静模式" />
+                        <Button Grid.Row="0" Grid.Column="2" Content="增强" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="增强模式" />
+                        <Button Grid.Row="1" Grid.Column="0" Content="灯光" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="灯光设置" />
+                        <Button Grid.Row="1" Grid.Column="1" Content="Mux" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="Mux 设置" />
+                        <Button Grid.Row="1" Grid.Column="2" Content="风扇" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="风扇设置" />
+                    </Grid>
+                    <TextBlock Text="MECHREVO · 蛟龙" Style="{StaticResource SecondaryTextStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="JIAOLONG SERIES" Style="{StaticResource SecondaryTextStyle}" />
+                </StackPanel>
+            </NavigationView.PaneFooter>
+            <Frame x:Name="RootFrame" />
+        </NavigationView>
+    </Grid>
+</Window>

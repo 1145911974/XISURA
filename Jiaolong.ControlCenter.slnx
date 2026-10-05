@@ -1,0 +1,35 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/installer/">
+    <Project Path="installer/Jiaolong.Installer/Jiaolong.Installer.wixproj" Type="b7dd6f7e-def8-4e67-b5b7-07ef123db6f0">
+      <Platform Project="AnyCPU" />
+    </Project>
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Jiaolong.Automation/Jiaolong.Automation.csproj" />
+    <Project Path="src/Jiaolong.Contracts/Jiaolong.Contracts.csproj" />
+    <Project Path="src/Jiaolong.ControlCenter/Jiaolong.ControlCenter.csproj" />
+    <Project Path="src/Jiaolong.Diagnostics/Jiaolong.Diagnostics.csproj" />
+    <Project Path="src/Jiaolong.Hardware.Abstractions/Jiaolong.Hardware.Abstractions.csproj" />
+    <Project Path="src/Jiaolong.Hardware.Mechrevo/Jiaolong.Hardware.Mechrevo.csproj" />
+    <Project Path="src/Jiaolong.Service/Jiaolong.Service.csproj" />
+    <Project Path="src/Jiaolong.Simulator/Jiaolong.Simulator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Jiaolong.Architecture.Tests/Jiaolong.Architecture.Tests.csproj" />
+    <Project Path="tests/Jiaolong.Automation.Tests/Jiaolong.Automation.Tests.csproj" />
+    <Project Path="tests/Jiaolong.Contracts.Tests/Jiaolong.Contracts.Tests.csproj" />
+    <Project Path="tests/Jiaolong.ControlCenter.Tests/Jiaolong.ControlCenter.Tests.csproj" />
+    <Project Path="tests/Jiaolong.ControlCenter.UiTests/Jiaolong.ControlCenter.UiTests.csproj" />
+    <Project Path="tests/Jiaolong.Diagnostics.Tests/Jiaolong.Diagnostics.Tests.csproj" />
+    <Project Path="tests/Jiaolong.Hardware.Tests/Jiaolong.Hardware.Tests.csproj" />
+    <Project Path="tests/Jiaolong.Installer.Tests/Jiaolong.Installer.Tests.csproj" />
+    <Project Path="tests/Jiaolong.IntegrationTests/Jiaolong.IntegrationTests.csproj" />
+    <Project Path="tests/Jiaolong.Service.Tests/Jiaolong.Service.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Jiaolong.DeviceAcceptance/Jiaolong.DeviceAcceptance.csproj" />
+  </Folder>
+</Solution>

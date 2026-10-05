@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PayloadPublishDir)\**">
+        <Exclude Files="$(var.PayloadPublishDir)\Jiaolong.Service.exe" />
+        <Exclude Files="$(var.PayloadPublishDir)\Jiaolong.ControlCenter.exe" />
+      </Files>
+      <Component Id="ControlCenterComponent" Guid="12DF8357-7138-4771-AD64-CCBE517B00D9">
+        <File Id="ControlCenterExecutable" Source="$(var.PayloadPublishDir)\Jiaolong.ControlCenter.exe" KeyPath="yes">
+          <Shortcut Id="ControlCenterDesktopShortcut" Directory="DesktopFolder" Name="XISURA"
+                    Description="XISURA" Advertise="yes" WorkingDirectory="INSTALLFOLDER"
+                    Icon="JiaolongWaveApp.exe" IconIndex="0" />
+          <Shortcut Id="ControlCenterStartMenuShortcut" Directory="ProgramMenuFolder" Name="XISURA"
+                    Description="XISURA" Advertise="yes" WorkingDirectory="INSTALLFOLDER"
+                    Icon="JiaolongWaveApp.exe" IconIndex="0" />
+        </File>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

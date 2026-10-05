@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Prototype.Controls.MonitorPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:shared="using:Jiaolong_ControlCenter.Controls">
+    <Border Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="#26FFFFFF" BorderThickness="1" CornerRadius="16" Padding="18">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="38" />
+                <RowDefinition Height="142" />
+                <RowDefinition Height="142" />
+                <RowDefinition Height="78" />
+            </Grid.RowDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Grid Width="32" Height="32"><Image Source="{x:Bind IconSource, Mode=OneTime}" Width="24" Height="24" Stretch="Uniform" /></Grid>
+                <TextBlock Text="{x:Bind Title, Mode=OneTime}" Foreground="White" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+            <Grid x:Name="TemperatureZone" Grid.Row="1" VerticalAlignment="Center">
+                <Grid x:Name="ThermalField" Width="312" Height="142" Padding="8,0,8,0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="112" /><ColumnDefinition Width="184" /></Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="8" VerticalAlignment="Center">
+                        <TextBlock x:Name="TemperatureValue" Typography.NumeralAlignment="Tabular" Text="-- °C" Foreground="White" FontSize="30" FontWeight="SemiBold" HorizontalAlignment="Left"><TextBlock.Shadow><ThemeShadow /></TextBlock.Shadow></TextBlock>
+                        <TextBlock x:Name="TemperatureStatus" Text="温度未知" Foreground="#B8FFFFFF" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Left" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                        <Grid x:Name="TemperatureRail" Width="184" Height="48" HorizontalAlignment="Right">
+                            <Grid.RowDefinitions><RowDefinition Height="22" /><RowDefinition Height="26" /></Grid.RowDefinitions>
+                            <Canvas x:Name="TemperatureRailCanvas" Grid.Row="0" Width="184" Height="22">
+                                <Border Canvas.Left="0" Canvas.Top="7" Width="184" Height="8" CornerRadius="4">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                                            <GradientStop Color="#17398F" Offset="0" />
+                                            <GradientStop Color="#174FBF" Offset="0.08" />
+                                            <GradientStop Color="#176EDB" Offset="0.16" />
+                                            <GradientStop Color="#168FEA" Offset="0.24" />
+                                            <GradientStop Color="#12ADE0" Offset="0.32" />
+                                            <GradientStop Color="#16C6C5" Offset="0.40" />
+                                            <GradientStop Color="#44D58E" Offset="0.48" />
+                                            <GradientStop Color="#91D95A" Offset="0.56" />
+                                            <GradientStop Color="#D2D34B" Offset="0.64" />
+                                            <GradientStop Color="#F1B340" Offset="0.72" />
+                                            <GradientStop Color="#F18336" Offset="0.80" />
+                                            <GradientStop Color="#E95732" Offset="0.87" />
+                                            <GradientStop Color="#D33835" Offset="0.93" />
+                                            <GradientStop Color="#A91F2D" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                                <Border x:Name="TemperatureWallMarker" Canvas.Left="180" Canvas.Top="0" Width="4" Height="22" Background="#F0FFFFFF" BorderBrush="#B0081019" BorderThickness="1" CornerRadius="2" />
+                                <Ellipse x:Name="TemperatureMarker" Canvas.Left="0" Canvas.Top="3" Width="16" Height="16" Fill="#F2FFFFFF" Stroke="#D2081019" StrokeThickness="2" Opacity="0" />
+                            </Canvas>
+                            <Canvas Grid.Row="1" Width="184" Height="26" Margin="0,1,0,0">
+                                <TextBlock Canvas.Left="19" Text="40°C" Foreground="#A8FFFFFF" FontSize="9" />
+                                <TextBlock Canvas.Left="76" Text="60°C" Foreground="#A8FFFFFF" FontSize="9" />
+                                <TextBlock Canvas.Left="143" Text="80°C" Foreground="#A8FFFFFF" FontSize="9" />
+                            </Canvas>
+                        </Grid>
+                        <TextBlock x:Name="TemperaturePeak" Typography.NumeralAlignment="Tabular" Text="最高 --°C" Foreground="#B8FFFFFF" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+            <Grid x:Name="UsageZone" Grid.Row="2" Height="118" VerticalAlignment="Center">
+                <Grid.RowDefinitions><RowDefinition Height="24" /><RowDefinition /></Grid.RowDefinitions>
+                <TextBlock Text="最近 60 秒" Foreground="#A8FFFFFF" FontSize="12" />
+                <Grid Grid.Row="1" Height="88">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                    <Grid>
+                        <TextBlock Text="100" Foreground="#68FFFFFF" FontSize="9" VerticalAlignment="Top" />
+                        <TextBlock Text="50" Foreground="#68FFFFFF" FontSize="9" VerticalAlignment="Center" />
+                        <TextBlock Text="0" Foreground="#68FFFFFF" FontSize="9" VerticalAlignment="Bottom" />
+                    </Grid>
+                    <Grid x:Name="TrendGraph" Grid.Column="1" Width="286" Height="85">
+                        <Grid.Clip>
+                            <RectangleGeometry Rect="0,-10,296,105" />
+                        </Grid.Clip>
+                        <Path Data="M 0,1 L 286,1 M 0,43 L 286,43 M 0,85 L 286,85" Stroke="#20FFFFFF" StrokeThickness="1" StrokeDashArray="2,7" Stretch="None" Width="286" Height="85" />
+                        <shared:TelemetryCurve x:Name="UsageCurve" Width="286" Height="85" LineBrush="{StaticResource ModeTraceBrush}" AccentBrush="{StaticResource ModeAccentBrush}" AreaBrush="{StaticResource ModeTraceAreaBrush}" />
+                        <TextBlock x:Name="UsageValue" Typography.NumeralAlignment="Tabular" Text="-- %" Foreground="#D8FFFFFF" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,5,0" />
+                    </Grid>
+                </Grid>
+            </Grid>
+            <Grid x:Name="MetricCapsule" Grid.Row="3" VerticalAlignment="Center">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="3" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind Detail1Label, Mode=OneTime}" Foreground="#A8FFFFFF" FontSize="12" Width="132" HorizontalAlignment="Center" TextAlignment="Center" />
+                        <TextBlock x:Name="Detail1ValueText" Typography.NumeralAlignment="Tabular" Text="{x:Bind Detail1Value, Mode=OneTime}" Foreground="White" FontSize="16" FontWeight="SemiBold" Width="132" HorizontalAlignment="Center" TextAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="3" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="1,0,0,0" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind Detail2Label, Mode=OneTime}" Foreground="#A8FFFFFF" FontSize="12" Width="132" HorizontalAlignment="Center" TextAlignment="Center" />
+                        <TextBlock x:Name="Detail2ValueText" Typography.NumeralAlignment="Tabular" Text="{x:Bind Detail2Value, Mode=OneTime}" Foreground="White" FontSize="16" FontWeight="SemiBold" Width="132" HorizontalAlignment="Center" TextAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

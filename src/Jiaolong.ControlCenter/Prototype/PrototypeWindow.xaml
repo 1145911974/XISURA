@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="Jiaolong_ControlCenter.Prototype.PrototypeWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Jiaolong_ControlCenter.Prototype.Controls"
+    Title="XISURA">
+
+    <Grid>
+    <Viewbox Stretch="Uniform">
+    <Grid
+        x:Name="WindowSurface"
+        Width="1672"
+        Height="1045"
+        UseLayoutRounding="True"
+        Background="#FF010204">
+        <Canvas
+                x:Name="RootCanvas"
+                Width="1672"
+                Height="1045"
+                UseLayoutRounding="True"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Background="#FF010204">
+
+        <controls:ModeAmbientBackdrop x:Name="ModeAmbientBackdrop" Canvas.Left="0" Canvas.Top="0" />
+        <controls:HomeSidebar x:Name="Sidebar" Canvas.Left="0" Canvas.Top="0" Width="292" Height="1045" />
+        <controls:HomeHero x:Name="Hero" Canvas.Left="292" Canvas.Top="158" Width="609" Height="835" />
+        <controls:HomeMonitorGrid x:Name="HomeMonitorGrid" Canvas.Left="901" Canvas.Top="88" Width="729" Height="728" />
+        <controls:HomeModeBar x:Name="HomeModeBar" Canvas.Left="901" Canvas.Top="832" Width="729" Height="168" />
+        <controls:PerformanceWorkspace x:Name="PerformanceWorkspace" Canvas.Left="292" Canvas.Top="0" Width="1380" Height="1045" Visibility="Collapsed" />
+        <controls:PerformanceWorkspaceV2 x:Name="PerformanceWorkspaceV2Preview" Canvas.Left="292" Canvas.Top="0" Width="1380" Height="1045" Visibility="Collapsed" />
+        <controls:GpuWorkspaceV2 x:Name="GpuWorkspaceV2" Canvas.Left="292" Canvas.Top="0" Width="1380" Height="1045" Visibility="Collapsed" />
+        <controls:PrototypePageWorkspace x:Name="PageWorkspace" Canvas.Left="292" Canvas.Top="0" Width="1380" Height="1045" Visibility="Collapsed" />
+        <Border x:Name="TopPageFadeMask" Canvas.Left="292" Canvas.Top="0" Width="1380" Height="112" IsHitTestVisible="False" Visibility="Collapsed">
+            <Border.Background><LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1"><GradientStop Color="#FF010204" Offset="0" /><GradientStop Color="#F8010204" Offset="0.24" /><GradientStop Color="#00010204" Offset="1" /></LinearGradientBrush></Border.Background>
+        </Border>
+        <Border x:Name="BottomPageFadeMask" Canvas.Left="292" Canvas.Top="933" Width="1380" Height="112" IsHitTestVisible="False" Visibility="Collapsed">
+            <Border.Background><LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1"><GradientStop Color="#00010204" Offset="0" /><GradientStop Color="#F8010204" Offset="0.76" /><GradientStop Color="#FF010204" Offset="1" /></LinearGradientBrush></Border.Background>
+        </Border>
+
+        </Canvas>
+    </Grid>
+    </Viewbox>
+    <TitleBar x:Name="WindowTitleBar" VerticalAlignment="Top" Background="Transparent" />
+    <InfoBar x:Name="RestoreInfo" IsOpen="False" IsClosable="True" Severity="Warning"
+             Title="提示" MaxWidth="720" Margin="24" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
+    </Grid>
+</Window>

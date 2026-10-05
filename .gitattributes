@@ -1,0 +1,2 @@
+src/Jiaolong.Hardware.Mechrevo/Compatibility/Manifests/**/*.json text eol=lf
+src/Jiaolong.Hardware.Mechrevo/Compatibility/Manifests/**/*.p7s binary

@@ -1,0 +1,11 @@
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Controls.ModeRail"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Orientation="Horizontal" Spacing="8" AutomationProperties.Name="性能模式">
+        <Button Content="办公" Tag="Quiet" Click="OnModeClick" Style="{StaticResource QuietButtonStyle}" />
+        <Button Content="均衡" Tag="Balanced" Click="OnModeClick" Style="{StaticResource QuietButtonStyle}" />
+        <Button Content="狂飙" Tag="Turbo" Click="OnModeClick" Style="{StaticResource QuietButtonStyle}" />
+        <Button Content="自定义" Tag="Custom" Click="OnModeClick" Style="{StaticResource QuietButtonStyle}" />
+    </StackPanel>
+</UserControl>

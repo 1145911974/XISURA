@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Jiaolong.Hardware.Abstractions\Jiaolong.Hardware.Abstractions.csproj" />
+    <PackageReference Include="System.Management" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
+    <EmbeddedResource Include="Compatibility\Signing\Jiaolong.ManifestSigning.cer" />
+    <EmbeddedResource Include="Compatibility\Manifests\MRID6-23\MRID6_23_P_V39.json" />
+    <EmbeddedResource Include="Compatibility\Manifests\MRID6-23\MRID6_23_P_V39.json.p7s" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

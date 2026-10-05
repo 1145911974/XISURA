@@ -1,0 +1,414 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="jlw-title jlw-description">
+  <title id="jlw-title">蛟龙 · 靛夜蓝紫 · 应用图标</title>
+  <desc id="jlw-description">低饱和底色与局部微光，圆角六边形及银白波形保持固定，背景透明。</desc>
+  <defs>
+    <clipPath id="jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="jlw-upper-start" offset="0" stop-color="#162F54" />
+      <stop id="jlw-upper-mid" offset="0.5" stop-color="#334B79" />
+      <stop id="jlw-upper-end" offset="1" stop-color="#262541" />
+    </linearGradient>
+    <linearGradient id="jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="jlw-lower-start" offset="0" stop-color="#162F54" />
+      <stop id="jlw-lower-mid" offset="0.5" stop-color="#334B79" />
+      <stop id="jlw-lower-end" offset="1" stop-color="#262541" />
+    </linearGradient>
+    <linearGradient id="jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#4C8CBB" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#4C8CBB" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#A390C8" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#A390C8" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#A390C8" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#A390C8" stop-opacity="0" />
+    </radialGradient>
+  <clipPath id="mode0-jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="mode0-jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="mode0-jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="mode0-jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode0-jlw-upper-start" offset="0" stop-color="#1677FF" />
+      <stop id="mode0-jlw-upper-mid" offset="0.5" stop-color="#338DFF" />
+      <stop id="mode0-jlw-upper-end" offset="1" stop-color="#2456D8" />
+    </linearGradient>
+    <linearGradient id="mode0-jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode0-jlw-lower-start" offset="0" stop-color="#1677FF" />
+      <stop id="mode0-jlw-lower-mid" offset="0.5" stop-color="#338DFF" />
+      <stop id="mode0-jlw-lower-end" offset="1" stop-color="#2456D8" />
+    </linearGradient>
+    <linearGradient id="mode0-jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="mode0-jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="mode0-jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="mode0-jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="mode0-jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#47A7FF" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#47A7FF" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="mode0-jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#69BAFF" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#69BAFF" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#69BAFF" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#69BAFF" stop-opacity="0" />
+    </radialGradient>
+  <clipPath id="mode1-jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="mode1-jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="mode1-jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="mode1-jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode1-jlw-upper-start" offset="0" stop-color="#FF9D32" />
+      <stop id="mode1-jlw-upper-mid" offset="0.5" stop-color="#FF831F" />
+      <stop id="mode1-jlw-upper-end" offset="1" stop-color="#D95613" />
+    </linearGradient>
+    <linearGradient id="mode1-jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode1-jlw-lower-start" offset="0" stop-color="#FF9D32" />
+      <stop id="mode1-jlw-lower-mid" offset="0.5" stop-color="#FF831F" />
+      <stop id="mode1-jlw-lower-end" offset="1" stop-color="#D95613" />
+    </linearGradient>
+    <linearGradient id="mode1-jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="mode1-jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="mode1-jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="mode1-jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="mode1-jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#FFB84F" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#FFB84F" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="mode1-jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#FFC36B" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#FFC36B" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#FFC36B" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#FFC36B" stop-opacity="0" />
+    </radialGradient>
+  <clipPath id="mode2-jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="mode2-jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="mode2-jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="mode2-jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode2-jlw-upper-start" offset="0" stop-color="#FF4C5D" />
+      <stop id="mode2-jlw-upper-mid" offset="0.5" stop-color="#F52E45" />
+      <stop id="mode2-jlw-upper-end" offset="1" stop-color="#C91937" />
+    </linearGradient>
+    <linearGradient id="mode2-jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode2-jlw-lower-start" offset="0" stop-color="#FF4C5D" />
+      <stop id="mode2-jlw-lower-mid" offset="0.5" stop-color="#F52E45" />
+      <stop id="mode2-jlw-lower-end" offset="1" stop-color="#C91937" />
+    </linearGradient>
+    <linearGradient id="mode2-jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="mode2-jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="mode2-jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="mode2-jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="mode2-jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#FF777F" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#FF777F" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="mode2-jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#FF8B82" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#FF8B82" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#FF8B82" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#FF8B82" stop-opacity="0" />
+    </radialGradient>
+  <clipPath id="mode3-jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="mode3-jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="mode3-jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="mode3-jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode3-jlw-upper-start" offset="0" stop-color="#7C899C" />
+      <stop id="mode3-jlw-upper-mid" offset="0.5" stop-color="#A0AAB8" />
+      <stop id="mode3-jlw-upper-end" offset="1" stop-color="#606D83" />
+    </linearGradient>
+    <linearGradient id="mode3-jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode3-jlw-lower-start" offset="0" stop-color="#7C899C" />
+      <stop id="mode3-jlw-lower-mid" offset="0.5" stop-color="#A0AAB8" />
+      <stop id="mode3-jlw-lower-end" offset="1" stop-color="#606D83" />
+    </linearGradient>
+    <linearGradient id="mode3-jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="mode3-jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="mode3-jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="mode3-jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="mode3-jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#BAC8DB" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#BAC8DB" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="mode3-jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#D2DCE8" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#D2DCE8" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#D2DCE8" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#D2DCE8" stop-opacity="0" />
+    </radialGradient>
+  <clipPath id="mode4-jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="mode4-jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="mode4-jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="mode4-jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode4-jlw-upper-start" offset="0" stop-color="#18C887" />
+      <stop id="mode4-jlw-upper-mid" offset="0.5" stop-color="#28D980" />
+      <stop id="mode4-jlw-upper-end" offset="1" stop-color="#0C9D70" />
+    </linearGradient>
+    <linearGradient id="mode4-jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode4-jlw-lower-start" offset="0" stop-color="#18C887" />
+      <stop id="mode4-jlw-lower-mid" offset="0.5" stop-color="#28D980" />
+      <stop id="mode4-jlw-lower-end" offset="1" stop-color="#0C9D70" />
+    </linearGradient>
+    <linearGradient id="mode4-jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="mode4-jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="mode4-jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="mode4-jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="mode4-jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#52EAB5" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#52EAB5" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="mode4-jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#78EDAC" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#78EDAC" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#78EDAC" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#78EDAC" stop-opacity="0" />
+    </radialGradient>
+  <clipPath id="mode5-jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="mode5-jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="mode5-jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="mode5-jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode5-jlw-upper-start" offset="0" stop-color="#8954F4" />
+      <stop id="mode5-jlw-upper-mid" offset="0.5" stop-color="#A265FF" />
+      <stop id="mode5-jlw-upper-end" offset="1" stop-color="#6836D6" />
+    </linearGradient>
+    <linearGradient id="mode5-jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode5-jlw-lower-start" offset="0" stop-color="#8954F4" />
+      <stop id="mode5-jlw-lower-mid" offset="0.5" stop-color="#A265FF" />
+      <stop id="mode5-jlw-lower-end" offset="1" stop-color="#6836D6" />
+    </linearGradient>
+    <linearGradient id="mode5-jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="mode5-jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="mode5-jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="mode5-jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="mode5-jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#B18AFF" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#B18AFF" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="mode5-jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#C998FF" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#C998FF" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#C998FF" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#C998FF" stop-opacity="0" />
+    </radialGradient>
+  <clipPath id="mode6-jlw-outline">
+      <path d="M556 157C600 132 654 132 698 157L1018 343C1063 369 1090 414 1090 465V811C1090 862 1063 907 1018 933L698 1119C654 1144 600 1144 556 1119L236 933C191 907 164 862 164 811V465C164 414 191 369 236 343Z" />
+    </clipPath>
+    <clipPath id="mode6-jlw-rear-left-clip"><rect x="164" y="400" width="463" height="500" /></clipPath>
+    <clipPath id="mode6-jlw-rear-right-clip"><rect x="627" y="400" width="463" height="500" /></clipPath>
+    <linearGradient id="mode6-jlw-upper-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode6-jlw-upper-start" offset="0" stop-color="#162F54" />
+      <stop id="mode6-jlw-upper-mid" offset="0.5" stop-color="#334B79" />
+      <stop id="mode6-jlw-upper-end" offset="1" stop-color="#262541" />
+    </linearGradient>
+    <linearGradient id="mode6-jlw-lower-gradient" gradientUnits="userSpaceOnUse" x1="250" y1="170" x2="990" y2="1110">
+      <stop id="mode6-jlw-lower-start" offset="0" stop-color="#162F54" />
+      <stop id="mode6-jlw-lower-mid" offset="0.5" stop-color="#334B79" />
+      <stop id="mode6-jlw-lower-end" offset="1" stop-color="#262541" />
+    </linearGradient>
+    <linearGradient id="mode6-jlw-rear-left-gradient" gradientUnits="userSpaceOnUse" x1="435" y1="508" x2="290" y2="778">
+      <stop offset="0" stop-color="#AAA5FF" />
+      <stop offset="0.48" stop-color="#DCD9FF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <linearGradient id="mode6-jlw-rear-right-gradient" gradientUnits="userSpaceOnUse" x1="901" y1="538" x2="1005" y2="781">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.48" stop-color="#E6E3FF" />
+      <stop offset="1" stop-color="#AAA5FF" />
+    </linearGradient>
+    <linearGradient id="mode6-jlw-front-gradient" gradientUnits="userSpaceOnUse" x1="600" y1="446" x2="790" y2="835">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.52" stop-color="#F7F7FF" />
+      <stop offset="0.78" stop-color="#ECEBFF" />
+      <stop offset="1" stop-color="#FFFFFF" />
+    </linearGradient>
+    <path id="mode6-jlw-rear-ribbon" d="M164 566C249 626 322 579 386 536C403 518 423 513 443 513C508 513 530 576 574 680C628 736 688 724 765 667C882 596 971 449 1090 570V736C1004 680 977 706 919 769C842 850 752 851 674 776C602 707 586 601 546 615C470 663 397 765 323 777C262 787 212 751 164 699Z" />
+    <radialGradient id="mode6-jlw-ambient-gradient" gradientUnits="userSpaceOnUse" cx="230" cy="260" r="700">
+      <stop offset="0" stop-color="#4C8CBB" stop-opacity="0.25" />
+      <stop offset="1" stop-color="#4C8CBB" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="mode6-jlw-accent-gradient" gradientUnits="userSpaceOnUse" cx="960" cy="980" r="760">
+      <stop offset="0" stop-color="#A390C8" stop-opacity="0.7" />
+      <stop offset="0.38" stop-color="#A390C8" stop-opacity="0.406" />
+      <stop offset="0.78" stop-color="#A390C8" stop-opacity="0.077" />
+      <stop offset="1" stop-color="#A390C8" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <g id="jlw-app-padding" transform="translate(51.2 51.2) scale(0.9)">
+  <g transform="translate(-115 -126)" clip-path="url(#jlw-outline)">
+    <g id="wave-mode-0" opacity="0"><g id="mode0-jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#mode0-jlw-upper-gradient)" /></g>
+    <g id="mode0-jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#mode0-jlw-lower-gradient)" />
+    </g>
+    <g id="mode0-jlw-body-light">
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode0-jlw-ambient-gradient)" />
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode0-jlw-accent-gradient)" />
+    </g>
+    </g><g id="wave-mode-1" opacity="0"><g id="mode1-jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#mode1-jlw-upper-gradient)" /></g>
+    <g id="mode1-jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#mode1-jlw-lower-gradient)" />
+    </g>
+    <g id="mode1-jlw-body-light">
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode1-jlw-ambient-gradient)" />
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode1-jlw-accent-gradient)" />
+    </g>
+    </g><g id="wave-mode-2" opacity="0"><g id="mode2-jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#mode2-jlw-upper-gradient)" /></g>
+    <g id="mode2-jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#mode2-jlw-lower-gradient)" />
+    </g>
+    <g id="mode2-jlw-body-light">
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode2-jlw-ambient-gradient)" />
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode2-jlw-accent-gradient)" />
+    </g>
+    </g><g id="wave-mode-3" opacity="0"><g id="mode3-jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#mode3-jlw-upper-gradient)" /></g>
+    <g id="mode3-jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#mode3-jlw-lower-gradient)" />
+    </g>
+    <g id="mode3-jlw-body-light">
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode3-jlw-ambient-gradient)" />
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode3-jlw-accent-gradient)" />
+    </g>
+    </g><g id="wave-mode-4" opacity="0"><g id="mode4-jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#mode4-jlw-upper-gradient)" /></g>
+    <g id="mode4-jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#mode4-jlw-lower-gradient)" />
+    </g>
+    <g id="mode4-jlw-body-light">
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode4-jlw-ambient-gradient)" />
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode4-jlw-accent-gradient)" />
+    </g>
+    </g><g id="wave-mode-5" opacity="0"><g id="mode5-jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#mode5-jlw-upper-gradient)" /></g>
+    <g id="mode5-jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#mode5-jlw-lower-gradient)" />
+    </g>
+    <g id="mode5-jlw-body-light">
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode5-jlw-ambient-gradient)" />
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode5-jlw-accent-gradient)" />
+    </g>
+    </g><g id="wave-mode-6" opacity="1"><g id="mode6-jlw-upper-body"><rect x="164" y="138" width="926" height="1000" fill="url(#mode6-jlw-upper-gradient)" /></g>
+    <g id="mode6-jlw-lower-body">
+      
+      <path d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625V1138H164Z" fill="url(#mode6-jlw-lower-gradient)" />
+    </g>
+    <g id="mode6-jlw-body-light">
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode6-jlw-ambient-gradient)" />
+      <rect x="164" y="138" width="926" height="1000" fill="url(#mode6-jlw-accent-gradient)" />
+    </g>
+    </g><g id="jlw-wave-fixed">
+      <use id="jlw-wave-rear-left" xlink:href="#jlw-rear-ribbon" clip-path="url(#jlw-rear-left-clip)" fill="url(#jlw-rear-left-gradient)" />
+      <use id="jlw-wave-rear-right" xlink:href="#jlw-rear-ribbon" clip-path="url(#jlw-rear-right-clip)" fill="url(#jlw-rear-right-gradient)" />
+      <path id="jlw-wave-front" d="M164 699C260 723 317 617 382 531C437 471 491 430 551 430C640 430 680 507 730 609C777 710 811 758 870 758C931 758 961 696 1006 658C1035 633 1065 622 1090 625C1029 618 978 701 923 758C865 820 821 855 765 855C670 855 619 793 574 680C530 576 508 513 443 513C383 513 342 571 301 627C251 682 212 708 164 699Z" fill="url(#jlw-front-gradient)" />
+    </g>
+  </g>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+<ContentControl
+    x:Class="Jiaolong_ControlCenter.Controls.ExpandableSection"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch">
+    <Expander
+        x:Name="SectionExpander"
+        ExpandDirection="Down"
+        Header="{x:Bind Header, Mode=OneWay}"
+        IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
+        Style="{StaticResource ControlExpandableSectionStyle}"
+        VerticalContentAlignment="Stretch">
+        <ContentPresenter
+            Content="{x:Bind SectionContent, Mode=OneWay}"
+            HorizontalAlignment="Stretch" />
+    </Expander>
+</ContentControl>

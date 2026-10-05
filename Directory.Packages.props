@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
+    <PackageVersion Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+    <PackageVersion Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <PackageVersion Include="System.Management" Version="10.0.10" />
+    <PackageVersion Include="System.ServiceProcess.ServiceController" Version="10.0.10" />
+    <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageVersion Include="LibreHardwareMonitorLib" Version="0.9.6" />
+    <PackageVersion Include="System.IO.Pipes.AccessControl" Version="5.0.0" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.10" />
+    <PackageVersion Include="MSTest.TestFramework" Version="4.3.3" />
+    <PackageVersion Include="MSTest.TestAdapter" Version="4.3.3" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="WixToolset.Sdk" Version="7.0.0" />
+    <PackageVersion Include="WixToolset.Util.wixext" Version="7.0.0" />
+  </ItemGroup>
+</Project>

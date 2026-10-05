@@ -1,0 +1,722 @@
+[
+  {
+    "key": "Office",
+    "name": "办公",
+    "accent": "#1677FF",
+    "review_status": "approved",
+    "revision": 2,
+    "material": "approved C",
+    "home_scale": 0.9,
+    "system_scale": 0.98,
+    "gradients": {
+      "jlw-upper-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#287BEB"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#5FA8FF"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#327CEA"
+        }
+      ],
+      "jlw-lower-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#438FFA"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#2677E6"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#3688EE"
+        }
+      ],
+      "upper-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#AAD5FF",
+          "stop-opacity": "0.38"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#AAD5FF",
+          "stop-opacity": "0.171"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#AAD5FF",
+          "stop-opacity": "0"
+        }
+      ],
+      "lower-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#84BBFF",
+          "stop-opacity": "0.3"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#84BBFF",
+          "stop-opacity": "0.135"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#84BBFF",
+          "stop-opacity": "0"
+        }
+      ],
+      "jlw-rear-left-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#86B8FF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#D5E7FF"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ],
+      "jlw-rear-right-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#E3EFFF"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#86B8FF"
+        }
+      ],
+      "jlw-front-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.52",
+          "stop-color": "#F9FCFF"
+        },
+        {
+          "offset": "0.78",
+          "stop-color": "#EBF3FF"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ]
+    }
+  },
+  {
+    "key": "Gaming",
+    "name": "游戏",
+    "accent": "#FF8A1F",
+    "review_status": "approved",
+    "revision": 2,
+    "material": "approved C",
+    "home_scale": 0.9,
+    "system_scale": 0.98,
+    "gradients": {
+      "jlw-upper-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#FF8B2B"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#FFB052"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#FF8C2D"
+        }
+      ],
+      "jlw-lower-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#FF9D38"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#F98021"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#FF9730"
+        }
+      ],
+      "upper-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#FFD598",
+          "stop-opacity": "0.38"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#FFD598",
+          "stop-opacity": "0.171"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFD598",
+          "stop-opacity": "0"
+        }
+      ],
+      "lower-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#FFC36E",
+          "stop-opacity": "0.3"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#FFC36E",
+          "stop-opacity": "0.135"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFC36E",
+          "stop-opacity": "0"
+        }
+      ],
+      "jlw-rear-left-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFC28B"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#FFEAD7"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ],
+      "jlw-rear-right-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#FFF1E4"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFC28B"
+        }
+      ],
+      "jlw-front-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.52",
+          "stop-color": "#FFFCF9"
+        },
+        {
+          "offset": "0.78",
+          "stop-color": "#FFF5EC"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ]
+    }
+  },
+  {
+    "key": "Turbo",
+    "name": "狂飙",
+    "accent": "#FF3141",
+    "review_status": "approved",
+    "revision": 2,
+    "material": "approved C",
+    "home_scale": 0.9,
+    "system_scale": 0.98,
+    "gradients": {
+      "jlw-upper-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#F53E55"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#FF6C7B"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#F53E59"
+        }
+      ],
+      "jlw-lower-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#FF5269"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#EE334F"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#F84B61"
+        }
+      ],
+      "upper-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#FFC1C9",
+          "stop-opacity": "0.38"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#FFC1C9",
+          "stop-opacity": "0.171"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFC1C9",
+          "stop-opacity": "0"
+        }
+      ],
+      "lower-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#FFA3B3",
+          "stop-opacity": "0.3"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#FFA3B3",
+          "stop-opacity": "0.135"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFA3B3",
+          "stop-opacity": "0"
+        }
+      ],
+      "jlw-rear-left-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FF949C"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#FFDADD"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ],
+      "jlw-rear-right-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#FFE6E8"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FF949C"
+        }
+      ],
+      "jlw-front-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.52",
+          "stop-color": "#FFFAFA"
+        },
+        {
+          "offset": "0.78",
+          "stop-color": "#FFEDEF"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ]
+    }
+  },
+  {
+    "key": "Custom1",
+    "name": "自定义 1",
+    "accent": "#8C949F",
+    "review_status": "approved",
+    "revision": 2,
+    "material": "approved C",
+    "home_scale": 0.9,
+    "system_scale": 0.98,
+    "gradients": {
+      "jlw-upper-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#969CA7"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#B7BDC7"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#979FAB"
+        }
+      ],
+      "jlw-lower-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#A6ADB8"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#929BA9"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#A1A9B5"
+        }
+      ],
+      "upper-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#E0E4EC",
+          "stop-opacity": "0.38"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#E0E4EC",
+          "stop-opacity": "0.171"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#E0E4EC",
+          "stop-opacity": "0"
+        }
+      ],
+      "lower-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#D1D7E1",
+          "stop-opacity": "0.3"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#D1D7E1",
+          "stop-opacity": "0.135"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#D1D7E1",
+          "stop-opacity": "0"
+        }
+      ],
+      "jlw-rear-left-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#C3C7CD"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#EAECEE"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ],
+      "jlw-rear-right-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#F1F2F3"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#C3C7CD"
+        }
+      ],
+      "jlw-front-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.52",
+          "stop-color": "#FCFCFD"
+        },
+        {
+          "offset": "0.78",
+          "stop-color": "#F5F6F7"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ]
+    }
+  },
+  {
+    "key": "Custom2",
+    "name": "自定义 2",
+    "accent": "#27D980",
+    "review_status": "approved",
+    "revision": 2,
+    "material": "approved C",
+    "home_scale": 0.9,
+    "system_scale": 0.98,
+    "gradients": {
+      "jlw-upper-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#21C778"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#5FE3A0"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#22C982"
+        }
+      ],
+      "jlw-lower-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#39D28F"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#20C17E"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#30CD8B"
+        }
+      ],
+      "upper-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#B1F6D0",
+          "stop-opacity": "0.38"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#B1F6D0",
+          "stop-opacity": "0.171"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#B1F6D0",
+          "stop-opacity": "0"
+        }
+      ],
+      "lower-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#93EBC3",
+          "stop-opacity": "0.3"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#93EBC3",
+          "stop-opacity": "0.135"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#93EBC3",
+          "stop-opacity": "0"
+        }
+      ],
+      "jlw-rear-left-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#8FEBBD"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#D8F8E8"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ],
+      "jlw-rear-right-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#E5FAF0"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#8FEBBD"
+        }
+      ],
+      "jlw-front-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.52",
+          "stop-color": "#FAFEFC"
+        },
+        {
+          "offset": "0.78",
+          "stop-color": "#EDFCF4"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ]
+    }
+  },
+  {
+    "key": "Custom3",
+    "name": "自定义 3",
+    "accent": "#9A5CFF",
+    "review_status": "approved",
+    "revision": 2,
+    "material": "approved C",
+    "home_scale": 0.9,
+    "system_scale": 0.98,
+    "gradients": {
+      "jlw-upper-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#8A50EB"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#AE7AFF"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#9258EF"
+        }
+      ],
+      "jlw-lower-gradient": [
+        {
+          "offset": "0.000",
+          "stop-color": "#A268F7"
+        },
+        {
+          "offset": "0.500",
+          "stop-color": "#8348DA"
+        },
+        {
+          "offset": "1.000",
+          "stop-color": "#935BE8"
+        }
+      ],
+      "upper-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#DCC5FF",
+          "stop-opacity": "0.38"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#DCC5FF",
+          "stop-opacity": "0.171"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#DCC5FF",
+          "stop-opacity": "0"
+        }
+      ],
+      "lower-sheen": [
+        {
+          "offset": "0",
+          "stop-color": "#C6AAFF",
+          "stop-opacity": "0.3"
+        },
+        {
+          "offset": ".42",
+          "stop-color": "#C6AAFF",
+          "stop-opacity": "0.135"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#C6AAFF",
+          "stop-opacity": "0"
+        }
+      ],
+      "jlw-rear-left-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#CAAAFF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#EDE2FF"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ],
+      "jlw-rear-right-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.48",
+          "stop-color": "#F3EBFF"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#CAAAFF"
+        }
+      ],
+      "jlw-front-gradient": [
+        {
+          "offset": "0",
+          "stop-color": "#FFFFFF"
+        },
+        {
+          "offset": "0.52",
+          "stop-color": "#FCFBFF"
+        },
+        {
+          "offset": "0.78",
+          "stop-color": "#F6F1FF"
+        },
+        {
+          "offset": "1",
+          "stop-color": "#FFFFFF"
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,84 @@
+<Page
+    x:Class="Jiaolong_ControlCenter.Pages.LightingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Jiaolong_ControlCenter.Controls">
+    <Grid Padding="24" Background="{ThemeResource BackgroundBrush}">
+        <ScrollViewer VerticalScrollBarVisibility="Hidden">
+            <StackPanel Spacing="16" MaxWidth="960">
+                <TextBlock Text="灯光与快捷设置" Style="{StaticResource DisplayTextStyle}" />
+                <Border Background="{ThemeResource SurfaceBrush}" Padding="16" CornerRadius="{StaticResource RadiusMedium}">
+                    <StackPanel Spacing="12">
+                        <ToggleSwitch x:Name="KeyboardSwitch" Header="键盘灯光" OffContent="关闭" OnContent="开启" />
+                        <RadioButtons Header="亮度（四档）">
+                            <RadioButton Content="关闭" />
+                            <RadioButton Content="低" />
+                            <RadioButton Content="中" />
+                            <RadioButton Content="高" />
+                        </RadioButtons>
+                        <ComboBox Header="灯效" PlaceholderText="仅显示已验证灯效">
+                            <ComboBoxItem Content="固定颜色" />
+                            <ComboBoxItem Content="软件灯效：彩虹" IsEnabled="False" />
+                            <ComboBoxItem Content="软件灯效：呼吸" IsEnabled="False" />
+                        </ComboBox>
+                        <!-- 快速电竞预设色块 -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="电竞预设色彩" Style="{StaticResource SecondaryTextStyle}" FontSize="12" />
+                            <Grid ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Background="#FF1677FF" Height="28" CornerRadius="6" Padding="0" Tag="#FF1677FF" Click="OnColorPresetClick" ToolTipService.ToolTip="极光蓝" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="1" Background="#FF00E5FF" Height="28" CornerRadius="6" Padding="0" Tag="#FF00E5FF" Click="OnColorPresetClick" ToolTipService.ToolTip="冰川青" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="2" Background="#FF00E676" Height="28" CornerRadius="6" Padding="0" Tag="#FF00E676" Click="OnColorPresetClick" ToolTipService.ToolTip="矩阵绿" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="3" Background="#FFFFEA00" Height="28" CornerRadius="6" Padding="0" Tag="#FFFFEA00" Click="OnColorPresetClick" ToolTipService.ToolTip="电能黄" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="4" Background="#FFFF9100" Height="28" CornerRadius="6" Padding="0" Tag="#FFFF9100" Click="OnColorPresetClick" ToolTipService.ToolTip="炽热橙" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="5" Background="#FFFF1744" Height="28" CornerRadius="6" Padding="0" Tag="#FFFF1744" Click="OnColorPresetClick" ToolTipService.ToolTip="狂飙红" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="6" Background="#FFF50057" Height="28" CornerRadius="6" Padding="0" Tag="#FFF50057" Click="OnColorPresetClick" ToolTipService.ToolTip="赛博粉" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="7" Background="#FFD500F9" Height="28" CornerRadius="6" Padding="0" Tag="#FFD500F9" Click="OnColorPresetClick" ToolTipService.ToolTip="霓虹紫" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="8" Background="#FF651FFF" Height="28" CornerRadius="6" Padding="0" Tag="#FF651FFF" Click="OnColorPresetClick" ToolTipService.ToolTip="深邃靛" HorizontalAlignment="Stretch" />
+                                <Button Grid.Column="9" Background="#FFFFFFFF" Height="28" CornerRadius="6" Padding="0" Tag="#FFFFFFFF" Click="OnColorPresetClick" ToolTipService.ToolTip="纯净白" HorizontalAlignment="Stretch" />
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- 3D 键盘透光模拟预览 -->
+                        <Border x:Name="KeyboardColorPreview" Background="#221677FF" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="12" Padding="14,12">
+                            <StackPanel Spacing="6" HorizontalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <Border Width="34" Height="34" Background="#CC1E232F" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="W" FontWeight="Bold" FontSize="13" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <Border Width="34" Height="34" Background="#CC1E232F" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="A" FontWeight="Bold" FontSize="13" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                                    <Border Width="34" Height="34" Background="#CC1E232F" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="S" FontWeight="Bold" FontSize="13" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                                    <Border Width="34" Height="34" Background="#CC1E232F" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="D" FontWeight="Bold" FontSize="13" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                                </StackPanel>
+                                <TextBlock Text="按键透光与漫反射模拟" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="固定颜色" Style="{StaticResource SecondaryTextStyle}" />
+                            <ColorPicker x:Name="FixedColorPicker" IsMoreButtonVisible="False" ColorChanged="OnColorPickerChanged" />
+                        </StackPanel>
+                        <ToggleSwitch Header="A 面标志" AutomationProperties.Name="A 面标志" OffContent="关闭" OnContent="开启" />
+                        <TextBlock Text="此设备仅支持开关" Style="{StaticResource SecondaryTextStyle}" />
+                        <Button Content="应用灯光设置" Click="OnApplyClick" Style="{StaticResource QuietButtonStyle}" />
+                    </StackPanel>
+                </Border>
+                <TextBlock Text="快捷设置" Style="{StaticResource SecondaryTextStyle}" />
+                <Grid ColumnSpacing="8" RowSpacing="8" AutomationProperties.AutomationId="QuickSettingsGrid">
+                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                    <controls:QuickSettingButton Grid.Row="0" Grid.Column="0" SettingLabel="Fn 锁" SourceLabel="固件" AccessibleText="Fn 锁，固件" />
+                    <controls:QuickSettingButton Grid.Row="0" Grid.Column="1" SettingLabel="触控板" SourceLabel="固件" AccessibleText="触控板，固件" />
+                    <controls:QuickSettingButton Grid.Row="0" Grid.Column="2" SettingLabel="NumLock" SourceLabel="Windows" AccessibleText="NumLock，Windows" />
+                    <controls:QuickSettingButton Grid.Row="1" Grid.Column="0" SettingLabel="CapsLock" SourceLabel="Windows" AccessibleText="CapsLock，Windows" />
+                    <controls:QuickSettingButton Grid.Row="1" Grid.Column="1" SettingLabel="OSD" SourceLabel="本产品" AccessibleText="OSD，本产品" />
+                    <controls:QuickSettingButton Grid.Row="1" Grid.Column="2" SettingLabel="Wi-Fi" SourceLabel="Windows" AccessibleText="Wi-Fi，Windows" />
+                </Grid>
+                <TextBlock x:Name="StatusText" Text="等待硬件回读" Style="{StaticResource SecondaryTextStyle}" AutomationProperties.LiveSetting="Polite" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

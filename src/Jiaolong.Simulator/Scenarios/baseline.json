@@ -1,0 +1,24 @@
+{
+  "fingerprint": { "boardProduct": "MRID6-23", "biosVersion": "MRID6_23_P_V39", "cpuModel": "AMD Ryzen 7 7745HX", "gpuName": "RTX 4070 Laptop GPU", "hasVerifiedWritableEvidence": false, "cpuVendor": "AuthenticAMD", "gpuVendorId": "10DE", "gpuPnpDeviceIdsExact": [] },
+  "capabilities": { "canMonitor": true, "anyHardwareWriteEnabled": false, "conflictDetected": false },
+  "telemetrySeedSeconds": 60,
+  "telemetryFrames": [{ "atUtc": "2026-01-01T00:00:00Z", "hardwareState": "normal", "cpuTemperatureC": 45, "gpuTemperatureC": 43, "cpuPowerWatts": 35, "gpuPowerWatts": 20 }],
+  "controls": {
+    "performanceMode": { "textValue": "balanced" },
+    "muxMode": { "textValue": "hybrid" },
+    "fanControl": { "textValue": "automatic" },
+    "keyboardLighting": { "textValue": "static" },
+    "lidLogo": { "booleanValue": true },
+    "cpuTuning": { "numericValue": 35 },
+    "gpuFrequencyLimit": { "numericValue": 1200 }
+  },
+  "outcomes": {
+    "performanceMode": { "outcome": "success" },
+    "muxMode": { "outcome": "success" },
+    "fanControl": { "outcome": "success" },
+    "keyboardLighting": { "outcome": "success" },
+    "lidLogo": { "outcome": "success" },
+    "cpuTuning": { "outcome": "success" },
+    "gpuFrequencyLimit": { "outcome": "success" }
+  }
+}

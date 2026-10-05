@@ -1,0 +1,16 @@
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Controls.TelemetryCurve"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    IsHitTestVisible="False">
+    <Grid>
+        <Canvas x:Name="Viewport">
+            <Path x:Name="CurveArea" Fill="{x:Bind AreaBrush, Mode=OneWay}" Opacity="0.4" />
+            <Path x:Name="CurveLine" Stroke="{x:Bind LineBrush, Mode=OneWay}" StrokeThickness="2.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+        </Canvas>
+        <Canvas>
+            <Ellipse x:Name="HeadHalo" Width="14" Height="14" Fill="{x:Bind AccentBrush, Mode=OneWay}" Stroke="{x:Bind AccentBrush, Mode=OneWay}" StrokeThickness="0.7" Opacity="0" />
+            <Ellipse x:Name="HeadPoint" Width="7" Height="7" Fill="{x:Bind AccentBrush, Mode=OneWay}" Stroke="White" StrokeThickness="1.5" Opacity="0" />
+        </Canvas>
+    </Grid>
+</UserControl>

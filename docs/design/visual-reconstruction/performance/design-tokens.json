@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "colors": {
+    "accent": "#FFFF2845",
+    "accentDark": "#FF8E1528",
+    "card": "#D9141417",
+    "cardBorder": "#604A4A50",
+    "textPrimary": "#FFF7F7F8",
+    "textSecondary": "#FFB8B6BA",
+    "track": "#FF303034",
+    "safe": "#FFB8B8BC",
+    "limit": "#FFFF2947"
+  },
+  "geometry": { "cardCornerRadius": 16, "inputCornerRadius": 8, "borderThickness": 1 },
+  "spacing": { "pageInset": 10, "sectionGap": 16, "rowGap": 0, "cardPadding": 24 },
+  "typography": { "pageTitle": 36, "sectionTitle": 27, "body": 17, "caption": 14 },
+  "controls": { "trackHeight": 14, "thumbSize": 28, "inputWidth": 98, "rowHeight": 98 },
+  "effects": { "shadowBlurRadius": 24, "shadowOpacity": 0.34, "glassTintOpacity": 0.85 }
+}

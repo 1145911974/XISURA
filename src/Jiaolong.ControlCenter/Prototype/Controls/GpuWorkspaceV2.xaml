@@ -1,0 +1,179 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Prototype.Controls.GpuWorkspaceV2"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:shared="using:Jiaolong_ControlCenter.Controls"
+    xmlns:local="using:Jiaolong_ControlCenter.Prototype.Controls"
+    xmlns:prototype="using:Jiaolong_ControlCenter.Prototype.Controls"
+    Width="1380" Height="1045">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="GpuGreen" Color="#FF76B900" />
+        <StaticResource x:Key="GpuCard" ResourceKey="PrototypeControlAcrylicBrush" />
+        <StaticResource x:Key="GpuStroke" ResourceKey="PrototypeStrokeBrush" />
+        <Style x:Key="GpuCardStyle" TargetType="Border"><Setter Property="Background" Value="{StaticResource GpuCard}" /><Setter Property="BorderBrush" Value="{StaticResource GpuStroke}" /><Setter Property="BorderThickness" Value="1.5" /><Setter Property="CornerRadius" Value="16" /><Setter Property="Padding" Value="18" /></Style>
+
+    </UserControl.Resources>
+    <ScrollViewer x:Name="PageScroll" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+        <Grid Padding="18,30,18,30" RowSpacing="16">
+            <Grid.RowDefinitions><RowDefinition Height="126" /><RowDefinition Height="286" /><RowDefinition Height="512" /><RowDefinition Height="486" /><RowDefinition Height="24" /></Grid.RowDefinitions>
+            <Grid>
+                <StackPanel VerticalAlignment="Center" Spacing="6">
+                    <TextBlock Text="显卡" FontSize="32" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}" />
+                    <TextBlock x:Name="GpuCapabilityNoticeText" Typography.NumeralAlignment="Tabular" Text="调节显卡输出与性能，查看实时运行状态" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}" />
+                    <TextBlock x:Name="ActiveDisplayRouteText" Typography.NumeralAlignment="Tabular" Visibility="Collapsed" Text="活动显示路径未读回；MUX 未读回" />
+                </StackPanel>
+                <shared:PagePresetToolbar x:Name="PresetToolbar" HorizontalAlignment="Right" VerticalAlignment="Center" SaveRequested="OnSavePresetRequested" />
+            </Grid>
+            <Grid Grid.Row="1" ColumnSpacing="16">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="1.38*" /><ColumnDefinition Width="1*" /></Grid.ColumnDefinitions>
+                <Grid Height="286" HorizontalAlignment="Stretch" VerticalAlignment="Top"><Viewbox Stretch="Fill"><local:GpuRouteDiagram x:Name="RouteDiagram" ModeRequested="OnMuxModeRequested" /></Viewbox><TextBlock x:Name="MuxStatusText" Typography.NumeralAlignment="Tabular" Visibility="Collapsed" /></Grid>
+                <Border x:Name="GpuOverviewCard" Grid.Column="1" Height="286" HorizontalAlignment="Stretch" VerticalAlignment="Top" Style="{StaticResource GpuCardStyle}" Background="{StaticResource PrototypeControlAcrylicBrush}" CornerRadius="16" Padding="0">
+                    <Viewbox Stretch="Fill">
+                        <Canvas Width="532" Height="260">
+                            <TextBlock Canvas.Left="18" Canvas.Top="12" Text="GPU 概览" FontSize="20" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="FrequencyText" Typography.NumeralAlignment="Tabular" Visibility="Collapsed"/>
+                            <StackPanel Canvas.Left="422" Canvas.Top="14" Width="92" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="7"><Ellipse x:Name="MonitorDot" Width="10" Height="10" Fill="#59636D"/><TextBlock x:Name="MonitorText" Typography.NumeralAlignment="Tabular" Text="等待遥测" FontSize="13" Foreground="#FF00F08A" FontWeight="SemiBold"/></StackPanel>
+                            <Image Canvas.Left="-20" Canvas.Top="42" Width="240" Height="212" Source="/Assets/GpuOverview/GpuOverviewChip.png" Stretch="Uniform"/>
+                            <Line X1="199" Y1="66" X2="199" Y2="243" Stroke="{StaticResource PrototypeDividerBrush}" StrokeThickness="1"/>
+                            <Line X1="358" Y1="66" X2="358" Y2="243" Stroke="{StaticResource PrototypeDividerBrush}" StrokeThickness="1"/>
+                            <Line X1="218" Y1="170" X2="514" Y2="170" Stroke="{StaticResource PrototypeDividerBrush}" StrokeThickness="1"/>
+                            <TextBlock Canvas.Left="218" Canvas.Top="79" Text="GPU 温度" FontSize="14" Opacity="0.76"/>
+                            <Image x:Name="TemperatureGlyph" Canvas.Left="221" Canvas.Top="109" Width="30" Height="30" Source="/Assets/GpuOverview/TemperatureIconSelected.png" Stretch="Uniform"/>
+                            <StackPanel Canvas.Left="258" Canvas.Top="103" Height="38" Orientation="Horizontal" Spacing="4"><TextBlock x:Name="TemperatureText" Typography.NumeralAlignment="Tabular" Text="--" FontSize="27" FontWeight="SemiBold" VerticalAlignment="Bottom"/><TextBlock Text="°C" FontSize="16" FontWeight="SemiBold" Opacity="0.86" Margin="0,0,0,4" VerticalAlignment="Bottom"/></StackPanel>
+                            <Grid Canvas.Left="380" Canvas.Top="60" Width="132" Height="116">
+                                <Path x:Name="UsageTrackPath" Data="M 27.1,94.9 A 48,48 0 1 1 94.9,94.9" Stroke="#FF25272B" StrokeThickness="10" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                <Path x:Name="UsageProgressPath" Stroke="#FFFF2560" StrokeThickness="10" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                <StackPanel Width="96" Margin="13,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Spacing="-1"><TextBlock Text="GPU 利用率" FontSize="11" Opacity="0.78" HorizontalAlignment="Center"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="2"><TextBlock x:Name="UsageText" Typography.NumeralAlignment="Tabular" Text="--" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="%" FontSize="14" FontWeight="SemiBold" Opacity="0.86" Margin="0,0,0,2" VerticalAlignment="Bottom"/></StackPanel></StackPanel>
+                            </Grid>
+                            <TextBlock Canvas.Left="218" Canvas.Top="190" Text="GPU 功耗" FontSize="14" Opacity="0.76"/>
+                            <Image x:Name="PowerGlyph" Canvas.Left="221" Canvas.Top="210" Width="30" Height="30" Source="/Assets/GpuOverview/PowerIconSelected.png" Stretch="Uniform"/>
+                            <StackPanel Canvas.Left="258" Canvas.Top="207" Height="35" Orientation="Horizontal" Spacing="4"><TextBlock x:Name="PowerText" Typography.NumeralAlignment="Tabular" Text="--" FontSize="23" FontWeight="SemiBold" VerticalAlignment="Bottom"/><TextBlock Text="W" FontSize="15" FontWeight="SemiBold" Opacity="0.86" Margin="0,0,0,3" VerticalAlignment="Bottom"/></StackPanel>
+                            <TextBlock Canvas.Left="382" Canvas.Top="190" Text="显存占用" FontSize="14" Opacity="0.76"/>
+                            <Image x:Name="MemoryGlyph" Canvas.Left="375" Canvas.Top="210" Width="30" Height="30" Source="/Assets/GpuOverview/MemoryIconSelected.png" Stretch="Uniform"/>
+                            <StackPanel Canvas.Left="407" Canvas.Top="208" Height="34" Orientation="Horizontal" Spacing="4"><TextBlock x:Name="MemoryText" Typography.NumeralAlignment="Tabular" Text="-- / --" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Bottom"/><TextBlock Text="GB" FontSize="14" FontWeight="SemiBold" Opacity="0.86" Margin="0,0,0,3" VerticalAlignment="Bottom"/></StackPanel>
+                        </Canvas>
+                    </Viewbox>
+                </Border>
+            </Grid>
+            <Border x:Name="GpuMonitoringWorkspace" Grid.Row="2" Height="512" Style="{StaticResource GpuCardStyle}">
+                <Grid x:Name="GpuMonitoringLayout">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="1.38*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="1*"/></Grid.ColumnDefinitions>
+            <Grid x:Name="GpuMonitoringColumn"><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid x:Name="TrendCard" Grid.Row="0">
+                    <Viewbox Stretch="Fill">
+                        <Canvas Width="744" Height="220">
+                            <TextBlock Text="最近 60 秒" Canvas.Left="0" Canvas.Top="0" FontSize="20" FontWeight="SemiBold" />
+                            <StackPanel Canvas.Left="418" Canvas.Top="3" Orientation="Horizontal" Spacing="18">
+                                <StackPanel Orientation="Horizontal" Spacing="6"><Ellipse Width="8" Height="8" Fill="#FFFF244F" VerticalAlignment="Center" /><TextBlock Text="温度 (°C)" FontSize="12" Opacity="0.72" /></StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="6"><Ellipse Width="8" Height="8" Fill="#FF2FB7FF" VerticalAlignment="Center" /><TextBlock Text="GPU 利用率 (%)" FontSize="12" Opacity="0.72" /></StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="6"><Ellipse Width="8" Height="8" Fill="#FFFF7A1A" VerticalAlignment="Center" /><TextBlock Text="GPU 功耗 (W)" FontSize="12" Opacity="0.72" /></StackPanel>
+                            </StackPanel>
+                            <TextBlock Text="100" Canvas.Left="0" Canvas.Top="43" FontSize="11" Opacity="0.45" />
+                            <TextBlock Text="50" Canvas.Left="6" Canvas.Top="109" FontSize="11" Opacity="0.45" />
+                            <TextBlock Text="0" Canvas.Left="12" Canvas.Top="174" FontSize="11" Opacity="0.45" />
+                            <Canvas x:Name="TrendCanvas" Canvas.Left="36" Canvas.Top="50" Width="700" Height="132">
+                                <Line X1="0" X2="700" Y1="0" Y2="0" Stroke="#22FFFFFF" StrokeThickness="1" />
+                                <Line X1="0" X2="700" Y1="66" Y2="66" Stroke="#18FFFFFF" StrokeThickness="1" />
+                                <Line X1="0" X2="700" Y1="132" Y2="132" Stroke="#22FFFFFF" StrokeThickness="1" />
+                                <Line X1="175" X2="175" Y1="0" Y2="132" Stroke="#10FFFFFF" StrokeThickness="1" />
+                                <Line X1="350" X2="350" Y1="0" Y2="132" Stroke="#10FFFFFF" StrokeThickness="1" />
+                                <Line X1="525" X2="525" Y1="0" Y2="132" Stroke="#10FFFFFF" StrokeThickness="1" />
+                                <shared:TelemetryCurve x:Name="TemperatureTrendCurve" Width="700" Height="132" LineBrush="{StaticResource TemperatureTraceBrush}" AccentBrush="{StaticResource TemperatureTraceAccentBrush}" AreaBrush="{StaticResource TemperatureTraceAreaBrush}" />
+                                <shared:TelemetryCurve x:Name="UsageTrendCurve" Width="700" Height="132" LineBrush="{StaticResource UsageTraceBrush}" AccentBrush="{StaticResource UsageTraceAccentBrush}" AreaBrush="{StaticResource UsageTraceAreaBrush}" />
+                                <shared:TelemetryCurve x:Name="PowerTrendCurve" Width="700" Height="132" LineBrush="{StaticResource PowerTraceBrush}" AccentBrush="{StaticResource PowerTraceAccentBrush}" AreaBrush="{StaticResource PowerTraceAreaBrush}" />
+                            </Canvas>
+                            <TextBlock Text="60 秒前" Canvas.Left="36" Canvas.Top="190" FontSize="11" Opacity="0.45" />
+                            <TextBlock Text="现在" Canvas.Left="712" Canvas.Top="190" FontSize="11" Opacity="0.45" />
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+                <Border x:Name="HistoryOperatingDivider" Grid.Row="1" Height="1" Margin="0,16" Background="{StaticResource PrototypeDividerBrush}"/>
+                <Grid x:Name="RuntimeDiagnosticsCard" Grid.Row="2">
+                    <Viewbox Stretch="Fill">
+                        <Canvas Width="734" Height="220">
+                            <StackPanel Canvas.Left="0" Canvas.Top="0" Orientation="Horizontal" Spacing="8"><TextBlock Text="实时工作点" FontSize="20" FontWeight="SemiBold"  VerticalAlignment="Center"/><shared:ParameterHelpButton x:Name="OperatingPointHelp" ParameterName="实时工作点" /></StackPanel>
+                            
+                            <Canvas x:Name="OperatingPlot" Canvas.Left="0" Canvas.Top="41" Width="570" Height="164">
+                                <TextBlock Text="MHz" Canvas.Left="4" Canvas.Top="2" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource ModeAccentBrush}" />
+                                <TextBlock Text="mV" Canvas.Left="550" Canvas.Top="2" FontSize="9" FontWeight="SemiBold" Foreground="#FF45C8FF" />
+                                <TextBlock Text="3000" Canvas.Left="0" Canvas.Top="14" Width="38" TextAlignment="Right" FontSize="9" Opacity="0.62" />
+                                <TextBlock Text="1500" Canvas.Left="0" Canvas.Top="72" Width="38" TextAlignment="Right" FontSize="9" Opacity="0.62" />
+                                <TextBlock Text="0" Canvas.Left="0" Canvas.Top="130" Width="38" TextAlignment="Right" FontSize="9" Opacity="0.62" />
+                                <TextBlock Text="1400" Canvas.Left="533" Canvas.Top="14" Width="34" TextAlignment="Left" FontSize="9" Foreground="#FF45C8FF" Opacity="0.75" />
+                                <TextBlock Text="1000" Canvas.Left="533" Canvas.Top="72" Width="34" TextAlignment="Left" FontSize="9" Foreground="#FF45C8FF" Opacity="0.75" />
+                                <TextBlock Text="600" Canvas.Left="533" Canvas.Top="130" Width="34" TextAlignment="Left" FontSize="9" Foreground="#FF45C8FF" Opacity="0.75" />
+                                <Line X1="44" X2="522" Y1="20" Y2="20" Stroke="#20FFFFFF" StrokeThickness="1" StrokeDashArray="3,5" />
+                                <Line X1="44" X2="522" Y1="78" Y2="78" Stroke="#20FFFFFF" StrokeThickness="1" StrokeDashArray="3,5" />
+                                <Line X1="44" X2="522" Y1="136" Y2="136" Stroke="#45FFFFFF" StrokeThickness="1" />
+                                <Line X1="44" X2="44" Y1="20" Y2="136" Stroke="#45FFFFFF" StrokeThickness="1" />
+                                <Line X1="163.5" X2="163.5" Y1="20" Y2="136" Stroke="#14FFFFFF" StrokeThickness="1" StrokeDashArray="3,5" />
+                                <Line X1="283" X2="283" Y1="20" Y2="136" Stroke="#14FFFFFF" StrokeThickness="1" StrokeDashArray="3,5" />
+                                <Line X1="402.5" X2="402.5" Y1="20" Y2="136" Stroke="#14FFFFFF" StrokeThickness="1" StrokeDashArray="3,5" />
+                                <Line X1="522" X2="522" Y1="20" Y2="136" Stroke="#45FFFFFF" StrokeThickness="1" />
+                                <TextBlock Text="24 秒前" Canvas.Left="44" Canvas.Top="141" FontSize="9" Opacity="0.6" />
+                                <TextBlock Text="现在" Canvas.Left="494" Canvas.Top="141" FontSize="9" Opacity="0.7" />
+                                <shared:TelemetryCurve x:Name="OperatingFrequencyCurve" Canvas.Left="44" Canvas.Top="20" Width="478" Height="116" WindowSeconds="24" MaximumValue="3000" LineBrush="{StaticResource TemperatureTraceBrush}" AccentBrush="{StaticResource TemperatureTraceAccentBrush}" AreaBrush="{StaticResource TemperatureTraceAreaBrush}" />
+                                <shared:TelemetryCurve x:Name="OperatingVoltageCurve" Canvas.Left="44" Canvas.Top="20" Width="478" Height="116" WindowSeconds="24" MinimumValue="600" MaximumValue="1400" LineBrush="{StaticResource VoltageTraceBrush}" AccentBrush="{StaticResource VoltageTraceAccentBrush}" AreaBrush="{StaticResource VoltageTraceAreaBrush}" />
+                                <TextBlock x:Name="OperatingPointLabel" Text="LIVE" Canvas.Left="492" Canvas.Top="2" FontSize="9" FontWeight="Bold" Foreground="{StaticResource ModeAccentBrush}" Visibility="Collapsed" />
+                            </Canvas>
+                            <Line X1="582" X2="582" Y1="44" Y2="206" Stroke="{StaticResource PrototypeDividerBrush}" StrokeThickness="1" />
+                            <TextBlock Text="核心电压" Canvas.Left="602" Canvas.Top="46" FontSize="11" FontWeight="SemiBold" Opacity="0.72" />
+                            <TextBlock x:Name="GpuCoreVoltageText" Typography.NumeralAlignment="Tabular" Text="-- mV" Canvas.Left="667" Canvas.Top="45" Width="67" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" />
+                            <TextBlock Text="核心频率" Canvas.Left="602" Canvas.Top="70" FontSize="11" FontWeight="SemiBold" Opacity="0.72" />
+                            <TextBlock x:Name="GpuCoreFrequencyText" Typography.NumeralAlignment="Tabular" Text="-- MHz" Canvas.Left="667" Canvas.Top="69" Width="67" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" />
+                            <TextBlock Text="P-State" Canvas.Left="602" Canvas.Top="94" FontSize="11" FontWeight="SemiBold" Opacity="0.72" />
+                            <TextBlock x:Name="GpuPStateText" Typography.NumeralAlignment="Tabular" Text="未读回" Canvas.Left="667" Canvas.Top="93" Width="67" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" />
+                            <Line X1="598" X2="734" Y1="123" Y2="123" Stroke="{StaticResource PrototypeDividerBrush}" StrokeThickness="1" />
+                            <Grid Canvas.Left="600" Canvas.Top="144" Width="34" Height="34"><Ellipse x:Name="PerformanceLimitStatusCircle" Fill="#2459636D" Stroke="#8059636D" StrokeThickness="1"/><TextBlock x:Name="PerformanceLimitStatusGlyph" Text="!" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="20" FontWeight="SemiBold" Foreground="#FF8A929A" Margin="0,-3,0,0"/></Grid>
+                            <TextBlock Text="近期限制原因" Canvas.Left="646" Canvas.Top="137" FontSize="11" FontWeight="SemiBold" Opacity="0.72" />
+                            <TextBlock x:Name="PerformanceLimitReasonText" Typography.NumeralAlignment="Tabular" Text="未读回" Canvas.Left="646" Canvas.Top="160" Width="88" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" />
+
+                            <TextBlock x:Name="TelemetrySourceText" Typography.NumeralAlignment="Tabular" Visibility="Collapsed" /><TextBlock x:Name="FanText" Typography.NumeralAlignment="Tabular" Visibility="Collapsed" /><TextBlock x:Name="TuningStateText" Typography.NumeralAlignment="Tabular" Visibility="Collapsed" /><TextBlock x:Name="DiagnosticText" Typography.NumeralAlignment="Tabular" Visibility="Collapsed" />
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+            </Grid>
+            <Border x:Name="MonitoringTuningDivider" Grid.Column="1" Width="1" Margin="18,0" Background="{StaticResource PrototypeDividerBrush}"/>
+            <Grid x:Name="GpuTuningCard" Grid.Column="2">
+                <Grid RowSpacing="16">
+                    <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid>
+                        <TextBlock Text="频率调节" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="GpuPowerCeilingText" Typography.NumeralAlignment="Tabular" Text="驱动上限 -- W" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}" ToolTipService.ToolTip="驱动当前执行的功耗上限和硬件最高值"/>
+                    </Grid>
+                    <Grid Grid.Row="1">
+                        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <Grid x:Name="CoreTuningGroup" Height="96" VerticalAlignment="Center" Grid.Row="0" ColumnSpacing="8">
+                            <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="54"/></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="114"/></Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><TextBlock Text="频率上限 (MHz)" FontSize="14" VerticalAlignment="Center"/><shared:ParameterHelpButton x:Name="CoreFrequencyHelp" ParameterName="核心频率上限"/></StackPanel>
+                            <shared:GpuValueStepper x:Name="CoreValueBox" Grid.Column="1" VerticalAlignment="Center" Minimum="1800" Maximum="2685" Value="2280" SmallChange="1"/>
+                            <TextBlock x:Name="CoreLiveUnknown" Grid.Column="1" Text="当前上限未读回" FontSize="11" VerticalAlignment="Center" Visibility="Collapsed" />
+                            <shared:PerformanceTuningRailV2 x:Name="CoreRail" Grid.Row="1" Grid.ColumnSpan="2" Margin="-16,-12,-16,0" Minimum="1800" Maximum="2685" RecommendedValue="2400" LimitValue="2685" Unit=" MHz" ShowCurrentLabel="False"/>
+                        </Grid>
+                        <Border Grid.Row="1" Height="1" Margin="0,6" Background="{StaticResource PrototypeDividerBrush}"/>
+                        <Grid x:Name="CoreOffsetTuningGroup" Height="96" VerticalAlignment="Center" Grid.Row="2" ColumnSpacing="8">
+                            <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="54"/></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="114"/></Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><TextBlock Text="核心偏移 (MHz)" FontSize="14" VerticalAlignment="Center"/><shared:ParameterHelpButton x:Name="CoreOffsetHelp" ParameterName="核心频率偏移"/></StackPanel>
+                            <shared:GpuValueStepper x:Name="CoreOffsetValueBox" Grid.Column="1" VerticalAlignment="Center" Minimum="-200" Maximum="200" Value="0" SmallChange="1" AllowNegative="True" IsEnabled="False"/>
+                            <shared:PerformanceTuningRailV2 x:Name="CoreOffsetRail" Grid.Row="1" Grid.ColumnSpan="2" Margin="-16,-12,-16,0" Minimum="-200" Maximum="200" RecommendedValue="0" LimitValue="200" Unit=" MHz" IsEnabled="False" ShowCurrentLabel="False"/>
+                        </Grid>
+                        <Border Grid.Row="3" Height="1" Margin="0,6" Background="{StaticResource PrototypeDividerBrush}"/>
+                        <Grid x:Name="MemoryTuningGroup" Height="96" VerticalAlignment="Center" Grid.Row="4" ColumnSpacing="8">
+                            <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="54"/></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="114"/></Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><TextBlock Text="显存偏移 (MHz)" FontSize="14" VerticalAlignment="Center"/><shared:ParameterHelpButton x:Name="MemoryOffsetHelp" ParameterName="显存偏移"/></StackPanel>
+                            <shared:GpuValueStepper x:Name="MemoryValueBox" Grid.Column="1" VerticalAlignment="Center" Minimum="-200" Maximum="200" Value="0" SmallChange="1" AllowNegative="True" IsEnabled="False"/>
+                            <shared:PerformanceTuningRailV2 x:Name="MemoryRail" Grid.Row="1" Grid.ColumnSpan="2" Margin="-16,-12,-16,0" Minimum="-200" Maximum="200" RecommendedValue="0" LimitValue="200" Unit=" MHz" IsEnabled="False" ShowCurrentLabel="False"/>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Grid>
+            </Grid>
+            </Border>
+            <prototype:GpuVoltageFrequencyCurve x:Name="VoltageFrequencyCurve" Grid.Row="3" />
+        </Grid>
+    </ScrollViewer>
+</UserControl>

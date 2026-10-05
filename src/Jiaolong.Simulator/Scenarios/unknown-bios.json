@@ -1,0 +1,8 @@
+{
+  "fingerprint": { "boardProduct": "MRID6-23", "biosVersion": "UNKNOWN", "cpuModel": "AMD Ryzen 7 7745HX", "gpuName": "RTX 4070 Laptop GPU", "hasVerifiedWritableEvidence": false, "cpuVendor": "AuthenticAMD", "gpuVendorId": "10DE", "gpuPnpDeviceIdsExact": [] },
+  "capabilities": { "canMonitor": true, "anyHardwareWriteEnabled": false, "conflictDetected": false },
+  "telemetrySeedSeconds": 60,
+  "telemetryFrames": [{ "atUtc": "2026-01-01T00:00:00Z", "hardwareState": "unknownBios", "cpuTemperatureC": 46, "gpuTemperatureC": 44, "cpuPowerWatts": 36, "gpuPowerWatts": 21 }],
+  "controls": { "cpuTuning": { "isAvailable": false, "unavailableReason": "unknownBios" } },
+  "outcomes": { "default": { "outcome": "writeFailure" } }
+}

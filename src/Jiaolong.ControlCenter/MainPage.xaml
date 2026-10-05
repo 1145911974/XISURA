@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="Jiaolong_ControlCenter.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="32" Background="{ThemeResource BackgroundBrush}">
+        <StackPanel Spacing="12" VerticalAlignment="Center">
+            <TextBlock x:Name="DestinationTitle" Style="{StaticResource DisplayTextStyle}" />
+            <TextBlock Text="只读控制中心 Shell 已就绪。" Style="{StaticResource SecondaryTextStyle}" />
+        </StackPanel>
+    </Grid>
+</Page>

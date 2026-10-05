@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g id="automation-trigger-cycle" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18.8 7.8A8 8 0 1 0 19.6 15M18.8 3.8v4h-4"/>
+    <path d="M12.4 6.8 8.7 13h3.4l-.8 4.2 4.2-6.4h-3.4z" fill="#FFFFFF" stroke="none"/>
+  </g>
+</svg>

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "canvas": { "width": 1307, "height": 992 },
+  "regions": [
+    { "id": "header", "bounds": { "x": 10, "y": 10, "width": 1284, "height": 127 }, "renderKind": "native", "states": ["default", "preset-expanded", "advanced-expanded"] },
+    { "id": "preset-selector", "bounds": { "x": 547, "y": 67, "width": 263, "height": 52 }, "renderKind": "native", "states": ["default", "preset-expanded", "advanced-expanded"] },
+    { "id": "unsaved-state", "bounds": { "x": 829, "y": 68, "width": 139, "height": 50 }, "renderKind": "native", "states": ["default", "preset-expanded", "advanced-expanded"] },
+    { "id": "save-preset", "bounds": { "x": 986, "y": 67, "width": 125, "height": 52 }, "renderKind": "native", "states": ["default", "preset-expanded", "advanced-expanded"] },
+    { "id": "use-preset", "bounds": { "x": 1125, "y": 67, "width": 141, "height": 52 }, "renderKind": "native", "states": ["default", "preset-expanded", "advanced-expanded"] },
+    { "id": "basic-tuning", "bounds": { "x": 10, "y": 145, "width": 765, "height": 684 }, "renderKind": "native", "states": ["default", "preset-expanded"] },
+    { "id": "cpu-boundary", "bounds": { "x": 784, "y": 145, "width": 510, "height": 684 }, "renderKind": "native", "states": ["default", "preset-expanded"] },
+    { "id": "cpu-boundary-decoration", "bounds": { "x": 866, "y": 223, "width": 347, "height": 325 }, "renderKind": "native", "states": ["default", "preset-expanded"] },
+    { "id": "advanced-summary", "bounds": { "x": 10, "y": 844, "width": 1284, "height": 89 }, "renderKind": "native", "states": ["default", "preset-expanded"] },
+    { "id": "preset-panel", "bounds": { "x": 428, "y": 114, "width": 713, "height": 471 }, "renderKind": "native", "states": ["preset-expanded"] },
+    { "id": "preset-mode-list", "bounds": { "x": 441, "y": 195, "width": 236, "height": 368 }, "renderKind": "native", "states": ["preset-expanded"] },
+    { "id": "preset-slot-list", "bounds": { "x": 687, "y": 195, "width": 440, "height": 368 }, "renderKind": "native", "states": ["preset-expanded"] },
+    { "id": "advanced-overview", "bounds": { "x": 10, "y": 140, "width": 1284, "height": 67 }, "renderKind": "native", "states": ["advanced-expanded"] },
+    { "id": "advanced-smu", "bounds": { "x": 10, "y": 209, "width": 620, "height": 698 }, "renderKind": "native", "states": ["advanced-expanded"] },
+    { "id": "advanced-pbo-core", "bounds": { "x": 639, "y": 209, "width": 655, "height": 698 }, "renderKind": "native", "states": ["advanced-expanded"] },
+    { "id": "advanced-status", "bounds": { "x": 10, "y": 920, "width": 1284, "height": 57 }, "renderKind": "native", "states": ["advanced-expanded"] }
+  ],
+  "dynamicTextRegions": [
+    { "id": "battery-status", "bounds": { "x": 1064, "y": 18, "width": 74, "height": 28 } },
+    { "id": "cpu-temperature", "bounds": { "x": 808, "y": 228, "width": 108, "height": 92 } },
+    { "id": "cpu-power", "bounds": { "x": 1154, "y": 228, "width": 112, "height": 92 } },
+    { "id": "cpu-frequency", "bounds": { "x": 807, "y": 478, "width": 138, "height": 86 } },
+    { "id": "cpu-voltage", "bounds": { "x": 1145, "y": 478, "width": 123, "height": 86 } },
+    { "id": "connection-state", "bounds": { "x": 1146, "y": 158, "width": 124, "height": 56 } },
+    { "id": "advanced-hardware-status", "bounds": { "x": 20, "y": 928, "width": 570, "height": 36 } }
+  ]
+}

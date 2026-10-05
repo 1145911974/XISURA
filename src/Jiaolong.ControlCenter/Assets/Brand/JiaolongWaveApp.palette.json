@@ -1,0 +1,34 @@
+{
+  "name": "靛夜蓝紫 · 柔光应用图标",
+  "accent": "#6878C9",
+  "upper": [
+    "#182B60",
+    "#405DB3",
+    "#263260"
+  ],
+  "lower": [
+    "#5151AD",
+    "#343874",
+    "#1C2148"
+  ],
+  "upper_sheen": "#9CAEFF",
+  "lower_sheen": "#8D77DF",
+  "wave": {
+    "rear-left": [
+      "#B0B9E3",
+      "#E4E7F5",
+      "#FFFFFF"
+    ],
+    "rear-right": [
+      "#FFFFFF",
+      "#EDEFF9",
+      "#B0B9E3"
+    ],
+    "front": [
+      "#FFFFFF",
+      "#FBFCFE",
+      "#F2F4FA",
+      "#FFFFFF"
+    ]
+  }
+}

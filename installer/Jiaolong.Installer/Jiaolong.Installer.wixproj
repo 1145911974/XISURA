@@ -1,0 +1,23 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <OutputName>Jiaolong.ControlCenter</OutputName>
+    <Platform>x64</Platform>
+    <PlatformTarget>x64</PlatformTarget>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <AcceptEula>wix7</AcceptEula>
+    <PayloadPublishDir>$(MSBuildProjectDirectory)\.publish\payload</PayloadPublishDir>
+    <DefineConstants>$(DefineConstants);PayloadPublishDir=$(PayloadPublishDir)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" />
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\..\src\Jiaolong.Service\Jiaolong.Service.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\..\src\Jiaolong.ControlCenter\Jiaolong.ControlCenter.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="PublishJiaolongPayloads" BeforeTargets="CoreCompile">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.Service\Jiaolong.Service.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.ControlCenter\Jiaolong.ControlCenter.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -p:WindowsPackageType=None -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
+  </Target>
+</Project>

@@ -1,0 +1,46 @@
+<UserControl x:Class="Jiaolong_ControlCenter.Prototype.Controls.FanCurveWorkspaceV2"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="using:Jiaolong_ControlCenter.Prototype.Controls" xmlns:shared="using:Jiaolong_ControlCenter.Controls">
+ <UserControl.Resources>
+ <SolidColorBrush x:Key="CpuSeriesStroke" Color="#FFFF244F" />
+ <SolidColorBrush x:Key="GpuSeriesStroke" Color="#FF00D4FF" />
+  <LinearGradientBrush x:Key="CpuSeriesActiveBrush" StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#A84A1425" Offset="0"/><GradientStop Color="#AA8F1E3D" Offset="1"/></LinearGradientBrush>
+  <LinearGradientBrush x:Key="GpuSeriesActiveBrush" StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#A20B3D4F" Offset="0"/><GradientStop Color="#A00A6B80" Offset="1"/></LinearGradientBrush>
+ </UserControl.Resources>
+ <Border Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="18">
+ <Grid RowSpacing="12">
+ <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="310"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+ <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="温度响应曲线" FontSize="22" FontWeight="SemiBold"/><shared:ParameterHelpButton x:Name="CurveHelp" ParameterName="温度响应曲线"/></StackPanel>
+ <TextBlock x:Name="EditingPresetText" Grid.Column="1" Text="当前编辑：游戏 · 预设 1" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/>
+ <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+ <Button x:Name="CpuSeriesButton" Content="CPU" Click="OnCpuSeriesClick" Foreground="#FFFF718C"/>
+ <Button x:Name="GpuSeriesButton" Content="GPU" Click="OnGpuSeriesClick" Foreground="#FF66E7FF"/>
+ </StackPanel></Grid>
+  <Grid Grid.Row="1" ColumnSpacing="10">
+ <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+ <Border CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource PrototypeStrokeBrush}" HorizontalAlignment="Left">
+ <StackPanel Orientation="Horizontal" Spacing="0">
+ <Button x:Name="IndependentButton" Style="{StaticResource ControlGlassButtonStyle}" Content="独立双曲线" Click="OnLayoutChanged" Tag="0" Width="142" MinWidth="0" Padding="8,0" FontSize="14" FontWeight="SemiBold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" CornerRadius="0" Height="34" BorderThickness="0"/>
+ <Button x:Name="SharedButton" Style="{StaticResource ControlGlassButtonStyle}" Content="双扇共用一条" Click="OnLayoutChanged" Tag="1" Width="142" MinWidth="0" Padding="8,0" FontSize="14" FontWeight="SemiBold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" CornerRadius="0" Height="34" BorderThickness="0"/></StackPanel>
+ </Border>
+
+ <Button Grid.Column="2" Content="恢复推荐曲线" Click="OnResetClick"/>
+ </Grid>
+ <Grid Grid.Row="2">
+ <TextBlock Text="目标转速 (%)" FontSize="11" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/>
+ <TextBlock Text="虚线：推荐曲线" FontSize="11" HorizontalAlignment="Right" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/>
+ <local:FanCurvePlot x:Name="CurvePlot" Margin="0,18,0,8"/>
+ <TextBlock Text="温度 (°C)" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Bottom"/>
+ </Grid>
+ <StackPanel Grid.Row="3" Spacing="12">
+ <Rectangle Height="1" Fill="{StaticResource PrototypeDividerBrush}"/>
+ <Grid ColumnSpacing="10">
+ <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="114"/><ColumnDefinition Width="114"/></Grid.ColumnDefinitions>
+ <Button x:Name="AddNodeButton" Content="＋ 添加节点" Click="OnAddClick" VerticalAlignment="Center"/>
+ <Button x:Name="DeleteButton" Grid.Column="1" Content="删除节点" Click="OnDeleteClick" VerticalAlignment="Center"/>
+ <StackPanel Grid.Column="2" Spacing="5" VerticalAlignment="Center"><TextBlock x:Name="SelectedNodeText" FontSize="12" FontWeight="SemiBold"/><TextBlock x:Name="RecommendationText" FontSize="10" TextWrapping="Wrap" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="EditHint" Text="空白处按下加点 · 拖动定位" FontSize="10" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/></StackPanel>
+ <StackPanel Grid.Column="3" Spacing="5"><TextBlock Text="温度 (°C)" FontSize="11"/><shared:GpuValueStepper x:Name="TemperatureBox" Minimum="30" Maximum="100" ValueChanged="OnPointValueChanged"/></StackPanel>
+ <StackPanel Grid.Column="4" Spacing="5"><TextBlock Text="目标转速 (%)" FontSize="11"/><shared:GpuValueStepper x:Name="TargetBox" Minimum="0" Maximum="100" ValueChanged="OnPointValueChanged"/></StackPanel>
+ </Grid></StackPanel>
+ </Grid></Border>
+</UserControl>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Prototype.Controls.ModeAmbientBackdrop"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Width="1672"
+    Height="1045"
+    IsHitTestVisible="False">
+    <Grid Background="#FF010204">
+        <Grid x:Name="DecorativeRoot">
+            <Image x:Name="CurrentPlate" Stretch="Fill" />
+            <Image x:Name="TargetPlate" Stretch="Fill" Opacity="0" />
+            <Rectangle x:Name="TurboTierShade" Fill="Black" Opacity="0" />
+            <Rectangle x:Name="TurboTierGlow" Opacity="0">
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#00FF1800" Offset="0" />
+                        <GradientStop Color="#B0FF2400" Offset="0.52" />
+                        <GradientStop Color="#18FF1200" Offset="1" />
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+            </Rectangle>
+        </Grid>
+    </Grid>
+</UserControl>

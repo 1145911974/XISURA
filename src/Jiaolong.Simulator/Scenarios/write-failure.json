@@ -1,0 +1,8 @@
+{
+  "fingerprint": { "boardProduct": "MRID6-23", "biosVersion": "MRID6_23_P_V39", "cpuModel": "AMD Ryzen 7 7745HX", "gpuName": "RTX 4070 Laptop GPU", "hasVerifiedWritableEvidence": true, "cpuVendor": "AuthenticAMD", "gpuVendorId": "10DE", "gpuPnpDeviceIdsExact": ["PCI\\VEN_10DE&DEV_2820"] },
+  "capabilities": { "canMonitor": true, "anyHardwareWriteEnabled": true, "conflictDetected": false },
+  "telemetrySeedSeconds": 60,
+  "telemetryFrames": [{ "atUtc": "2026-01-01T00:00:00Z", "hardwareState": "normal", "cpuTemperatureC": 50, "gpuTemperatureC": 48, "cpuPowerWatts": 45, "gpuPowerWatts": 30 }],
+  "controls": { "cpuTuning": { "numericValue": 35 }, "gpuFrequencyLimit": { "numericValue": 1200 } },
+  "outcomes": { "cpuTuning": { "outcome": "writeFailure", "delayMs": 25 }, "gpuFrequencyLimit": { "outcome": "rollbackFailure" } }
+}

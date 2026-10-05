@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Jiaolong Control Center" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="PROGRAMDATAFOLDER" Name="JiaolongControlCenter" />
+    </StandardDirectory>
+    <Component Id="ProgramDataComponent" Directory="PROGRAMDATAFOLDER" Guid="F86D32F2-E08F-4E1B-BA4D-A55B8E1B4A54">
+      <CreateFolder>
+        <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-404912088-106822883-2312322702-2665459205-905369233)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+  </Fragment>
+</Wix>

@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+**/.publish/
+**/TestResults/
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+.worktrees/
+.vs/
+*.user
+*.suo
+*.log
+*.trx
+ErrorLog/

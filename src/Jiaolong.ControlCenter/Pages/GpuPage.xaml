@@ -1,0 +1,39 @@
+<Page
+    x:Class="Jiaolong_ControlCenter.Pages.GpuPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="24" Background="{ThemeResource BackgroundBrush}">
+        <ScrollViewer VerticalScrollBarVisibility="Hidden">
+            <StackPanel Spacing="16" MaxWidth="960" AutomationProperties.Name="显卡与 MUX">
+                <TextBlock Text="显卡与 MUX" Style="{StaticResource DisplayTextStyle}" />
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="温度  未知 °C" Style="{StaticResource SecondaryTextStyle}" />
+                    <TextBlock Grid.Column="1" Text="负载  未知 %" Style="{StaticResource SecondaryTextStyle}" />
+                    <TextBlock Grid.Column="2" Text="功耗  未知 W" Style="{StaticResource SecondaryTextStyle}" />
+                    <TextBlock Grid.Column="3" Text="驱动  未知" Style="{StaticResource SecondaryTextStyle}" />
+                </Grid>
+                <Border Background="{ThemeResource SurfaceBrush}" Padding="16" CornerRadius="{StaticResource RadiusMedium}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="MUX 模式" Style="{StaticResource SecondaryTextStyle}" />
+                        <TextBlock Text="当前：混合输出" Style="{StaticResource BodyTextStyle}" />
+                        <RadioButtons x:Name="MuxOptions" Header="切换目标" SelectionChanged="OnMuxSelectionChanged">
+                            <RadioButton Content="混合输出" Tag="Hybrid" />
+                            <RadioButton Content="独显直连" Tag="Discrete" />
+                        </RadioButtons>
+                        <InfoBar x:Name="RestartBar" IsOpen="False" Severity="Informational" Title="需要重启" Message="切换将在下一次用户主动重启后生效。" />
+                        <Button Content="切换并稍后重启" Click="OnMuxApplyClick" Style="{StaticResource QuietButtonStyle}" />
+                        <Button Content="取消" Click="OnMuxCancelClick" Style="{StaticResource QuietButtonStyle}" />
+                        <Button Content="立即打开 Windows 重启选项" Click="OnOpenRestartOptionsClick" Style="{StaticResource QuietButtonStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border x:Name="FrequencyPanel" Visibility="Collapsed" Background="{ThemeResource SurfaceBrush}" Padding="16" CornerRadius="{StaticResource RadiusMedium}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="GPU 频率上限" Style="{StaticResource SecondaryTextStyle}" />
+                        <NumberBox Header="仅在已验证范围内可用" Minimum="300" Maximum="2400" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "manifestId", "deviceFamily", "boardProductsExact", "biosVersionsExact", "cpu", "gpus", "wmiProvider", "dependencies", "safety", "capabilities", "migration"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "manifestId": { "type": "string", "minLength": 1 },
+    "deviceFamily": { "type": "string", "minLength": 1 },
+    "boardProductsExact": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+    "biosVersionsExact": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+    "cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vendor", "modelContains"],
+      "properties": { "vendor": { "type": "string" }, "modelContains": { "type": "string" } }
+    },
+    "gpus": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["vendorId", "pnpDeviceIdsExact", "nameContains"],
+        "properties": {
+          "vendorId": { "type": "string" },
+          "pnpDeviceIdsExact": { "type": "array", "items": { "type": "string" } },
+          "nameContains": { "type": "string" }
+        }
+      },
+      "minItems": 1
+    },
+    "wmiProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "class", "instanceName", "readType", "writeType"],
+      "properties": {
+        "namespace": { "type": "string" },
+        "class": { "type": "string" },
+        "instanceName": { "type": "string" },
+        "readType": { "type": "integer" },
+        "writeType": { "type": "integer" }
+      }
+    },
+    "dependencies": { "type": "array" },
+    "safety": { "type": "object" },
+    "capabilities": { "type": "array" },
+    "migration": { "type": "object" }
+  }
+}

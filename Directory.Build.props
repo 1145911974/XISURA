@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectExtension)' == '.csproj'">
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22621.0</TargetPlatformMinVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <SelfContained Condition="'$(OutputType)' == 'Exe' Or '$(OutputType)' == 'WinExe'">true</SelfContained>
+    <PublishSingleFile Condition="'$(OutputType)' == 'Exe' Or '$(OutputType)' == 'WinExe'">false</PublishSingleFile>
+    <SelfContained Condition="'$(IsTestProject)' == 'true'">false</SelfContained>
+  </PropertyGroup>
+</Project>

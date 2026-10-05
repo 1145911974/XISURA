@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Prototype.Controls.PerformanceWorkspaceV2"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:shared="using:Jiaolong_ControlCenter.Controls"
+    xmlns:prototype="using:Jiaolong_ControlCenter.Prototype.Controls"
+    Width="1380"
+    Height="1045">
+    <UserControl.Resources>
+        <Style x:Key="V2SegmentButtonStyle" TargetType="Button" BasedOn="{StaticResource ControlGlassButtonStyle}">
+            <Setter Property="Height" Value="32" />
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="Padding" Value="8,0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource PrototypeSecondaryTextBrush}" />
+            <Setter Property="Background" Value="{StaticResource ControlButtonNeutralBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PrototypeStrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="UseSystemFocusVisuals" Value="True" />
+            <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ModeAccentBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer
+        x:Name="PerformancePageScrollViewer"
+        VerticalScrollBarVisibility="Hidden"
+        HorizontalScrollBarVisibility="Disabled"
+        VerticalScrollMode="Enabled"
+        HorizontalScrollMode="Disabled">
+    <Grid Padding="18,30,18,28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="126" />
+            <RowDefinition Height="708" />
+            <RowDefinition Height="16" />
+            <RowDefinition Height="104" />
+            <RowDefinition Height="14" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="20" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <StackPanel VerticalAlignment="Center" Spacing="6">
+                <TextBlock Text="性能控制" FontSize="32" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}" />
+                <TextBlock Text="精确调校 CPU 性能、平衡性能、温度与功耗" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}" />
+            </StackPanel>
+            <shared:PagePresetToolbar x:Name="PresetToolbar" HorizontalAlignment="Right" VerticalAlignment="Center" SelectedKeyChanged="OnPresetKeyChanged" SaveRequested="OnSavePresetClick" UseRequested="OnUsePresetClick" />
+        </Grid>
+
+        <Grid x:Name="DefaultContentGrid" Grid.Row="1" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.53*" />
+                <ColumnDefinition Width="1*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Background="{StaticResource PerformanceV2CardBrush}" BorderBrush="{StaticResource PerformanceV2CardBorderBrush}" BorderThickness="1" CornerRadius="{StaticResource PerformanceV2CardCornerRadius}" Padding="18">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="58" />
+                        <RowDefinition Height="124" />
+                        <RowDefinition Height="124" />
+                        <RowDefinition Height="124" />
+                        <RowDefinition Height="124" />
+                        <RowDefinition Height="124" />
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <TextBlock Text="基础调校" FontSize="25" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}" VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="18">
+                            <StackPanel Orientation="Horizontal" Spacing="7"><Ellipse Width="9" Height="9" Fill="{StaticResource ModeAccentBrush}" /><TextBlock Text="当前值" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}" /></StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="7"><Ellipse Width="9" Height="9" Fill="White" /><TextBlock Text="推荐值" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}" /></StackPanel>
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Grid.Row="3" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="0,1,0,0">
+                        <shared:PerformanceParameterRowV2 x:Name="TemperatureRow" Title="温度墙" Description="CPU 最高温度限制" Minimum="45" Maximum="100" RecommendedValue="75" LimitValue="100" Unit="°C" TrailingWidth="52" ValueChanged="OnDraftValueChanged" HelpEffect="限制处理器最高温度；降低会更早限制频率，通常更安静，提高可能维持更长性能但增加热量。" HelpRecommendedRange="内置标准档：办公 75°C、游戏 85°C、狂飙 90°C；是软件预设参考，优先保留厂商当前值。" HelpSafeRange="保持已验证温限；需降温时逐步降低。输入范围 45–100°C。" HelpExtremeLimit="100°C 仅为软件输入上限，不是推荐温度或硬件安全保证。" HelpRisk="过低限制持续性能；过高增加温度与噪声。">
+                            <shared:PerformanceParameterRowV2.IconContent>
+                                <Viewbox Width="29" Height="42"><Canvas Width="24" Height="46"><Path Data="M12,2 C8.7,2 6,4.7 6,8 L6,25 C3.5,27 2,30.2 2,33.5 C2,39.3 6.5,44 12,44 C17.5,44 22,39.3 22,33.5 C22,30.2 20.5,27 18,25 L18,8 C18,4.7 15.3,2 12,2 Z" Fill="Transparent" Stroke="White" StrokeThickness="2.5" /><Path Data="M12,11 L12,34" Stroke="White" StrokeThickness="4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" /><Ellipse Canvas.Left="6" Canvas.Top="28" Width="12" Height="12" Fill="White" /></Canvas></Viewbox>
+                            </shared:PerformanceParameterRowV2.IconContent>
+                        </shared:PerformanceParameterRowV2>
+                    </Border>
+                    <Border Grid.Row="4" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="0,1,0,0">
+                        <shared:PerformanceParameterRowV2 x:Name="SustainedPowerRow" Title="持续功耗" Description="长时间稳定运行功耗 · SPL" Minimum="45" Maximum="75" RecommendedValue="55" LimitValue="75" TrailingWidth="52" Unit="W" ValueChanged="OnDraftValueChanged" HelpEffect="设置处理器长时间负载功耗 SPL；提高可增强持续性能，也增加发热与噪声。" HelpRecommendedRange="内置标准档：办公 55 W、游戏 60 W、狂飙 65 W；仅是软件参考，实际以本机能力为准。" HelpSafeRange="优先保持厂商当前值，或在性能可接受时逐步下调；软件输入 45–75 W。" HelpExtremeLimit="75 W 是软件输入上限，不代表本机硬件最高值或稳定保证。" HelpRisk="提高会增加温度、噪声与供电负载。"><shared:PerformanceParameterRowV2.IconContent><FontIcon Glyph="&#xE945;" FontFamily="Segoe Fluent Icons" FontSize="28" Foreground="White" /></shared:PerformanceParameterRowV2.IconContent></shared:PerformanceParameterRowV2>
+                    </Border>
+                    <Border Grid.Row="5" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="0,1,0,0">
+                        <shared:PerformanceParameterRowV2 x:Name="BurstPowerRow" Title="短时功耗" Description="短时加速最大功耗 · SPPT" Minimum="45" Maximum="75" RecommendedValue="55" LimitValue="75" TrailingWidth="52" Unit="W" ValueChanged="OnDraftValueChanged" HelpEffect="设置处理器短时加速功耗 SPPT；提高可能改善突发任务响应，也会让温度和供电负载短时上升。" HelpRecommendedRange="内置标准档：办公 55 W、游戏 65 W、狂飙 70 W；仅是软件参考，实际以本机能力为准。" HelpSafeRange="保留已验证值；需降温时逐步下调，避免同时提高持续与短时功耗；软件输入 45–75 W。" HelpExtremeLimit="75 W 是软件输入上限，不代表本机硬件最高值或稳定保证。" HelpRisk="提高会造成温度短时上冲并增加供电压力。"><shared:PerformanceParameterRowV2.IconContent><FontIcon Glyph="&#xE7E8;" FontFamily="Segoe Fluent Icons" FontSize="28" Foreground="White" /></shared:PerformanceParameterRowV2.IconContent></shared:PerformanceParameterRowV2>
+                    </Border>
+                    <Border Grid.Row="2" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="0,1,0,0">
+                        <shared:PerformanceParameterRowV2 x:Name="FrequencyRow" Title="频率上限" Description="最高频率" Minimum="1500" Maximum="5400" StepFrequency="100" RecommendedValue="3800" LimitValue="5400" DisplayScale="0.001" Unit="GHz" TrailingWidth="190" ValueChanged="OnFrequencyValueChanged" HelpEffect="限制处理器最高频率，不会锁定持续频率；空闲时仍自动降频。AC 指接通电源，DC 指电池；提高上限不保证达到该频率。" HelpRecommendedRange="内置办公标准档 AC 3.8 GHz、DC 3.0 GHz；游戏 AC 4.7 GHz、DC 3.3 GHz；仅作软件参考。" HelpSafeRange="优先保留本机当前上限；续航或静音优先可逐步下调，软件输入 1.5–5.4 GHz。" HelpExtremeLimit="5.4 GHz 是软件输入上限，不代表处理器可达频率或超频保证。" HelpRisk="降低上限可能损失峰值性能；提高上限可能增加温度、功耗与噪声。">
+                            <shared:PerformanceParameterRowV2.IconContent><FontIcon Glyph="&#xE8A0;" FontFamily="Segoe Fluent Icons" FontSize="28" Foreground="White" /></shared:PerformanceParameterRowV2.IconContent>
+                            <shared:PerformanceParameterRowV2.AccessoryContent><StackPanel Orientation="Horizontal" Spacing="4"><Button x:Name="FrequencyAcButton" Content="AC" Style="{StaticResource V2SegmentButtonStyle}" Click="OnFrequencyAcClick" /><Button x:Name="FrequencyDcButton" Content="DC" Style="{StaticResource V2SegmentButtonStyle}" Click="OnFrequencyDcClick" /></StackPanel></shared:PerformanceParameterRowV2.AccessoryContent>
+                        </shared:PerformanceParameterRowV2>
+                    </Border>
+                    <Border Grid.Row="1">
+                        <shared:PerformanceParameterRowV2 x:Name="CurveOptimizerRow" Title="曲线优化" Description="沿用 BIOS" Minimum="-30" Maximum="0" StepFrequency="1" RecommendedValue="0" LimitValue="0" Unit="步" TrailingWidth="190" ValueChanged="OnCurveOffsetChanged" HelpEffect="全核负偏移降低同频率下的请求电压，可能减少功耗与温度；不是直接指定电压。保存仅保留草稿，使用已保存的性能预设后才提交。" HelpRecommendedRange="优先沿用 BIOS；需调整时从接近 0 步开始并验证轻载、待机、重负载稳定性。" HelpSafeRange="沿用 BIOS 不额外写入；0 步是新目标，不等于恢复 BIOS 旧值。" HelpExtremeLimit="-30 步仅为软件负向边界；输入 -30–0 步，步数不等于固定毫伏数，不代表稳定范围。" HelpRisk="负偏移过大可能崩溃。写入后逐核读取实际偏移，失败时恢复写入前值；长期稳定性仍须负载验证。0 是新目标，不等于恢复 BIOS 旧值；沿用 BIOS 不写入，也不撤销偏移。">
+                            <shared:PerformanceParameterRowV2.IconContent><FontIcon Glyph="&#xE9D9;" FontFamily="Segoe Fluent Icons" FontSize="28" Foreground="White" /></shared:PerformanceParameterRowV2.IconContent>
+                            <shared:PerformanceParameterRowV2.AccessoryContent>
+                                    <ComboBox x:Name="CurveModeSelector" Width="116" Height="32" MinHeight="32" Padding="8,0" SelectionChanged="OnCurveModeSelectionChanged" AutomationProperties.Name="曲线优化控制方式">
+                                        <ComboBoxItem Content="沿用 BIOS" />
+                                        <ComboBoxItem Content="全核统一" />
+                                        <ComboBoxItem Content="逐核设置" />
+                                    </ComboBox>
+                            </shared:PerformanceParameterRowV2.AccessoryContent>
+                        </shared:PerformanceParameterRowV2>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Background="{StaticResource PerformanceV2CardBrush}" BorderBrush="{StaticResource PerformanceV2CardBorderBrush}" BorderThickness="1" CornerRadius="{StaticResource PerformanceV2CardCornerRadius}" Padding="18">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="48" /><RowDefinition Height="342" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid><TextBlock Text="CPU 运行边界" FontSize="25" FontWeight="SemiBold" Foreground="White" /><StackPanel HorizontalAlignment="Right" Spacing="2"><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8"><Ellipse x:Name="ConnectionDot" Width="9" Height="9" Fill="#FF69727F" /><TextBlock x:Name="ConnectionText" Text="未连接" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}" /></StackPanel><TextBlock x:Name="BoundarySourceText" Text="等待读回" HorizontalAlignment="Right" FontSize="11" Foreground="{StaticResource PrototypeSecondaryTextBrush}" /></StackPanel></Grid>
+                    <shared:CpuOperatingBoundaryV2 x:Name="CpuBoundary" Grid.Row="1" HorizontalAlignment="Center" />
+                    <Grid x:Name="CpuSystemControls" Grid.Row="2"><Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                        <Grid Grid.Row="0"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"><TextBlock Text="CPU Boost（睿频加速）" FontSize="15" Foreground="White" /><shared:ParameterHelpButton x:Name="BoostHelpButton" ParameterName="CPU Boost" /></StackPanel><ToggleSwitch x:Name="BoostToggle" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" OffContent="" OnContent="" Toggled="OnBoostToggled" AutomationProperties.Name="CPU Boost" /></Grid>
+                        <Border Grid.Row="1" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="0,1,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"><TextBlock Text="Windows 电源计划" FontSize="15" Foreground="White" /><shared:ParameterHelpButton x:Name="PowerPlanHelpButton" ParameterName="Windows 电源计划" /></StackPanel><ComboBox x:Name="PowerPlanSelector" Grid.Column="1" VerticalAlignment="Center" MinWidth="176" Height="38" PlaceholderText="读取中" SelectedValuePath="Tag" SelectionChanged="OnPowerPlanSelectionChanged" Background="#AA090D14" BorderBrush="#38FFFFFF" BorderThickness="1" CornerRadius="8" Foreground="White" AutomationProperties.Name="选择 Windows 电源计划" /></Grid></Border>
+                        <Border Grid.Row="2" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="0,1,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="当前电源状态" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center"><FontIcon Glyph="&#xE7E8;" FontSize="16" Foreground="White" /><TextBlock x:Name="PowerStateText" Text="不可用" FontSize="14" Foreground="White" /></StackPanel></Grid></Border>
+                        <Border Grid.Row="3" BorderBrush="{StaticResource PrototypeDividerBrush}" BorderThickness="0,1,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="当前控制来源" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center"><FontIcon Glyph="&#xE7F4;" FontSize="16" Foreground="White" /><TextBlock x:Name="ControlSourceText" Text="未连接" FontSize="14" Foreground="White" /></StackPanel></Grid></Border>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Button x:Name="AdvancedButton" Grid.Row="3" Style="{StaticResource PerformanceV2AdvancedButtonStyle}" Click="OnAdvancedClick" AutomationProperties.AutomationId="PerformanceV2AdvancedButton" AutomationProperties.Name="展开高级 CPU 调校">
+            <Grid Margin="4,0" ColumnSpacing="24">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <FontIcon x:Name="AdvancedChevronIcon" Glyph="&#xE76C;" FontSize="20" Foreground="White" RenderTransformOrigin="0.5,0.5"><FontIcon.RenderTransform><RotateTransform Angle="0" /></FontIcon.RenderTransform></FontIcon>
+                <TextBlock Grid.Column="1" Text="高级 CPU 调校" FontSize="21" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center"><TextBlock Text="Ryzen SMU" Foreground="{StaticResource PrototypeSecondaryTextBrush}" /><TextBlock Text="|" Opacity="0.32" /><TextBlock Text="PBO / 曲线优化" Foreground="{StaticResource PrototypeSecondaryTextBrush}" /><TextBlock Text="|" Opacity="0.32" /><TextBlock Text="逐核心调节" Foreground="{StaticResource PrototypeSecondaryTextBrush}" /></StackPanel>
+                <TextBlock x:Name="AdvancedStateText" Visibility="Collapsed" />
+            </Grid>
+        </Button>
+
+        <prototype:AdvancedCpuTuningWorkspaceV2 x:Name="AdvancedWorkspace" Grid.Row="5" Visibility="Collapsed" Changed="OnAdvancedChanged" />
+    </Grid>
+    </ScrollViewer>
+</UserControl>

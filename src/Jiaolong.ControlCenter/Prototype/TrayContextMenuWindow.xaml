@@ -1,0 +1,26 @@
+<Window x:Class="Jiaolong_ControlCenter.Prototype.TrayContextMenuWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="蛟龙托盘菜单">
+    <Border x:Name="MenuSurface" RequestedTheme="Dark" Padding="3" CornerRadius="6" BorderThickness="0" BorderBrush="#292929">
+        <Border.Background><SolidColorBrush Color="#1F1F1F" Opacity="0.98" /></Border.Background>
+        <StackPanel>
+            <StackPanel.Resources>
+                <Style TargetType="MenuFlyoutItem">
+                    <Setter Property="HorizontalAlignment" Value="Stretch" />
+                    <Setter Property="HorizontalContentAlignment" Value="Left" />
+                    <Setter Property="MinWidth" Value="0" />
+                    <Setter Property="MinHeight" Value="28" />
+                    <Setter Property="Height" Value="28" />
+                    <Setter Property="Padding" Value="9,0" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Foreground" Value="#EEEEEE" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="CornerRadius" Value="4" />
+                </Style>
+            </StackPanel.Resources>
+            <MenuFlyoutItem x:Name="OpenItem" Text="打开客户端" Click="OnOpenClick" />
+            <MenuFlyoutItem x:Name="ExitItem" Text="退出" Click="OnExitClick" />
+        </StackPanel>
+    </Border>
+</Window>

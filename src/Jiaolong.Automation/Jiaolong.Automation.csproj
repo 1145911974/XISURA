@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Jiaolong.Contracts\Jiaolong.Contracts.csproj" />
+    <ProjectReference Include="..\Jiaolong.Hardware.Abstractions\Jiaolong.Hardware.Abstractions.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Jiaolong.ControlCenter\Services\AdaptiveTriggerPolicy.cs" Link="AdaptiveRuntime\AdaptiveTriggerPolicy.cs" />
+    <Compile Include="..\Jiaolong.ControlCenter\Services\AdaptiveAdvancedSettings.cs" Link="AdaptiveRuntime\AdaptiveAdvancedSettings.cs" />
+    <Compile Include="..\Jiaolong.ControlCenter\Services\AdaptiveTargetMap.cs" Link="AdaptiveRuntime\AdaptiveTargetMap.cs" />
+    <Compile Include="..\Jiaolong.ControlCenter\Services\AdaptiveStrategySelection.cs" Link="AdaptiveRuntime\AdaptiveStrategySelection.cs" />
+  </ItemGroup>
+
+</Project>

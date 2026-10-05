@@ -1,0 +1,351 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Prototype.Controls.AutomationWorkspaceV2"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Jiaolong_ControlCenter.Controls">
+    <UserControl.Resources>
+        <Style x:Key="StrategyAppearanceButtonStyle" TargetType="Button">
+            <Setter Property="UseSystemFocusVisuals" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid x:Name="IconRoot" Background="Transparent">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.16" /></VisualStateGroup.Transitions>
+                                    <VisualState x:Name="Normal"><VisualState.Setters><Setter Target="IconRoot.Opacity" Value="0.8" /></VisualState.Setters></VisualState>
+                                    <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="IconRoot.Opacity" Value="1" /></VisualState.Setters></VisualState>
+                                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="IconRoot.Opacity" Value="0.55" /></VisualState.Setters></VisualState>
+                                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="IconRoot.Opacity" Value="0.35" /></VisualState.Setters></VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Content="{TemplateBinding Content}" />
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <SolidColorBrush x:Key="AutoReferencedBrush" Color="#68B87D"/>
+        <StaticResource x:Key="AutoStatusSurfaceBrush" ResourceKey="PrototypeInsetCardBrush" />
+        <Style x:Key="AutoSurface" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource PrototypeControlAcrylicBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PrototypeStrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="18" />
+        </Style>
+        <Style x:Key="AutoInsetSurface" TargetType="Border" BasedOn="{StaticResource AutoSurface}">
+            <Setter Property="Background" Value="{StaticResource PrototypeInsetCardBrush}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+        </Style>
+        <Style x:Key="AutoCardButton" TargetType="Button" BasedOn="{StaticResource ControlGlassButtonStyle}">
+            <Setter Property="Background" Value="{StaticResource PrototypeInsetCardBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource PrototypeTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PrototypeStrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="20,18" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="MinHeight" Value="129" />
+        </Style>
+        <Style x:Key="AutoMapRowButton" TargetType="Button" BasedOn="{StaticResource ControlGlassButtonStyle}">
+            <Setter Property="Height" Value="54" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="10,0,0,0" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Background" Value="{StaticResource PrototypeControlAcrylicBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PrototypeStrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Padding="18,30,18,28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="126" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="6" VerticalAlignment="Center">
+                <TextBlock Text="自动调度" Foreground="{StaticResource PrototypeTextBrush}" FontSize="32" FontWeight="SemiBold" />
+                <TextBlock Text="按负载、电源与应用状态选择已保存的模式预设" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                <Border Width="218" Height="52" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="10" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <FontIcon Glyph="&#xE946;" FontFamily="Segoe Fluent Icons" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}" />
+                        <TextBlock x:Name="ServiceControlStatusText" Text="自动调度已关闭" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="13" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+                <Button x:Name="RestoreMapButton" Content="恢复推荐" Click="OnRestoreMap" Style="{StaticResource PerformanceV2ActionButtonStyle}" BorderBrush="{StaticResource PrototypeStrokeBrush}" AutomationProperties.Name="恢复当前方案的推荐目标映射和候选条件" />
+                <Button x:Name="SaveMapButton" Content="保存方案" Click="OnSaveMap" Style="{StaticResource PerformanceV2ActionButtonStyle}" Background="{StaticResource ModeSelectionBrush}" BorderBrush="{StaticResource ModeAccentBrush}" BorderThickness="1" AutomationProperties.Name="保存正在编辑方案的目标映射和候选条件" />
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="0">
+                <Border x:Name="DecisionSurface" Style="{StaticResource AutoSurface}" MinHeight="208" Padding="18" Margin="1,0,3,16" SizeChanged="OnAnimatedSurfaceSizeChanged">
+                    <StackPanel Spacing="20">
+                        <Grid>
+                            <TextBlock Text="当前判定" Foreground="{StaticResource PrototypeTextBrush}" FontSize="22" FontWeight="SemiBold" />
+                            <Button Content="查看依据  ⌄" Click="OnDecisionDetailsClick" HorizontalAlignment="Right" Padding="8,2" Background="Transparent" Foreground="{StaticResource PrototypeSecondaryTextBrush}" BorderBrush="Transparent" BorderThickness="0" AutomationProperties.Name="展开当前判定依据" />
+                        </Grid>
+                        <Grid ColumnSpacing="10" Height="116">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="197*" /><ColumnDefinition Width="47*" /><ColumnDefinition Width="194*" /><ColumnDefinition Width="284*" />
+                                <ColumnDefinition Width="91*" /><ColumnDefinition Width="91*" /><ColumnDefinition Width="92*" /><ColumnDefinition Width="107*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Style="{StaticResource AutoInsetSurface}" Padding="16,12" CornerRadius="11">
+                                <StackPanel Spacing="7" VerticalAlignment="Center">
+                                    <TextBlock Text="当前模式" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" />
+                                    <TextBlock x:Name="CurrentModeText" Text="--" Foreground="{StaticResource PrototypeTextBrush}" FontSize="23" FontWeight="SemiBold" />
+                                    <TextBlock Text="以服务状态为准" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" />
+                                </StackPanel>
+                            </Border>
+                            <Image Grid.Column="1" Source="ms-appx:///Assets/Automation/DecisionArrow.png" Width="36" Height="34" VerticalAlignment="Center" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                            <Border Grid.Column="2" Style="{StaticResource AutoInsetSurface}" BorderBrush="{StaticResource ModeAccentBrush}" Padding="16,12" CornerRadius="11" Margin="0,0,10,0">
+                                <StackPanel Spacing="7" VerticalAlignment="Center">
+                                    <TextBlock Text="候选模式" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" />
+                                    <TextBlock x:Name="CandidateModeText" Text="尚未判定" Foreground="{StaticResource PrototypeTextBrush}" FontSize="23" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="CandidateDetailText" Text="等待有效判定" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="3" Style="{StaticResource AutoInsetSurface}" Padding="16,12" CornerRadius="11" Margin="0,0,18,0">
+                                <StackPanel Spacing="7" VerticalAlignment="Center">
+                                    <TextBlock Text="判定原因" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" />
+                                    <TextBlock x:Name="DecisionReasonText" Text="首页未开启自动" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="负载与应用状态作为判定依据" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="4" Style="{StaticResource AutoInsetSurface}" Padding="4,10" CornerRadius="11">
+                                <Grid Height="84" VerticalAlignment="Center">
+                                    <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="20"/><RowDefinition Height="24"/></Grid.RowDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/DecisionPower.png" Width="34" Height="36" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Grid.Row="1" Grid.RowSpan="2" x:Name="PowerText" Text="--" Foreground="{StaticResource PrototypeTextBrush}" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                </Grid>
+                            </Border>
+                            <Border Grid.Column="5" Style="{StaticResource AutoInsetSurface}" Padding="4,10" CornerRadius="11">
+                                <Grid Height="84" VerticalAlignment="Center">
+                                    <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="20"/><RowDefinition Height="24"/></Grid.RowDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/DecisionCpu.png" Width="34" Height="36" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Grid.Row="1" Text="CPU" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" HorizontalAlignment="Center" />
+                                    <TextBlock Grid.Row="2" x:Name="CpuLoadText" Text="--" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <Border Grid.Column="6" Style="{StaticResource AutoInsetSurface}" Padding="4,10" CornerRadius="11">
+                                <Grid Height="84" VerticalAlignment="Center">
+                                    <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="20"/><RowDefinition Height="24"/></Grid.RowDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/DecisionGpu.png" Width="34" Height="36" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Grid.Row="1" Text="GPU" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" HorizontalAlignment="Center" />
+                                    <TextBlock Grid.Row="2" x:Name="GpuLoadText" Text="--" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <Border Grid.Column="7" Style="{StaticResource AutoInsetSurface}" Padding="5,10" CornerRadius="11">
+                                <Grid Height="84" VerticalAlignment="Center">
+                                    <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="20"/><RowDefinition Height="24"/></Grid.RowDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/DecisionThermal.png" Width="34" Height="36" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock x:Name="ThermalMarginText" Grid.Row="1" Grid.RowSpan="2" Text="温度待确认" Foreground="{StaticResource PrototypeTextBrush}" FontSize="12" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <TextBlock x:Name="DecisionDetailsText" Visibility="Collapsed" Text="传感器与目标预设需验证后才可参与自动判定。" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource AutoSurface}" MinHeight="226" Padding="18" Margin="1,0,3,16">
+                    <Grid RowSpacing="16">
+                        <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="138"/></Grid.RowDefinitions>
+                        <Grid ColumnSpacing="20">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="调度策略" Foreground="{StaticResource PrototypeTextBrush}" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="选择自动调度的总体策略，不同策略在性能、噪声与切换时机上有所侧重。" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            <Button Grid.Column="2" x:Name="UseStrategyButton" Content="使用此方案" Click="OnUseStrategy" Visibility="Collapsed" Style="{StaticResource ControlGlassButtonStyle}" Background="{StaticResource ModeSelectionBrush}" BorderBrush="{StaticResource ModeAccentBrush}" BorderThickness="1" Foreground="{StaticResource PrototypeTextBrush}" CornerRadius="8" Height="30" Padding="12,0" AutomationProperties.Name="使用选中的自动策略，仅保存本地选择"/>
+                        </Grid>
+                        <Grid Grid.Row="1" ColumnSpacing="14">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0"><Button x:Name="QuietCard" Style="{StaticResource AutoCardButton}" Click="OnChooseQuiet" AutomationProperties.Name="选择安静优先策略" AutomationProperties.AutomationId="Auto.Strategy.Quiet">
+                                <Grid ColumnSpacing="18" RowSpacing="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="62"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                    <Grid Width="22" Height="22" UseLayoutRounding="False" VerticalAlignment="Top" Margin="0,7,0,0">
+                                        <Ellipse x:Name="QuietRadioRing" Stroke="{StaticResource PrototypeSecondaryTextBrush}" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center" StrokeThickness="2" UseLayoutRounding="False"/>
+                                        <Ellipse x:Name="QuietRadioDot" Width="10" Height="10" UseLayoutRounding="False" Fill="{StaticResource ModeAccentBrush}" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Grid>
+                                    <Image x:Name="QuietStrategyIcon" Source="ms-appx:///Assets/Automation/StrategyQuiet.png" Width="52" Height="54" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <StackPanel Grid.Column="2" Spacing="7" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" Spacing="12">
+                                            <TextBlock x:Name="QuietStrategyName" MaxWidth="145" TextTrimming="CharacterEllipsis" Text="安静优先" Foreground="{StaticResource PrototypeTextBrush}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="QuietBadge" Foreground="{StaticResource ModeAccentBrush}" FontSize="12" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <TextBlock Text="低噪、慢切换" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="16"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="QuietStrategyNote" MaxLines="2" TextTrimming="CharacterEllipsis" Text="优先控制噪声，适合日常办公与轻度使用" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" TextWrapping="Wrap" VerticalAlignment="Bottom"/>
+                                </Grid>
+                            </Button><Button Tag="QuietFirst" Click="OnEditAppearance" Style="{StaticResource StrategyAppearanceButtonStyle}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,5,0" Width="30" Height="30" Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource PrototypeSecondaryTextBrush}" AutomationProperties.Name="编辑安静优先昵称备注和图标"><Path Width="14" Height="14" Stretch="Uniform" Fill="{StaticResource PrototypeSecondaryTextBrush}" Data="M3,17.25 L3,21 L6.75,21 L17.81,9.94 L14.06,6.19 Z M20.71,7.04 C21.1,6.65 21.1,6.02 20.71,5.63 L18.37,3.29 C17.98,2.9 17.35,2.9 16.96,3.29 L15.13,5.12 L18.88,8.87 Z"/></Button></Grid>
+                            <Grid Grid.Column="1"><Button x:Name="BalancedCard" Style="{StaticResource AutoCardButton}" Click="OnChooseBalanced" AutomationProperties.Name="选择均衡自适应策略" AutomationProperties.AutomationId="Auto.Strategy.Balanced">
+                                <Grid ColumnSpacing="18" RowSpacing="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="62"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                    <Grid Width="22" Height="22" UseLayoutRounding="False" VerticalAlignment="Top" Margin="0,7,0,0">
+                                        <Ellipse x:Name="BalancedRadioRing" Stroke="{StaticResource PrototypeSecondaryTextBrush}" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center" StrokeThickness="2" UseLayoutRounding="False"/>
+                                        <Ellipse x:Name="BalancedRadioDot" Width="10" Height="10" UseLayoutRounding="False" Fill="{StaticResource ModeAccentBrush}" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Grid>
+                                    <Image x:Name="BalancedStrategyIcon" Source="ms-appx:///Assets/Automation/StrategyBalanced.png" Width="52" Height="54" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <StackPanel Grid.Column="2" Spacing="7" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" Spacing="12">
+                                            <TextBlock x:Name="BalancedStrategyName" MaxWidth="145" TextTrimming="CharacterEllipsis" Text="均衡自适应" Foreground="{StaticResource PrototypeTextBrush}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <Border Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource ModeAccentBrush}" BorderThickness="1" CornerRadius="5" Padding="7,2" VerticalAlignment="Center"><TextBlock x:Name="BalancedBadge" Text="推荐" FontSize="13" Foreground="{StaticResource PrototypeTextBrush}"/></Border>
+                                        </StackPanel>
+                                        <TextBlock Text="兼顾性能与噪声" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="16"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="BalancedStrategyNote" MaxLines="2" TextTrimming="CharacterEllipsis" Text="根据负载与应用状态智能切换，平衡体验" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" TextWrapping="Wrap" VerticalAlignment="Bottom"/>
+                                </Grid>
+                            </Button><Button Tag="BalancedAdaptive" Click="OnEditAppearance" Style="{StaticResource StrategyAppearanceButtonStyle}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,5,0" Width="30" Height="30" Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource PrototypeSecondaryTextBrush}" AutomationProperties.Name="编辑均衡自适应昵称备注和图标"><Path Width="14" Height="14" Stretch="Uniform" Fill="{StaticResource PrototypeSecondaryTextBrush}" Data="M3,17.25 L3,21 L6.75,21 L17.81,9.94 L14.06,6.19 Z M20.71,7.04 C21.1,6.65 21.1,6.02 20.71,5.63 L18.37,3.29 C17.98,2.9 17.35,2.9 16.96,3.29 L15.13,5.12 L18.88,8.87 Z"/></Button></Grid>
+                            <Grid Grid.Column="2"><Button x:Name="ResponseCard" Style="{StaticResource AutoCardButton}" Click="OnChooseResponse" AutomationProperties.Name="选择响应优先策略" AutomationProperties.AutomationId="Auto.Strategy.Response">
+                                <Grid ColumnSpacing="18" RowSpacing="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="62"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                    <Grid Width="22" Height="22" UseLayoutRounding="False" VerticalAlignment="Top" Margin="0,7,0,0">
+                                        <Ellipse x:Name="ResponseRadioRing" Stroke="{StaticResource PrototypeSecondaryTextBrush}" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center" StrokeThickness="2" UseLayoutRounding="False"/>
+                                        <Ellipse x:Name="ResponseRadioDot" Width="10" Height="10" UseLayoutRounding="False" Fill="{StaticResource ModeAccentBrush}" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Grid>
+                                    <Image x:Name="ResponseStrategyIcon" Source="ms-appx:///Assets/Automation/StrategyResponse.png" Width="52" Height="54" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <StackPanel Grid.Column="2" Spacing="7" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" Spacing="12">
+                                            <TextBlock x:Name="ResponseStrategyName" MaxWidth="145" TextTrimming="CharacterEllipsis" Text="响应优先" Foreground="{StaticResource PrototypeTextBrush}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="ResponseBadge" Foreground="{StaticResource ModeAccentBrush}" FontSize="12" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <TextBlock Text="快速响应、较少等待" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="16"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="ResponseStrategyNote" MaxLines="2" TextTrimming="CharacterEllipsis" Text="更快切换到高性能，适合游戏与高负载场景" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" TextWrapping="Wrap" VerticalAlignment="Bottom"/>
+                                </Grid>
+                            </Button><Button Tag="ResponseFirst" Click="OnEditAppearance" Style="{StaticResource StrategyAppearanceButtonStyle}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,5,0" Width="30" Height="30" Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource PrototypeSecondaryTextBrush}" AutomationProperties.Name="编辑响应优先昵称备注和图标"><Path Width="14" Height="14" Stretch="Uniform" Fill="{StaticResource PrototypeSecondaryTextBrush}" Data="M3,17.25 L3,21 L6.75,21 L17.81,9.94 L14.06,6.19 Z M20.71,7.04 C21.1,6.65 21.1,6.02 20.71,5.63 L18.37,3.29 C17.98,2.9 17.35,2.9 16.96,3.29 L15.13,5.12 L18.88,8.87 Z"/></Button></Grid>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Grid ColumnSpacing="16" Margin="1,0,3,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Border x:Name="MappingSurface" Style="{StaticResource AutoSurface}" Padding="18" MinHeight="316" VerticalAlignment="Top" SizeChanged="OnAnimatedSurfaceSizeChanged">
+                        <StackPanel Spacing="8">
+                            <Grid Height="62">
+                                <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                <TextBlock Text="目标映射" Foreground="{StaticResource PrototypeTextBrush}" FontSize="22" FontWeight="SemiBold"/>
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                    <Button x:Name="AcMapButton" Content="交流电" Click="OnSelectAc" Padding="10,3" CornerRadius="8" Background="{StaticResource ModeSelectionBrush}" Foreground="{StaticResource PrototypeTextBrush}" BorderBrush="{StaticResource ModeAccentBrush}" BorderThickness="1" AutomationProperties.Name="查看交流电目标映射"/>
+                                    <Button x:Name="DcMapButton" Content="电池" Click="OnSelectDc" Padding="10,3" CornerRadius="8" Background="{StaticResource PrototypeControlAcrylicBrush}" Foreground="{StaticResource PrototypeTextBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" AutomationProperties.Name="查看电池目标映射"/>
+                                </StackPanel>
+                                <TextBlock Grid.Row="1" Text="为不同使用场景选择要切换的目标模式预设。" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                                <Grid Height="64" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition Width="80"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Image Source="ms-appx:///Assets/Automation/TargetOffice.png" Width="40" Height="34" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw"/><TextBlock Grid.Column="1" Text="办公" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/><Button x:Name="OfficeTargetButton" Grid.Column="2" Click="OnSelectOfficeTarget" Style="{StaticResource AutoMapRowButton}" Height="46" Padding="0" VerticalAlignment="Center" AutomationProperties.AutomationId="Auto.Target.Office" AutomationProperties.Name="编辑办公目标"><Grid Margin="14,0,9,0" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="OfficeTargetText" Foreground="{StaticResource PrototypeTextBrush}" FontSize="16" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                <Image Source="ms-appx:///Assets/Automation/SelectorChevron.png" Width="24" Height="22" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                            </Grid></Button></Grid>
+                                <Border Grid.Column="1" Height="46" Background="{StaticResource AutoStatusSurfaceBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="9" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="9" Margin="11,0" VerticalAlignment="Center">
+                                        <Grid Width="18" Height="18"><Ellipse Fill="{StaticResource AutoReferencedBrush}"/><FontIcon Glyph="&#xE73E;" FontFamily="Segoe Fluent Icons" FontSize="11" Foreground="#18271B"/></Grid>
+                                        <TextBlock Text="已引用" Foreground="{StaticResource AutoReferencedBrush}" FontSize="15" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Grid ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                                <Grid Height="64" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition Width="80"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Image Source="ms-appx:///Assets/Automation/TargetGame.png" Width="40" Height="34" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw"/><TextBlock Grid.Column="1" Text="游戏" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/><Button x:Name="GameTargetButton" Grid.Column="2" Click="OnSelectGameTarget" Style="{StaticResource AutoMapRowButton}" Height="46" Padding="0" VerticalAlignment="Center" AutomationProperties.AutomationId="Auto.Target.Game" AutomationProperties.Name="编辑游戏目标"><Grid Margin="14,0,9,0" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="GameTargetText" Foreground="{StaticResource PrototypeTextBrush}" FontSize="16" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                <Image Source="ms-appx:///Assets/Automation/SelectorChevron.png" Width="24" Height="22" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                            </Grid></Button></Grid>
+                                <Border Grid.Column="1" Height="46" Background="{StaticResource AutoStatusSurfaceBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="9" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="9" Margin="11,0" VerticalAlignment="Center">
+                                        <Grid Width="18" Height="18"><Ellipse Fill="{StaticResource AutoReferencedBrush}"/><FontIcon Glyph="&#xE73E;" FontFamily="Segoe Fluent Icons" FontSize="11" Foreground="#18271B"/></Grid>
+                                        <TextBlock Text="已引用" Foreground="{StaticResource AutoReferencedBrush}" FontSize="15" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Grid ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                                <Grid Height="64" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition Width="80"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Image Source="ms-appx:///Assets/Automation/TargetTurbo.png" Width="40" Height="34" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw"/><TextBlock Grid.Column="1" Text="狂飙" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/><Button x:Name="TurboTargetButton" Grid.Column="2" Click="OnSelectTurboTarget" Style="{StaticResource AutoMapRowButton}" Height="46" Padding="0" VerticalAlignment="Center" AutomationProperties.AutomationId="Auto.Target.Turbo" AutomationProperties.Name="编辑狂飙目标"><Grid Margin="14,0,9,0" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="TurboTargetText" Foreground="{StaticResource PrototypeTextBrush}" FontSize="16" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                <Image Source="ms-appx:///Assets/Automation/SelectorChevron.png" Width="24" Height="22" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                            </Grid></Button></Grid>
+                                <Border Grid.Column="1" Height="46" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="9" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="9" Margin="11,0" VerticalAlignment="Center">
+                                        <Image Source="ms-appx:///Assets/Automation/InlineInfo.png" Width="24" Height="25" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock x:Name="TurboTargetStatusText" Text="热条件待验证" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Grid x:Name="MapEditor" Visibility="Collapsed" ColumnSpacing="10" Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="MapEditorLabel" Foreground="{StaticResource PrototypeTextBrush}" FontSize="14" VerticalAlignment="Center"/>
+                                <controls:ModePresetPicker x:Name="TargetPresetPicker" Grid.Column="1"/>
+                                <Button Grid.Column="2" Content="收起" Click="OnCloseMapEditor" Style="{StaticResource ControlGlassButtonStyle}" Foreground="{StaticResource PrototypeSecondaryTextBrush}" VerticalAlignment="Center" AutomationProperties.Name="收起目标映射编辑器"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Border x:Name="ConditionsSurface" Grid.Column="1" Style="{StaticResource AutoSurface}" Padding="18" MinHeight="316" VerticalAlignment="Top" SizeChanged="OnAnimatedSurfaceSizeChanged">
+                        <StackPanel Spacing="8">
+                            <Grid Height="62" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="触发条件" Foreground="{StaticResource PrototypeTextBrush}" FontSize="22" FontWeight="SemiBold"/>
+                                    <TextBlock Text="满足以下条件时，评估对应的目标模式。" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="编辑条件" Click="OnEditConditions" Height="50" Padding="20,0" VerticalAlignment="Top" Style="{StaticResource ControlGlassButtonStyle}" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" Foreground="{StaticResource PrototypeTextBrush}" CornerRadius="12" AutomationProperties.AutomationId="Auto.EditConditions" AutomationProperties.Name="编辑当前策略的候选触发阈值"/>
+                            </Grid>
+                            <Border Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="10" MinHeight="44" Padding="12,4">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="108"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/TargetGame.png" Width="36" Height="30" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Grid.Column="1" Text="进入游戏" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" x:Name="GameConditionText" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                            <Border Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="10" MinHeight="44" Padding="12,4">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="108"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/TargetTurbo.png" Width="36" Height="30" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Grid.Column="1" Text="进入狂飙" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" x:Name="TurboConditionText" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                            <Border Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="10" MinHeight="44" Padding="12,4">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="108"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/ConditionReturn.png" Width="34" Height="35" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Grid.Column="1" Text="回到办公" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" x:Name="OfficeConditionText" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                            <Button Click="OnToggleRuleDetails" Style="{StaticResource AutoMapRowButton}" Height="48" Padding="12,0" AutomationProperties.AutomationId="Auto.RulesDetails" AutomationProperties.Name="展开应用规则与决策记录状态">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
+                                    <Image Source="ms-appx:///Assets/Automation/RulesDocument.png" Width="29" Height="32" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Grid.Column="1" Text="应用规则与决策记录" Foreground="{StaticResource PrototypeTextBrush}" FontSize="17" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" x:Name="RulesExpansionLabel" Text="展开" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="15" VerticalAlignment="Center"/>
+                                    <Image Source="ms-appx:///Assets/Automation/SelectorChevron.png" Width="24" Height="22" Grid.Column="3" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                </Grid>
+                            </Button>
+                            <TextBlock x:Name="RulesDetailsText" Text="尚无应用规则或决策记录。当前方案处于预览状态，候选阈值仍需本机验证。" Visibility="Collapsed" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="14" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+                <TextBlock x:Name="StrategyStatusText" Visibility="Collapsed" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="13" Margin="4,10,4,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

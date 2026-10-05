@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Fragment>
+    <Component Id="ServiceComponent" Directory="INSTALLFOLDER" Guid="8AF0AA5E-6AD4-4BC8-8F2F-B0B5F5D3F43F">
+      <File Id="ServiceExecutable" Source="$(var.PayloadPublishDir)\Jiaolong.Service.exe" KeyPath="yes" />
+      <ServiceInstall
+        Id="JiaolongControlServiceInstall"
+        Name="JiaolongControlService"
+        DisplayName="XISURA Control Service"
+        Description="XISURA local hardware control service."
+        Type="ownProcess"
+        Start="auto"
+        Account="LocalSystem"
+        ErrorControl="normal"
+        Vital="yes">
+        <ServiceConfig
+          DelayedAutoStart="yes"
+          ServiceSid="unrestricted"
+          PreShutdownDelay="180000"
+          OnInstall="yes"
+          OnReinstall="yes">
+          <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
+        </ServiceConfig>
+      </ServiceInstall>
+      <ServiceControl
+        Id="JiaolongControlServiceControl"
+        Name="JiaolongControlService"
+        Start="install"
+        Stop="both"
+        Remove="uninstall"
+        Wait="yes" />
+    </Component>
+  </Fragment>
+</Wix>

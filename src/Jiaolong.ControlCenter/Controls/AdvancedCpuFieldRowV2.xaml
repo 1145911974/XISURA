@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Controls.AdvancedCpuFieldRowV2"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Jiaolong_ControlCenter.Controls"
+    Height="74">
+    <Grid ColumnSpacing="10">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="196" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="82" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel VerticalAlignment="Center" Spacing="2">
+            <TextBlock x:Name="LabelText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}" TextTrimming="CharacterEllipsis" />
+            <TextBlock x:Name="DescriptionText" FontSize="10" Foreground="{StaticResource PrototypeSecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+
+        <controls:PerformanceTuningRailV2 x:Name="Rail" Grid.Column="1" Height="60" VerticalAlignment="Center" />
+
+        <TextBox
+            x:Name="ValueBox"
+            Grid.Column="2"
+            Width="82"
+            Height="36"
+            MinHeight="36"
+            CornerRadius="8"
+            FontSize="16"
+            FontWeight="SemiBold"
+            TextAlignment="Center"
+            HorizontalContentAlignment="Center"
+            VerticalContentAlignment="Center"
+            Padding="0,4,0,0"
+            PlaceholderText="—"
+            Background="#C20A0E15"
+            Foreground="{StaticResource PrototypeTextBrush}"
+            BorderBrush="#42FFFFFF"
+            BorderThickness="1"
+            TextChanged="OnValueBoxTextChanged"
+            LostFocus="OnValueBoxLostFocus" />
+
+        <TextBlock x:Name="UnitText" Grid.Column="3" FontSize="13" Foreground="{StaticResource PrototypeSecondaryTextBrush}" VerticalAlignment="Center" />
+    </Grid>
+</UserControl>

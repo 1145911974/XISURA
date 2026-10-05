@@ -1,0 +1,212 @@
+<Page
+    x:Class="Jiaolong_ControlCenter.Pages.PerformancePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="24" Background="{ThemeResource BackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Spacing="8">
+            <TextBlock Text="性能" Style="{StaticResource DisplayTextStyle}" />
+            <TextBlock Text="在六个可调节档位之间切换，并在本机已核实的 CPU 边界内建立草稿。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+            <Border Background="{ThemeResource SurfaceBrush}" BorderBrush="{ThemeResource BorderBrush}" BorderThickness="1" CornerRadius="{StaticResource RadiusLarge}" Padding="16" Margin="0,8,0,0">
+                <StackPanel Spacing="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="配置档位" Style="{StaticResource SecondaryTextStyle}" />
+                            <TextBlock Text="顶部固定，内容区独立滚动" Style="{StaticResource BodyTextStyle}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="办公 / 游戏 / 狂飙 / 三个自定义" Style="{StaticResource SecondaryTextStyle}" VerticalAlignment="Center" />
+                    </Grid>
+                    <ScrollViewer HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled">
+                        <Grid x:Name="ProfileButtons" ColumnSpacing="8" MinWidth="720">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="办公" Tag="办公基准" Click="OnProfileClick" Background="{ThemeResource BrandBrush}" Foreground="White" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="选择办公性能档位" />
+                            <Button Grid.Column="1" Content="游戏" Tag="游戏基准" Click="OnProfileClick" Background="{ThemeResource SurfaceRaisedBrush}" Foreground="{ThemeResource TextPrimaryBrush}" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="选择游戏性能档位" />
+                            <Button Grid.Column="2" Content="狂飙" Tag="狂飙基准" Click="OnProfileClick" Background="{ThemeResource SurfaceRaisedBrush}" Foreground="{ThemeResource TextPrimaryBrush}" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="选择狂飙性能档位" />
+                            <Button Grid.Column="3" Content="自定义 1" Tag="办公基准" Click="OnProfileClick" Background="{ThemeResource SurfaceRaisedBrush}" Foreground="{ThemeResource TextPrimaryBrush}" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="选择自定义一性能档位" />
+                            <Button Grid.Column="4" Content="自定义 2" Tag="游戏基准" Click="OnProfileClick" Background="{ThemeResource SurfaceRaisedBrush}" Foreground="{ThemeResource TextPrimaryBrush}" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="选择自定义二性能档位" />
+                            <Button Grid.Column="5" Content="自定义 3" Tag="狂飙基准" Click="OnProfileClick" Background="{ThemeResource SurfaceRaisedBrush}" Foreground="{ThemeResource TextPrimaryBrush}" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="选择自定义三性能档位" />
+                        </Grid>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="{ThemeResource SurfaceRaisedBrush}" CornerRadius="{StaticResource RadiusLarge}" Padding="20" Margin="0,16,0,16">
+            <Grid ColumnSpacing="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock Text="当前性能档位" Style="{StaticResource SecondaryTextStyle}" />
+                    <TextBlock x:Name="CurrentProfileText" Text="办公" Style="{StaticResource DisplayTextStyle}" FontSize="24" />
+                    <TextBlock x:Name="CurrentProfileBaselineText" Text="办公基准 · 当前仅保存草稿" Style="{StaticResource SecondaryTextStyle}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="设备状态" Style="{StaticResource SecondaryTextStyle}" />
+                    <TextBlock Text="MRID6-23 / V39" Style="{StaticResource TelemetryTextStyle}" />
+                    <TextBlock Text="性能输入范围已核实" Style="{StaticResource SecondaryTextStyle}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="2">
+                    <TextBlock Text="写入状态" Style="{StaticResource SecondaryTextStyle}" />
+                    <TextBlock Text="待服务接入" Style="{StaticResource TelemetryTextStyle}" Foreground="{ThemeResource WarningBrush}" />
+                    <TextBlock Text="不会修改当前硬件" Style="{StaticResource SecondaryTextStyle}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="16" MaxWidth="1120">
+                <Border Background="{ThemeResource SurfaceBrush}" BorderBrush="{ThemeResource BorderBrush}" BorderThickness="1" CornerRadius="{StaticResource RadiusLarge}" Padding="20">
+                    <StackPanel Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="CPU 功耗与温度边界" Style="{StaticResource BodyTextStyle}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="输入范围来自当前二创控制台的 MRID6-23 配置界面。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Border Grid.Column="1" Background="{ThemeResource SuccessBrush}" CornerRadius="{StaticResource RadiusMedium}" Padding="8,4" VerticalAlignment="Top">
+                                <TextBlock Text="范围已核实" Foreground="White" Style="{StaticResource SecondaryTextStyle}" />
+                            </Border>
+                        </Grid>
+                        <Grid ColumnSpacing="24" RowSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <NumberBox x:Name="TemperatureBox" Header="温度墙 (°C)" Value="95" Minimum="45" Maximum="100" SpinButtonPlacementMode="Inline" />
+                                    <Button Grid.Column="1" Content="?" Width="24" Height="24" MinHeight="24" Padding="0" Margin="0,28,0,0" CornerRadius="12" Background="{ThemeResource BrandBrush}" Foreground="White" ToolTipService.ToolTip="控制 CPU 温度墙。当前可输入 45–100 °C；越高性能余量越大，也会提高温度与风扇负载；越低会更早限频。" AutomationProperties.Name="温度墙说明" />
+                                </Grid>
+                                <TextBlock Text="页面约束 45–100 °C · 当前 95 °C" Style="{StaticResource SecondaryTextStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <NumberBox x:Name="SplBox" Header="短时功耗 SPL (W)" Value="45" Minimum="20" Maximum="105" SpinButtonPlacementMode="Inline" />
+                                    <Button Grid.Column="1" Content="?" Width="24" Height="24" MinHeight="24" Padding="0" Margin="0,28,0,0" CornerRadius="12" Background="{ThemeResource BrandBrush}" Foreground="White" ToolTipService.ToolTip="控制 CPU 短时峰值功耗。当前可输入 20–105 W；越高短时性能越强，也会提高温度与噪声。" AutomationProperties.Name="短时功耗说明" />
+                                </Grid>
+                                <TextBlock Text="页面约束 20–105 W · 当前 45 W" Style="{StaticResource SecondaryTextStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="0" Spacing="4">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <NumberBox x:Name="SpptBox" Header="持续功耗 SPPT (W)" Value="65" Minimum="20" Maximum="120" SpinButtonPlacementMode="Inline" />
+                                    <Button Grid.Column="1" Content="?" Width="24" Height="24" MinHeight="24" Padding="0" Margin="0,28,0,0" CornerRadius="12" Background="{ThemeResource BrandBrush}" Foreground="White" ToolTipService.ToolTip="控制 CPU 持续功耗。当前可输入 20–120 W；越高持续性能越强，也会提高持续热负载。" AutomationProperties.Name="持续功耗说明" />
+                                </Grid>
+                                <TextBlock Text="页面约束 20–120 W · 当前 65 W" Style="{StaticResource SecondaryTextStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Background="{ThemeResource SurfaceRaisedBrush}" Padding="12" CornerRadius="{StaticResource RadiusMedium}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="快速 / 慢速功耗参考" Style="{StaticResource SecondaryTextStyle}" />
+                                            <TextBlock Text="Fast 20–120 W · Slow 20–105 W" Style="{StaticResource TelemetryTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Button Grid.Column="1" Content="?" Width="24" Height="24" MinHeight="24" Padding="0" Margin="0,8,0,0" CornerRadius="12" Background="{ThemeResource BrandBrush}" Foreground="White" ToolTipService.ToolTip="Fast/Slow 是二创控制台暴露的功耗接口参考；当前项目服务尚未完成对应写入与回读，因此这里仅展示范围，不提供编辑。" AutomationProperties.Name="快速慢速功耗说明" />
+                                </Grid>
+                                <TextBlock Text="仅展示已观察范围 · 当前不可写" Style="{StaticResource SecondaryTextStyle}" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{ThemeResource SurfaceBrush}" BorderBrush="{ThemeResource BorderBrush}" BorderThickness="1" CornerRadius="{StaticResource RadiusLarge}" Padding="20">
+                    <StackPanel Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="频率与系统调度" Style="{StaticResource BodyTextStyle}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="频率上限和 Boost 保留在性能页；独显直连与显卡偏移归入显卡页。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Border Grid.Column="1" Background="{ThemeResource SurfaceRaisedBrush}" CornerRadius="{StaticResource RadiusMedium}" Padding="8,4" VerticalAlignment="Top">
+                                <TextBlock Text="CPU 范围已核实" Style="{StaticResource SecondaryTextStyle}" />
+                            </Border>
+                        </Grid>
+                        <Grid ColumnSpacing="24" RowSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <NumberBox x:Name="FrequencyBox" Header="最高频率 (MHz)" Value="4500" Minimum="1500" Maximum="5400" SpinButtonPlacementMode="Inline" />
+                                    <Button Grid.Column="1" Content="?" Width="24" Height="24" MinHeight="24" Padding="0" Margin="0,28,0,0" CornerRadius="12" Background="{ThemeResource BrandBrush}" Foreground="White" ToolTipService.ToolTip="控制 CPU 最高频率。当前可输入 1500–5400 MHz；过高可能导致不稳定，过低会直接限制性能。" AutomationProperties.Name="最高频率说明" />
+                                </Grid>
+                                <TextBlock Text="页面约束 1500–5400 MHz · 当前 4500 MHz" Style="{StaticResource SecondaryTextStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <ToggleSwitch x:Name="BoostToggle" Header="Boost" OffContent="关闭" OnContent="开启" ToolTipService.ToolTip="控制 CPU 是否允许进入 Boost 频率区间；开启后性能上限更高，也可能增加功耗、温度与噪声。" />
+                                <TextBlock Text="属于性能策略开关，不改变风扇曲线。" Style="{StaticResource SecondaryTextStyle}" />
+                            </StackPanel>
+                            <Border Grid.Row="1" Grid.Column="0" Background="{ThemeResource SurfaceRaisedBrush}" Padding="12" CornerRadius="{StaticResource RadiusMedium}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="核心拓扑" Style="{StaticResource SecondaryTextStyle}" />
+                                    <TextBlock Text="8 核 / 16 线程（固定）" Style="{StaticResource TelemetryTextStyle}" />
+                                    <TextBlock Text="核心数量与核心停车不在本页写入。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
+                                <ComboBox x:Name="WindowsPowerSchemeBox" Header="Windows 电源计划（待接入）" SelectedIndex="0" IsEnabled="False">
+                                    <ComboBoxItem Content="当前计划" />
+                                    <ComboBoxItem Content="平衡" />
+                                    <ComboBoxItem Content="最佳性能" />
+                                </ComboBox>
+                                <TextBlock Text="系统电源计划只作为当前档位的辅助策略。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{ThemeResource SurfaceBrush}" BorderBrush="{ThemeResource BorderBrush}" BorderThickness="1" CornerRadius="{StaticResource RadiusLarge}" Padding="20">
+                    <StackPanel Spacing="12">
+                        <Expander Header="高级：Curve Optimizer（待验证）" IsExpanded="False">
+                            <StackPanel Spacing="8" Padding="0,8,0,0">
+                                <TextBlock Text="当前只确认二创控制台存在相关入口，尚未完成本项目服务的写入、回读和回滚验证。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                                <TextBlock Text="因此这里暂不生成可写数值。完成硬件通道验证后，再单独补充安全范围与风险确认。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Expander>
+                        <TextBlock Text="风扇曲线统一在风扇页调整；显卡频率、显存偏移和独显直连统一在显卡页调整。" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{ThemeResource SurfaceRaisedBrush}" CornerRadius="{StaticResource RadiusLarge}" Padding="12,8">
+                    <CommandBar DefaultLabelPosition="Right" Background="Transparent">
+                        <AppBarButton Icon="Undo" Label="恢复当前草稿" Click="OnRestoreClick" />
+                        <AppBarButton Icon="Accept" Label="验证草稿" Click="OnValidateClick" />
+                        <AppBarButton x:Name="ApplyButton" Icon="Save" Label="应用（待接入）" Click="OnApplyClick" IsEnabled="False" />
+                    </CommandBar>
+                </Border>
+                <TextBlock x:Name="ValidationText" Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Margin="4,0,4,24" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

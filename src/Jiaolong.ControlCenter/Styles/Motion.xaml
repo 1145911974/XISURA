@@ -1,0 +1,9 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Duration x:Key="ModeTransitionDuration">0:0:0.625</Duration>
+    <Duration x:Key="PageTransitionDuration">0:0:0.190</Duration>
+    <Duration x:Key="ValueInterpolationDuration">0:0:0.150</Duration>
+    <Duration x:Key="ReducedMotionDuration">0:0:0.100</Duration>
+    <Duration x:Key="ControlStateTransitionDuration">0:0:0.180</Duration>
+</ResourceDictionary>

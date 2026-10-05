@@ -1,0 +1,11 @@
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Controls.QuickSettingButton"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Button x:Name="RootButton" Click="OnClick" Style="{StaticResource QuietButtonStyle}" AutomationProperties.Name="{x:Bind AccessibleText, Mode=OneWay}">
+        <StackPanel Spacing="2">
+            <TextBlock Text="{x:Bind SettingLabel, Mode=OneWay}" />
+            <TextBlock Text="{x:Bind SourceLabel, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}" FontSize="11" />
+        </StackPanel>
+    </Button>
+</UserControl>

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Jiaolong_ControlCenter.Prototype.Controls.QuickMenuEditor"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Jiaolong_ControlCenter.Prototype.Controls"
+    xmlns:quick="using:Jiaolong_ControlCenter.Prototype.QuickMenu"
+    Width="600"
+    Height="380">
+    <Border Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="#46FFFFFF" BorderThickness="1" CornerRadius="14" Padding="22">
+        <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="250" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Spacing="12">
+                <TextBlock Text="预览与排序" Foreground="White" FontSize="15" FontWeight="SemiBold" />
+                <TextBlock Text="拖动按钮调整快捷菜单顺序" Foreground="#A8FFFFFF" FontSize="12" />
+                <TextBlock x:Name="SelectionLimitText" Text="最多选择 9 项" Foreground="#A8FFFFFF" FontSize="12" />
+                <Border x:Name="PreviewSurface" Width="238" Height="238" Margin="0,10,0,0" HorizontalAlignment="Center" Background="{StaticResource ModeQuickActiveSurfaceBrush}" BorderBrush="#18FFFFFF" BorderThickness="1" CornerRadius="12">
+                    <GridView
+                        x:Name="PreviewGrid"
+                        Width="238"
+                        Height="238"
+                        Padding="0"
+                        CanDragItems="True"
+                        CanReorderItems="True"
+                        AllowDrop="True"
+                        SelectionMode="None"
+                        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                        ScrollViewer.HorizontalScrollMode="Disabled"
+                        ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                        ScrollViewer.VerticalScrollMode="Disabled"
+                        Loaded="OnPreviewGridLoaded"
+                        DragItemsCompleted="OnPreviewDragItemsCompleted">
+                        <GridView.ItemContainerStyle>
+                            <Style TargetType="GridViewItem">
+                                <Setter Property="Width" Value="68" />
+                                <Setter Property="Height" Value="72" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                                <Setter Property="VerticalContentAlignment" Value="Center" />
+                            </Style>
+                        </GridView.ItemContainerStyle>
+                        <GridView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <ItemsWrapGrid MaximumRowsOrColumns="3" ItemWidth="68" ItemHeight="72" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </ItemsPanelTemplate>
+                        </GridView.ItemsPanel>
+                        <GridView.ItemTemplate>
+                            <DataTemplate x:DataType="quick:QuickMenuPreviewSlot">
+                                <Border Width="61" Height="61" MinWidth="61" MinHeight="61" Margin="3" Background="{StaticResource ModeQuickActiveSurfaceBrush}" BorderBrush="#30FFFFFF" BorderThickness="1" CornerRadius="11">
+                                    <Grid>
+                                        <Border Opacity="{x:Bind FilledOpacity}" Background="{StaticResource ModeQuickActiveTintBrush}" BorderBrush="{StaticResource ModeAccentBrush}" BorderThickness="1" CornerRadius="11" />
+                                        <Image Source="{x:Bind IconSource}" Width="28" Height="28" Stretch="Uniform" Opacity="{x:Bind FilledOpacity}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </GridView.ItemTemplate>
+                    </GridView>
+                </Border>
+            </StackPanel>
+
+            <Border Grid.Column="1" Width="1" Background="#16FFFFFF" />
+
+            <Grid Grid.Column="2" RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Spacing="6">
+                    <TextBlock Text="快捷功能" Foreground="White" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Text="选择要显示的快捷项" Foreground="#A8FFFFFF" FontSize="12" />
+                </StackPanel>
+                <ScrollViewer
+                    x:Name="OptionsScrollViewer"
+                    Grid.Row="1"
+                    Width="250"
+                    Padding="0"
+                    HorizontalAlignment="Stretch"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    ScrollViewer.HorizontalScrollMode="Disabled"
+                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                    ScrollViewer.VerticalScrollMode="Enabled">
+                    <ItemsRepeater x:Name="OptionsRepeater" HorizontalAlignment="Stretch">
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="quick:QuickMenuOption">
+                                <Grid Width="250" MinHeight="48" Padding="4,4" ColumnSpacing="6" HorizontalAlignment="Stretch">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <controls:PrototypeToggleButton Grid.Column="0" Tag="{x:Bind Item.Kind}" IsChecked="{x:Bind IsEnabled, Mode=TwoWay}" IsEnabled="{x:Bind IsSelectable, Mode=OneWay}" Checked="OnOptionChanged" Unchecked="OnOptionChanged" Loaded="OnOptionToggleLoaded" Style="{StaticResource PrototypeQuickMenuCheckToggleStyle}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                                    <Image Grid.Column="1" Source="{x:Bind Item.IconSource}" Width="22" Height="22" Stretch="Uniform" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="2" Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind Label}" Foreground="White" FontSize="13" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        <TextBlock Text="{x:Bind AvailabilityText, Mode=OneWay}" Foreground="#88FFFFFF" FontSize="10" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

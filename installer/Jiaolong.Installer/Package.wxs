@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+    Name="XISURA"
+    Manufacturer="XISURA"
+    Version="1.0.65.0"
+    UpgradeCode="6D5E0FE5-7C27-4BB5-AE48-CA1A5E7E9B39"
+    Scope="perMachine"
+    Codepage="65001"
+    InstallerVersion="500">
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="JiaolongWaveApp.exe" SourceFile="$(var.PayloadPublishDir)\Assets\Brand\JiaolongWaveApp.ico" />
+    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer XISURA is already installed." />
+    <util:QueryNativeMachine />
+    <Property Id="WINDOWSBUILDNUMBER" Secure="yes">
+      <RegistrySearch Id="WindowsBuildNumberSearch" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" />
+    </Property>
+    <Launch Condition="&quot;$(sys.BUILDARCH)&quot; ~= &quot;x64&quot; AND WIX_NATIVE_MACHINE = 34404 AND WINDOWSBUILDNUMBER &gt;= 22000" Message="XISURA requires Windows 11 x64." />
+    <CustomAction
+      Id="JiaolongConfigureServiceRecovery"
+      FileRef="ServiceExecutable"
+      ExeCommand="--configure-service-recovery"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check"
+      HideTarget="yes" />
+    <CustomAction
+      Id="JiaolongRemoveProgramData"
+      FileRef="ServiceExecutable"
+      ExeCommand="--remove-data"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check"
+      HideTarget="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="JiaolongConfigureServiceRecovery" After="InstallServices" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="JiaolongRemoveProgramData" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND REMOVE_DATA=1" />
+    </InstallExecuteSequence>
+    <Feature Id="MainFeature" Title="XISURA" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="ServiceComponent" />
+      <ComponentRef Id="ProgramDataComponent" />
+    </Feature>
+  </Package>
+</Wix>
