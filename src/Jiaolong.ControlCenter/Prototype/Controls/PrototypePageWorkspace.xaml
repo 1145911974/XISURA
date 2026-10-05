@@ -1259,7 +1259,7 @@
                     <Grid x:Name="SettingsDetailsCards" ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <Border x:Name="SettingsDeviceFirmwareCard" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" VerticalAlignment="Top">
                             <StackPanel>
-                                <Button x:Name="SettingsDeviceFirmwareHeader" Tag="设备与服务" Click="OnToggleDeviceFirmwareDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开设备与服务" CornerRadius="16">
+                                <Button x:Name="SettingsDeviceFirmwareHeader" Style="{StaticResource DefaultButtonStyle}" Tag="设备与服务" Click="OnToggleDeviceFirmwareDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开设备与服务" CornerRadius="16">
                                     <Button.Resources>
                                         <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent"/>
                                         <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent"/>
@@ -1300,7 +1300,7 @@
                         </Border>
                         <Border Grid.Column="1" x:Name="SettingsProjectSupportCard" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" VerticalAlignment="Top">
                             <StackPanel>
-                                <Button x:Name="SettingsProjectSupportHeader" Tag="项目与支持" Click="OnToggleProjectSupportDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开项目与支持" CornerRadius="16">
+                                <Button x:Name="SettingsProjectSupportHeader" Style="{StaticResource DefaultButtonStyle}" Tag="项目与支持" Click="OnToggleProjectSupportDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开项目与支持" CornerRadius="16">
                                     <Button.Resources>
                                         <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent"/>
                                         <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent"/>
