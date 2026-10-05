@@ -6,7 +6,7 @@ XISURA 将性能模式、CPU 与 GPU 调校、风扇、灯光和实时监测集�
 
 这是独立开发的设备控制项目，**不是机械革命官方软件，也不代表硬件厂商提供兼容性承诺**。仓库、界面与项目标识使用 XISURA；部分程序集、服务及安装包仍保留 `Jiaolong` 内部名称，以维持已有安装与配置的兼容性。
 
-安装包见 [Releases](https://github.com/1145911974/XISURA/releases)。当前版本 **1.0.65**，适用于 Windows 11 x64。
+安装包见 [Releases](https://github.com/1145911974/XISURA/releases)。当前版本 **1.0.66**，适用于 Windows 11 x64。
 
 ## 界面预览
 
@@ -213,3 +213,9 @@ dotnet test .\tests\Jiaolong.ControlCenter.Tests\Jiaolong.ControlCenter.Tests.cs
 XISURA 是本项目使用的名称。机械革命、AMD、NVIDIA、Intel、Microsoft 等名称及商标属于各自权利人；文中的设备名称仅用于说明适配对象。
 
 第三方图形素材来源见 [`Assets/ATTRIBUTION.md`](src/Jiaolong.ControlCenter/Assets/ATTRIBUTION.md)，依赖软件各自的许可继续适用。本文不授予第三方商标或素材的额外使用权，也不替代项目的正式许可证。仓库根目录目前未提供独立 `LICENSE` 文件，不能据此推定项目采用 MIT 或其他开源许可证。
+
+## 支持作者
+
+如果喜欢这款软件可以奖励作者一下。
+
+![作者赞赏码，支付宝与微信支付](src/Jiaolong.ControlCenter/Assets/Support/Donation.jpg)

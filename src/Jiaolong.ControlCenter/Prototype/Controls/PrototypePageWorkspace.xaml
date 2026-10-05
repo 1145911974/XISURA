@@ -1259,7 +1259,7 @@
                     <Grid x:Name="SettingsDetailsCards" ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <Border x:Name="SettingsDeviceFirmwareCard" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" VerticalAlignment="Top">
                             <StackPanel>
-                                <Button x:Name="SettingsDeviceFirmwareHeader" Tag="设备与固件" Click="OnToggleDeviceFirmwareDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开设备与固件" CornerRadius="16">
+                                <Button x:Name="SettingsDeviceFirmwareHeader" Tag="设备与服务" Click="OnToggleDeviceFirmwareDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开设备与服务" CornerRadius="16">
                                     <Button.Resources>
                                         <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent"/>
                                         <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent"/>
@@ -1269,27 +1269,38 @@
                                         <StaticResource x:Key="ButtonForegroundPressed" ResourceKey="PrototypeTextBrush"/>
                                     </Button.Resources>
                                     <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Text="设备与固件" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Text="设备与服务" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                         <TextBlock Grid.Column="1" x:Name="SettingsCapabilityBadgeText" Text="读取中" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="12" VerticalAlignment="Center"/>
                                         <TextBlock Grid.Column="2" x:Name="SettingsDeviceFirmwareChevron" Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Button>
                                 <Grid x:Name="SettingsDeviceFirmwareContentHost" Height="0" Visibility="Collapsed">
                                     <Border x:Name="SettingsDeviceFirmwareContent" Background="Transparent" Padding="20,0,20,18">
-                                        <Grid RowSpacing="12" ColumnSpacing="24"><Grid.RowDefinitions><RowDefinition Height="1"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="14">
+                                            <TextBlock Text="设备与固件" FontSize="15" FontWeight="SemiBold" />
+                                            <Grid RowSpacing="12" ColumnSpacing="24"><Grid.RowDefinitions><RowDefinition Height="1"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                             <Rectangle Grid.ColumnSpan="2" Fill="{StaticResource PrototypeDividerBrush}"/>
                                             <StackPanel Grid.Row="1" Spacing="5"><TextBlock Text="主板" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="SettingsBoardText" Text="未知" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel>
                                             <StackPanel Grid.Row="1" Grid.Column="1" Spacing="5"><TextBlock Text="BIOS" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="SettingsBiosText" Text="未知" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel>
                                             <StackPanel Grid.Row="2" Spacing="5"><TextBlock Text="处理器" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="SettingsCpuModelText" Text="未知" FontSize="13" TextWrapping="Wrap"/></StackPanel>
                                             <StackPanel Grid.Row="2" Grid.Column="1" Spacing="5"><TextBlock Text="可用控制" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="SettingsCapabilityCountText" Text="未知" FontSize="14" FontWeight="SemiBold"/></StackPanel>
                                         </Grid>
+                                            <TextBlock Text="服务与依赖" FontSize="15" FontWeight="SemiBold" />
+                                            <Grid RowSpacing="12" ColumnSpacing="16"><Grid.RowDefinitions><RowDefinition Height="1"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <Rectangle Grid.ColumnSpan="2" Fill="{StaticResource PrototypeDividerBrush}"/>
+                                            <StackPanel Grid.Row="1" Spacing="5"><TextBlock Text="核心服务" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock Text="JiaolongControlService" FontSize="14" FontWeight="SemiBold"/></StackPanel>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="SettingsServiceConnectionText" Text="未知" FontSize="12" VerticalAlignment="Bottom" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/>
+                                            <StackPanel Grid.Row="2" Spacing="5"><TextBlock Text="恢复策略" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="SettingsRecoveryPlanText" Text="读取中" FontSize="14" FontWeight="SemiBold"/></StackPanel>
+                                            <Button Grid.Row="2" Grid.Column="1" Content="依赖目录" Click="OnOpenOfficialInstallerFolder" Height="32" Padding="12,0" VerticalAlignment="Bottom" AutomationProperties.Name="打开本地官方依赖目录" ToolTipService.ToolTip="打开本机官方安装目录；不会自动修复或下载驱动"/>
+                                        </Grid>
+                                        </StackPanel>
                                     </Border>
                                 </Grid>
                             </StackPanel>
                         </Border>
-                        <Border Grid.Column="1" x:Name="SettingsServiceDependencyCard" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" VerticalAlignment="Top">
+                        <Border Grid.Column="1" x:Name="SettingsProjectSupportCard" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" VerticalAlignment="Top">
                             <StackPanel>
-                                <Button x:Name="SettingsServiceDependencyHeader" Tag="服务与依赖详情" Click="OnToggleServiceDependencyDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开服务与依赖详情" CornerRadius="16">
+                                <Button x:Name="SettingsProjectSupportHeader" Tag="项目与支持" Click="OnToggleProjectSupportDetails" Padding="20,16" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.Name="展开项目与支持" CornerRadius="16">
                                     <Button.Resources>
                                         <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent"/>
                                         <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent"/>
@@ -1299,19 +1310,21 @@
                                         <StaticResource x:Key="ButtonForegroundPressed" ResourceKey="PrototypeTextBrush"/>
                                     </Button.Resources>
                                     <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Text="服务与依赖" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="1" x:Name="SettingsServiceDependencyChevron" Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center"/>
+                                        <TextBlock Text="项目与支持" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" x:Name="SettingsProjectSupportChevron" Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Button>
-                                <Grid x:Name="SettingsServiceDependencyContentHost" Height="0" Visibility="Collapsed">
-                                    <Border x:Name="SettingsServiceDependencyContent" Background="Transparent" Padding="20,0,20,18">
-                                        <Grid RowSpacing="12" ColumnSpacing="16"><Grid.RowDefinitions><RowDefinition Height="1"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <Rectangle Grid.ColumnSpan="2" Fill="{StaticResource PrototypeDividerBrush}"/>
-                                            <StackPanel Grid.Row="1" Spacing="5"><TextBlock Text="核心服务" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock Text="JiaolongControlService" FontSize="14" FontWeight="SemiBold"/></StackPanel>
-                                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="SettingsServiceConnectionText" Text="未知" FontSize="12" VerticalAlignment="Bottom" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/>
-                                            <StackPanel Grid.Row="2" Spacing="5"><TextBlock Text="恢复策略" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="SettingsRecoveryPlanText" Text="读取中" FontSize="14" FontWeight="SemiBold"/></StackPanel>
-                                            <Button Grid.Row="2" Grid.Column="1" Content="依赖目录" Click="OnOpenOfficialInstallerFolder" Height="32" Padding="12,0" VerticalAlignment="Bottom" AutomationProperties.Name="打开本地官方依赖目录" ToolTipService.ToolTip="打开本机官方安装目录；不会自动修复或下载驱动"/>
-                                        </Grid>
+                                <Grid x:Name="SettingsProjectSupportContentHost" Height="0" Visibility="Collapsed">
+                                    <Border x:Name="SettingsProjectSupportContent" Background="Transparent" Padding="20,0,20,18">
+                                        <StackPanel Spacing="16">
+                                            <Rectangle Height="1" Fill="{StaticResource PrototypeDividerBrush}" />
+                                            <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="5" VerticalAlignment="Center"><TextBlock Text="项目主页" FontSize="15" FontWeight="SemiBold" /><TextBlock Text="查看软件介绍、更新与使用说明" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                                <Button Grid.Column="1" Content="打开项目主页" Click="OnOpenProjectHomepage" CornerRadius="12" Height="40" Padding="14,0" Style="{StaticResource ControlGlassButtonStyle}" AutomationProperties.Name="打开 XISURA 项目主页" />
+                                            </Grid>
+                                            <TextBlock Text="如果喜欢这款软件可以奖励作者一下" FontSize="15" TextWrapping="Wrap" />
+                                            <Image x:Name="SettingsDonationImage" Source="ms-appx:///Assets/Support/Donation.jpg" MaxWidth="480" Stretch="Uniform" HorizontalAlignment="Center" AutomationProperties.Name="作者赞赏码，支付宝与微信支付" />
+                                        </StackPanel>
                                     </Border>
                                 </Grid>
                             </StackPanel>

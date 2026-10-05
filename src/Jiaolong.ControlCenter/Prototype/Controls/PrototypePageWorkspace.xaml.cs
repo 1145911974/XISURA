@@ -24,7 +24,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
     private bool synchronizingWindowToggle;
     private bool reducedMotion;
     private bool deviceFirmwareExpanded;
-    private bool serviceDependencyExpanded;
+    private bool projectSupportExpanded;
     private QuickMenuEditor? trayQuickMenuEditor;
     private Popup? trayQuickMenuEditorPopup;
     private readonly Dictionary<Grid, Storyboard> settingsDetailsAnimations = new();
@@ -54,7 +54,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
         if (reduced)
         {
             FinishSettingsDetailsMotion(SettingsDeviceFirmwareContentHost, SettingsDeviceFirmwareContent, SettingsDeviceFirmwareHeader, SettingsDeviceFirmwareChevron, deviceFirmwareExpanded);
-            FinishSettingsDetailsMotion(SettingsServiceDependencyContentHost, SettingsServiceDependencyContent, SettingsServiceDependencyHeader, SettingsServiceDependencyChevron, serviceDependencyExpanded);
+            FinishSettingsDetailsMotion(SettingsProjectSupportContentHost, SettingsProjectSupportContent, SettingsProjectSupportHeader, SettingsProjectSupportChevron, projectSupportExpanded);
         }
     }
 
@@ -64,10 +64,10 @@ public sealed partial class PrototypePageWorkspace : UserControl
         AnimateSettingsDetails(SettingsDeviceFirmwareContentHost, SettingsDeviceFirmwareContent, SettingsDeviceFirmwareHeader, SettingsDeviceFirmwareChevron, deviceFirmwareExpanded);
     }
 
-    private void OnToggleServiceDependencyDetails(object sender, RoutedEventArgs e)
+    private void OnToggleProjectSupportDetails(object sender, RoutedEventArgs e)
     {
-        serviceDependencyExpanded = !serviceDependencyExpanded;
-        AnimateSettingsDetails(SettingsServiceDependencyContentHost, SettingsServiceDependencyContent, SettingsServiceDependencyHeader, SettingsServiceDependencyChevron, serviceDependencyExpanded);
+        projectSupportExpanded = !projectSupportExpanded;
+        AnimateSettingsDetails(SettingsProjectSupportContentHost, SettingsProjectSupportContent, SettingsProjectSupportHeader, SettingsProjectSupportChevron, projectSupportExpanded);
     }
 
     private void AnimateSettingsDetails(Grid host, FrameworkElement content, Button header, TextBlock chevron, bool expanded)
@@ -133,7 +133,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
     public PrototypePageWorkspace()
     {
         InitializeComponent();
-        foreach (var host in new[] { SettingsDeviceFirmwareContentHost, SettingsServiceDependencyContentHost })
+        foreach (var host in new[] { SettingsDeviceFirmwareContentHost, SettingsProjectSupportContentHost })
         {
             host.Clip = new RectangleGeometry();
             host.SizeChanged += (_, args) => ((RectangleGeometry)host.Clip).Rect = new Rect(0, 0, args.NewSize.Width, args.NewSize.Height);
@@ -674,6 +674,20 @@ public sealed partial class PrototypePageWorkspace : UserControl
             SettingsRememberWindowSizeToggle.IsOn = preferences.Load().RememberWindowSize;
             synchronizingWindowToggle = false;
             SettingsStatusText.Text = $"保存窗口尺寸设置失败：{exception.Message}";
+        }
+    }
+
+    private async void OnOpenProjectHomepage(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!await Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/1145911974/XISURA")))
+                throw new InvalidOperationException("系统未能打开浏览器");
+        }
+        catch (Exception ex)
+        {
+            SettingsStatusText.Text = $"打开项目主页失败：{ex.Message}";
+            SettingsStatusText.Visibility = Visibility.Visible;
         }
     }
 

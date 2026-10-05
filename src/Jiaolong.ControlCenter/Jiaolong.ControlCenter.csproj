@@ -78,6 +78,7 @@
     <Content Include="Assets\Reference\HomeModeCustom.png" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Reference\Quick*Black.png" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\QuickMenu\*.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\Support\Donation.jpg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\ATTRIBUTION.md" />
     <Content Include="Assets\Icons\*.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\SplashScreen.scale-200.png" />

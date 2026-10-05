@@ -63,7 +63,7 @@ public sealed class PrototypeRoughPageContractTests
         Assert.IsFalse(xaml.Contains("看门狗保护活跃", StringComparison.Ordinal));
         var compact = xaml[xaml.IndexOf("x:Name=\"SettingsRuntimeCard\"", StringComparison.Ordinal)..];
         StringAssert.Contains(compact, "x:Name=\"SettingsDetailsCards\"");
-        StringAssert.Contains(compact, "x:Name=\"SettingsServiceDependencyCard\" Background=\"{StaticResource PrototypeControlAcrylicBrush}\"");
+        StringAssert.Contains(compact, "x:Name=\"SettingsProjectSupportCard\" Background=\"{StaticResource PrototypeControlAcrylicBrush}\"");
         StringAssert.Contains(compact, "Text=\"最近配置\"");
         Assert.IsFalse(compact.Contains("未公开", StringComparison.Ordinal));
         Assert.IsFalse(compact.Contains("#FF0A0D13", StringComparison.Ordinal));

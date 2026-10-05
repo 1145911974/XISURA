@@ -196,6 +196,9 @@
         TintLuminosityOpacity="0.44"
         FallbackColor="#B0DDE2E8" />
     <SolidColorBrush x:Key="PrototypeEnabledInnerStrokeBrush" Color="#70FFFFFF" />
+    <StaticResource x:Key="ExpanderBackground" ResourceKey="PrototypeControlAcrylicBrush" />
+    <StaticResource x:Key="ExpanderHeaderBackground" ResourceKey="PrototypeControlAcrylicBrush" />
+    <StaticResource x:Key="ExpanderContentBackground" ResourceKey="PrototypeControlAcrylicBrush" />
     <SolidColorBrush x:Key="PrototypeEnabledContentBrush" Color="#FF05080C" />
     <SolidColorBrush x:Key="StrongCoolingInnerStrokeBrush" Color="#D8F4FDFF" />
     <SolidColorBrush x:Key="StrongCoolingAccentBrush" Color="#FF6EDBFF" />
