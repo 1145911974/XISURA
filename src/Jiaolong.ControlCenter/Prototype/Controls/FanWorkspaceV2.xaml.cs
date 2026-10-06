@@ -136,6 +136,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         PresetToolbar.SetSlotSummary("风扇曲线 · 固定目标 · 控制策略");
         PresetToolbar.SetActionAvailability(true, false);
         PresetToolbar.SaveRequested += OnSavePreset;
+        PresetToolbar.EnablePresetReset(OnResetFanPreset);
         PresetToolbar.UseRequested += OnUsePreset;
         PresetToolbar.EditingModeChanged += OnFanEditingModeChanged;
         PresetToolbar.PresetUseRequested += OnFanPresetUseRequested;
@@ -219,6 +220,30 @@ public sealed partial class FanWorkspaceV2 : UserControl
             : $"{warning.Series} {warning.StartC}–{warning.EndC}°C：目标最低 {warning.MinimumPercent}%，本档建议约 {warning.RecommendedPercent}%";
 
     private async void OnSavePreset(object? sender, EventArgs e) => await SaveFanPresetAsync();
+
+    private async void OnResetFanPreset(object? sender, PresetKey key)
+    {
+        if (savingPreset || applyingPreset || fanEditorLoading) return;
+        savingPreset = true;
+        PresetToolbar.SetActionAvailability(false, false);
+        try
+        {
+            var envelope = await presetStore.ResetAsync(ControlPageId.Fan, key, CancellationToken.None);
+            curveDrafts.Remove(key);
+            dirtyPresets.Remove(key);
+            savedPresets.Add(key);
+            if (appliedFanKey == key) { appliedFanKey = null; appliedFanPreset = null; PresetToolbar.SetConfirmedActivePreset(null); }
+            if (PresetToolbar.IsEditingPreset && editingKey == key)
+            {
+                draftRevision++;
+                RestoreDraft(envelope.Payload.Deserialize<FanCurveState>()!);
+                PresetToolbar.SetEditingState(key, false, true);
+            }
+            await PresetToolbar.ShowTransientStatusAsync("此预设已恢复默认推荐值");
+        }
+        catch { await PresetToolbar.ShowStatusAsync("恢复默认未完成，请重试"); }
+        finally { savingPreset = false; PresetToolbar.SetActionAvailability(true, PresetToolbar.IsEditingPreset); }
+    }
 
     private async Task<bool> SaveFanPresetAsync(PresetKey? target = null)
     {

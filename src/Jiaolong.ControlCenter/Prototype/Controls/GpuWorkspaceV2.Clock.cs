@@ -15,7 +15,8 @@ public sealed partial class GpuWorkspaceV2
 
     private void UpdateClockDraft(double? value, bool fromRail)
     {
-        if (clockSynchronizing || value is null) return;
+        if (clockSynchronizing || gpuPresetLoading || value is null) return;
+        gpuEditorResetClock = false;
         clockSynchronizing = true;
         if (fromRail) CoreValueBox.Value = value.Value;
         else CoreRail.SetValue(value);

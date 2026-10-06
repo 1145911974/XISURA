@@ -48,15 +48,21 @@ public sealed class DefaultPerformancePresetTests
             Assert.IsNull(draft.NegativeCurveOptimizer);
             Assert.IsNull(draft.AdvancedCpuTuning);
             Assert.AreNotEqual(Guid.Empty, draft.WindowsPowerSchemeId);
-            if (key.Slot == 2)
-            {
-                Assert.AreEqual(85, draft.TemperatureLimitC);
-                Assert.AreEqual(45, draft.SplWatts);
-                Assert.AreEqual(55, draft.SpptWatts);
-                Assert.AreEqual(4700, draft.AcMaxFrequencyMhz);
-                Assert.IsTrue(draft.IsBoostEnabled);
-            }
         }
+        foreach (var mode in Enum.GetValues<ControlModeId>())
+        {
+            var tiers = Enumerable.Range(1, 3).Select(slot => DefaultPerformancePresets.CreateDraft(PresetKey.Create(mode, slot))).ToArray();
+            Assert.HasCount(3, tiers.Distinct().ToArray());
+            Assert.IsTrue(tiers[0].SplWatts <= tiers[1].SplWatts && tiers[1].SplWatts <= tiers[2].SplWatts);
+        }
+        var office = DefaultPerformancePresets.CreateDraft(PresetKey.Create(ControlModeId.Office, 2));
+        var gaming = DefaultPerformancePresets.CreateDraft(PresetKey.Create(ControlModeId.Gaming, 2));
+        var turbo = DefaultPerformancePresets.CreateDraft(PresetKey.Create(ControlModeId.Turbo, 2));
+        Assert.IsTrue(office.AcMaxFrequencyMhz < gaming.AcMaxFrequencyMhz && gaming.AcMaxFrequencyMhz < turbo.AcMaxFrequencyMhz);
+        Assert.IsTrue(office.AcMinActiveCoresPercent < gaming.AcMinActiveCoresPercent);
+        Assert.AreEqual(75, turbo.SplWatts);
+        Assert.AreEqual(75, turbo.SpptWatts);
+        Assert.AreEqual(5100, turbo.AcMaxFrequencyMhz);
         Assert.HasCount(0, paths.WrittenPaths);
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();

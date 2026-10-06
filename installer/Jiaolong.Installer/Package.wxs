@@ -3,7 +3,7 @@
   <Package
     Name="XISURA"
     Manufacturer="XISURA"
-    Version="1.0.71.0"
+    Version="1.0.72.0"
     UpgradeCode="6D5E0FE5-7C27-4BB5-AE48-CA1A5E7E9B39"
     Scope="perMachine"
     Codepage="65001"

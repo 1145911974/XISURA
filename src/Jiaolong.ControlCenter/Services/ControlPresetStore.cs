@@ -35,10 +35,13 @@ public sealed class ControlPresetStore : IControlPresetStore
             ? DefaultControlPresets.Complete(preset) : DefaultControlPresets.Create(page, key);
     }
 
-    public async Task<PagePresetEnvelope> ResetPerformanceAsync(PresetKey key, CancellationToken cancellationToken)
+    public Task<PagePresetEnvelope> ResetPerformanceAsync(PresetKey key, CancellationToken cancellationToken) =>
+        ResetAsync(ControlPageId.Performance, key, cancellationToken);
+
+    public async Task<PagePresetEnvelope> ResetAsync(ControlPageId page, PresetKey key, CancellationToken cancellationToken)
     {
-        var existing = await LoadAsync(ControlPageId.Performance, key, cancellationToken);
-        var preset = DefaultPerformancePresets.Create(key) with
+        var existing = await LoadAsync(page, key, cancellationToken);
+        var preset = DefaultControlPresets.Create(page, key) with
         {
             DisplayName = existing!.DisplayName,
             SavedAtUtc = DateTimeOffset.UtcNow

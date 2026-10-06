@@ -19,19 +19,28 @@ public static class DefaultPerformancePresets
     public static PerformanceDraft CreateDraft(PresetKey key)
     {
         PresetKey.Create(key.Mode, key.Slot);
-        var (mode, temperature, spl, sppt, ac, dc, boost) = key.Mode switch
+        int family = key.Mode switch
         {
-            ControlModeId.Office or ControlModeId.Custom1 => (PerformanceMode.Quiet, 75, 55, 55, 3800, 3000, false),
-            ControlModeId.Gaming or ControlModeId.Custom2 => (PerformanceMode.Balanced, 85, 60, 65, 4700, 3300, true),
-            _ => (PerformanceMode.Turbo, 90, 65, 70, 4800, 3300, true)
+            ControlModeId.Office or ControlModeId.Custom1 => 0,
+            ControlModeId.Gaming or ControlModeId.Custom2 => 1,
+            _ => 2
         };
-        // The balanced slot is the measured efficiency baseline, also used by Reset.
-        // Other slots start at the mode's existing tuning recommendations.
-        if (key.Slot == 2)
-            (temperature, spl, sppt, ac, dc, boost) = (85, 45, 55, 4700, 3300, true);
+        // Recommended starting points; limits are ceilings, not measured consumption or guaranteed clocks.
+        var (temperature, spl, sppt, ac, dc, boost, activeCores) = (family, key.Slot) switch
+        {
+            (0, 1) => (75, 45, 45, 3200, 2400, false, 17),
+            (0, 2) => (80, 45, 50, 4200, 2800, true, 33),
+            (0, _) => (85, 45, 55, 4700, 3200, true, 50),
+            (1, 1) => (80, 45, 50, 4500, 3000, true, 100),
+            (1, 2) => (85, 50, 60, 4800, 3300, true, 100),
+            (1, _) => (90, 60, 70, 5100, 3600, true, 100),
+            (2, 1) => (90, 65, 70, 5000, 3300, true, 100),
+            (2, 2) => (95, 75, 75, 5100, 3600, true, 100),
+            _ => (95, 75, 75, 5100, 3800, true, 100)
+        };
         return new PerformanceDraft
         {
-            Mode = mode,
+            Mode = family == 0 ? PerformanceMode.Quiet : family == 1 ? PerformanceMode.Balanced : PerformanceMode.Turbo,
             TemperatureLimitC = temperature,
             SplWatts = spl,
             SpptWatts = sppt,
@@ -39,7 +48,7 @@ public static class DefaultPerformancePresets
             DcMaxFrequencyMhz = dc,
             IsBoostEnabled = boost,
             WindowsPowerSchemeId = new Guid("381b4222-f694-41f0-9685-ff5bb260df2e"),
-            AcMinActiveCoresPercent = 100,
+            AcMinActiveCoresPercent = activeCores,
             DcMinActiveCoresPercent = 17,
             NegativeCurveOptimizer = null,
             AdvancedCpuTuning = null

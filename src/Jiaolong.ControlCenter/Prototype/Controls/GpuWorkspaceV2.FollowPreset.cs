@@ -31,10 +31,11 @@ public sealed partial class GpuWorkspaceV2
     public void ResumePresetFollowing() => gpuFollowingSuspended = false;
 
     private GpuWorkspacePreset CaptureGpuEditor(bool changedOnly) => new(
-        clockReady && (!changedOnly || clockDirty) ? (int)Math.Round(CoreValueBox.Value) : null,
+        clockReady && (!changedOnly || clockDirty) && !gpuEditorResetClock ? (int)Math.Round(CoreValueBox.Value) : null,
         memoryReady && (!changedOnly || memoryDraftDirty) ? (int)Math.Round(MemoryValueBox.Value * 1000) : null,
         coreOffsetReady && (!changedOnly || coreOffsetDirty) ? (int)Math.Round(CoreOffsetValueBox.Value * 1000) : null,
-        gpuVfDirty ? gpuVfDraft?.ToArray() : changedOnly ? null : lastGpuVf?.Nodes.Select(node => node.OffsetKhz).ToArray());
+        gpuVfDirty ? gpuVfDraft?.ToArray() : changedOnly ? null : lastGpuVf?.Nodes.Select(node => node.OffsetKhz).ToArray())
+        { ResetCoreFrequencyLimit = gpuEditorResetClock && (!changedOnly || clockDirty) };
 
     private async void OnFollowPresetChanged(object? sender, bool enabled)
     {
@@ -80,6 +81,7 @@ public sealed partial class GpuWorkspaceV2
     private void RestoreLiveGpuState()
     {
         if (session?.State is not { } state) return;
+        gpuEditorResetClock = false;
         clockDirty = memoryDraftDirty = coreOffsetDirty = gpuVfDirty = false;
         clockInitialized = false;
         memoryAppliedKhz = coreOffsetAppliedKhz = null;
@@ -116,7 +118,7 @@ public sealed partial class GpuWorkspaceV2
     private static bool GpuPresetMatchesReadback(GpuWorkspacePreset preset, HomeStateSnapshot? state)
     {
         // NVAPI exposes submitted clock limits, not verified clock-limit readback.
-        if (state is null || preset.CoreFrequencyLimitMhz is not null) return false;
+        if (state is null || preset.ResetCoreFrequencyLimit || preset.CoreFrequencyLimitMhz is not null) return false;
         var vf = state.Controls.GpuVf;
         return (preset.MemoryOffsetKhz is null || preset.MemoryOffsetKhz == vf?.MemoryOffsetKhz) &&
             (preset.CoreOffsetKhz is null || preset.CoreOffsetKhz == vf?.CoreOffsetKhz) &&

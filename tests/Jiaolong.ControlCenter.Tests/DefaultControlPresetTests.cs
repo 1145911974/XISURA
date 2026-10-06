@@ -33,7 +33,10 @@ public sealed class DefaultControlPresetTests
                     break;
                 case ControlPageId.Gpu:
                     Assert.IsTrue((bool)gpuValidate.Invoke(null, [JsonSerializer.Deserialize(preset.Payload.GetRawText(), gpuType)])!);
-                    Assert.AreEqual(2400, preset.Payload.GetProperty("CoreFrequencyLimitMhz").GetInt32());
+                    bool reset = key.Mode is ControlModeId.Turbo or ControlModeId.Custom3 && key.Slot >= 2;
+                    Assert.AreEqual(reset, preset.Payload.GetProperty("ResetCoreFrequencyLimit").GetBoolean());
+                    if (reset) Assert.AreEqual(JsonValueKind.Null, preset.Payload.GetProperty("CoreFrequencyLimitMhz").ValueKind);
+                    else Assert.IsTrue(preset.Payload.GetProperty("CoreFrequencyLimitMhz").GetInt32() is >= 1200 and <= 2400);
                     Assert.AreEqual(0, preset.Payload.GetProperty("CoreOffsetKhz").GetInt32());
                     Assert.AreEqual(0, preset.Payload.GetProperty("MemoryOffsetKhz").GetInt32());
                     Assert.HasCount(127, preset.Payload.GetProperty("VfOffsetsKhz").EnumerateArray().ToArray());
@@ -43,6 +46,7 @@ public sealed class DefaultControlPresetTests
                     var fan = preset.Payload.Deserialize<FanCurveState>()!;
                     Assert.IsTrue(fan.IsValid());
                     Assert.HasCount(0, FanCurveSafety.Assess(fan));
+                    Assert.AreEqual(key.Mode is ControlModeId.Office or ControlModeId.Custom1 ? 0 : key.Mode is ControlModeId.Turbo or ControlModeId.Custom3 ? 2 : 1, fan.Profile);
                     break;
                 case ControlPageId.Lighting:
                     Assert.IsTrue(preset.Payload.Deserialize<LightingDraft>()!.IsValid());
@@ -50,6 +54,42 @@ public sealed class DefaultControlPresetTests
             }
         }
         Assert.HasCount(0, paths.WrittenPaths);
+    }
+
+    [TestMethod]
+    public async Task Reset_each_page_uses_new_defaults_without_touching_other_slots()
+    {
+        var paths = new RecordingPathProvider();
+        var store = new ControlPresetStore(paths);
+        var key = PresetKey.Create(ControlModeId.Turbo, 2);
+        var sibling = PresetKey.Create(ControlModeId.Turbo, 1);
+        foreach (var page in Enum.GetValues<ControlPageId>())
+        {
+            await store.SaveAsync(DefaultControlPresets.Create(page, key) with { DisplayName = "我的名字", Payload = JsonSerializer.SerializeToElement(new { custom = 1 }) }, CancellationToken.None);
+            var originalSibling = await store.LoadAsync(page, sibling, CancellationToken.None);
+            var restored = await store.ResetAsync(page, key, CancellationToken.None);
+            Assert.AreEqual("我的名字", restored.DisplayName);
+            Assert.IsTrue(JsonElement.DeepEquals(DefaultControlPresets.Create(page, key).Payload, restored.Payload));
+            Assert.IsTrue(JsonElement.DeepEquals(originalSibling!.Payload, (await store.LoadAsync(page, sibling, CancellationToken.None))!.Payload));
+        }
+        var count = paths.WrittenPaths.Count;
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => store.ResetAsync(ControlPageId.Gpu, key, new CancellationToken(true)));
+        Assert.HasCount(count, paths.WrittenPaths);
+    }
+
+    [TestMethod]
+    public void Factory_clock_reset_is_explicit_and_does_not_change_legacy_limits()
+    {
+        var key = PresetKey.Create(ControlModeId.Turbo, 2);
+        var legacy = DefaultControlPresets.Complete(new(1, ControlPageId.Gpu, key, "保留", JsonSerializer.SerializeToElement(new { CoreFrequencyLimitMhz = 2280 }), DateTimeOffset.UtcNow));
+        Assert.AreEqual(2280, legacy.Payload.GetProperty("CoreFrequencyLimitMhz").GetInt32());
+        Assert.IsFalse(legacy.Payload.GetProperty("ResetCoreFrequencyLimit").GetBoolean());
+        var request = DefaultControlPresets.Complete(new(1, ControlPageId.Gpu, PresetKey.Create(ControlModeId.Office, 2), "原厂", JsonSerializer.SerializeToElement(new { ResetCoreFrequencyLimit = true }), DateTimeOffset.UtcNow));
+        Assert.AreEqual(JsonValueKind.Null, request.Payload.GetProperty("CoreFrequencyLimitMhz").ValueKind);
+        var gpuType = typeof(GpuWorkspaceV2).GetNestedType("GpuWorkspacePreset", BindingFlags.NonPublic)!;
+        var validate = typeof(GpuWorkspaceV2).GetMethod("ValidPreset", BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.IsTrue((bool)validate.Invoke(null, [JsonSerializer.Deserialize("{\"ResetCoreFrequencyLimit\":true}", gpuType)])!);
+        Assert.IsFalse((bool)validate.Invoke(null, [JsonSerializer.Deserialize("{\"ResetCoreFrequencyLimit\":true,\"CoreFrequencyLimitMhz\":2400}", gpuType)])!);
     }
 
     [TestMethod]

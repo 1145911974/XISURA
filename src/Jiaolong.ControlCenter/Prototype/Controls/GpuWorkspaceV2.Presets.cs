@@ -13,6 +13,7 @@ public sealed partial class GpuWorkspaceV2
     private bool gpuPresetApplying;
     private bool gpuPresetDirty, gpuPresetSaving;
     private bool gpuEditorLoading;
+    private bool gpuEditorResetClock;
     private bool GpuWritePending => gpuPresetApplying || gpuPresetSaving;
 
     private async void OnMuxModeRequested(object? sender, MuxMode mode)
@@ -52,6 +53,7 @@ public sealed partial class GpuWorkspaceV2
         int[]? VfOffsetsKhz)
     {
         public MuxMode? MuxMode { get; init; }
+        public bool ResetCoreFrequencyLimit { get; init; }
     }
 
     private async void OnGpuPresetSelected(object? sender, PresetKey key) { if (!gpuFollowSelecting && PresetToolbar.IsEditingPreset) await LoadGpuPresetAsync(key); }
@@ -101,9 +103,16 @@ public sealed partial class GpuWorkspaceV2
         gpuPresetLoading = true;
         try
         {
+            gpuEditorResetClock = draft.ResetCoreFrequencyLimit;
             CoreValueBox.Visibility = Visibility.Visible;
             CoreLiveUnknown.Visibility = Visibility.Collapsed;
             if (draft.CoreFrequencyLimitMhz is int clock) { CoreRail.SetValue(clock); CoreValueBox.Value = clock; }
+            else if (draft.ResetCoreFrequencyLimit)
+            {
+                CoreRail.SetValue(CoreValueBox.Maximum);
+                CoreValueBox.Value = CoreValueBox.Maximum;
+                SetGpuHelpState(CoreFrequencyHelp, "恢复驱动默认 · 使用时解除软件限频");
+            }
             if (draft.MemoryOffsetKhz is int memory) { MemoryRail.SetValue(memory / 1000d); MemoryValueBox.Value = memory / 1000d; }
             if (draft.CoreOffsetKhz is int core) { CoreOffsetRail.SetValue(core / 1000d); CoreOffsetValueBox.Value = core / 1000d; }
             if (draft.VfOffsetsKhz is { Length: 127 } offsets && lastGpuVf is { Nodes.Length: 127 } hardware)
@@ -133,10 +142,10 @@ public sealed partial class GpuWorkspaceV2
             var vf = hardware is not null && CapabilityAvailable(hardware, "gpuVfCurve") && lastGpuVf is { Nodes.Length: 127, Error: null }
                 ? gpuVfDraft ?? lastGpuVf.Nodes.Select(node => node.OffsetKhz).ToArray() : null;
             var draft = PresetToolbar.IsEditingPreset ? new GpuWorkspacePreset(
-                clockReady && clockInitialized ? (int)Math.Round(CoreRail.Value ?? CoreValueBox.Value) : null,
+                clockReady && clockInitialized && !gpuEditorResetClock ? (int)Math.Round(CoreRail.Value ?? CoreValueBox.Value) : null,
                 memoryReady ? (int)Math.Round((MemoryRail.Value ?? MemoryValueBox.Value) * 1000d) : null,
                 coreOffsetReady ? (int)Math.Round(CoreOffsetValueBox.Value * 1000d) : null,
-                vf) : new GpuWorkspacePreset(null,
+                vf) { ResetCoreFrequencyLimit = gpuEditorResetClock } : new GpuWorkspacePreset(null,
                     memoryReady ? hardware?.Controls.GpuVf?.MemoryOffsetKhz : null,
                     coreOffsetReady ? hardware?.Controls.GpuVf?.CoreOffsetKhz : null,
                     hardware?.Controls.GpuVf is { Nodes.Length: 127, Error: null } actual ? actual.Nodes.Select(node => node.OffsetKhz).ToArray() : null);
@@ -145,6 +154,7 @@ public sealed partial class GpuWorkspaceV2
                 PresetToolbar.DisplayNameFor(key.Value), System.Text.Json.JsonSerializer.SerializeToElement(draft), DateTimeOffset.UtcNow), CancellationToken.None);
             if (appliedGpuKey == key && (appliedGpuPreset is not { } applied ||
                 applied.CoreFrequencyLimitMhz != draft.CoreFrequencyLimitMhz || applied.MemoryOffsetKhz != draft.MemoryOffsetKhz ||
+                applied.ResetCoreFrequencyLimit != draft.ResetCoreFrequencyLimit ||
                 applied.CoreOffsetKhz != draft.CoreOffsetKhz ||
                 !(applied.VfOffsetsKhz is null ? draft.VfOffsetsKhz is null :
                     draft.VfOffsetsKhz is not null && applied.VfOffsetsKhz.SequenceEqual(draft.VfOffsetsKhz))))
@@ -206,6 +216,29 @@ public sealed partial class GpuWorkspaceV2
 
     private async void OnGpuSaveAsRequested(object? sender, PresetKey key) => await SaveGpuPresetAsync(key);
 
+    private async void OnResetGpuPreset(object? sender, PresetKey key)
+    {
+        if (GpuWritePending || gpuEditorLoading) return;
+        gpuPresetSaving = true;
+        SetGpuPresetControlsEnabled(false);
+        try
+        {
+            var envelope = await presetStore.ResetAsync(ControlPageId.Gpu, key, CancellationToken.None);
+            gpuEditorDrafts.Remove(key);
+            if (appliedGpuKey == key) { appliedGpuKey = null; appliedGpuPreset = null; PresetToolbar.SetConfirmedActivePreset(null); }
+            if (PresetToolbar.IsEditingPreset && PresetToolbar.SelectedKey == key)
+            {
+                selectedGpuPreset = envelope.Payload.Deserialize<GpuWorkspacePreset>();
+                if (selectedGpuPreset is { } draft) ApplyGpuPresetDraft(draft);
+                gpuPresetDirty = false;
+                PresetToolbar.SetEditingState(key, false, true);
+            }
+            await PresetToolbar.ShowTransientStatusAsync("此预设已恢复默认推荐值");
+        }
+        catch { await PresetToolbar.ShowStatusAsync("恢复默认未完成，请重试"); }
+        finally { gpuPresetSaving = false; SetGpuPresetControlsEnabled(true); }
+    }
+
     private async Task<bool> ApplyGpuPresetAsync(GpuWorkspacePreset? livePreset = null, bool automatic = false)
     {
         var activeSession = session;
@@ -226,10 +259,11 @@ public sealed partial class GpuWorkspaceV2
         var actions = new List<(string Name, Func<Task<CommandResult>> Apply)>();
         var skipped = new List<string>();
 
-        if (preset.CoreFrequencyLimitMhz is int clock)
+        if (preset.ResetCoreFrequencyLimit || preset.CoreFrequencyLimitMhz is not null)
         {
+            int? clock = preset.ResetCoreFrequencyLimit ? null : preset.CoreFrequencyLimitMhz;
             if (!CapabilityAvailable(state, "gpuFrequencyLimit") || state.Controls.GpuClockLimit is not { Error: null } range) skipped.Add("频率上限：能力不可用");
-            else if (clock < range.MinimumMhz || clock > range.MaximumMhz) skipped.Add("频率上限：超出当前驱动范围");
+            else if (clock is not null && (clock < range.MinimumMhz || clock > range.MaximumMhz)) skipped.Add("频率上限：超出当前驱动范围");
             else actions.Add(("频率上限", () => activeSession.ExecuteAsync(new SetGpuFrequencyLimitCommand(Guid.NewGuid(), clock, true), CancellationToken.None)));
         }
 
@@ -333,8 +367,9 @@ public sealed partial class GpuWorkspaceV2
         bool memoryValid = draft.MemoryOffsetKhz is not int memory || memory is >= -200_000 and <= 200_000 && memory % 1000 == 0;
         bool coreValid = draft.CoreOffsetKhz is not int core || core is >= -200_000 and <= 200_000 && core % 1000 == 0;
         return (draft.CoreFrequencyLimitMhz is null or > 0) && memoryValid && coreValid &&
+            !(draft.ResetCoreFrequencyLimit && draft.CoreFrequencyLimitMhz is not null) &&
             (draft.VfOffsetsKhz is null || draft.VfOffsetsKhz is { Length: 127 } vf && vf[0] == 0 && vf.All(value => value is >= -200_000 and <= 200_000)) &&
-            (draft.CoreFrequencyLimitMhz is not null || draft.MemoryOffsetKhz is not null || draft.CoreOffsetKhz is not null ||
+            (draft.ResetCoreFrequencyLimit || draft.CoreFrequencyLimitMhz is not null || draft.MemoryOffsetKhz is not null || draft.CoreOffsetKhz is not null ||
              draft.VfOffsetsKhz is not null);
     }
 }

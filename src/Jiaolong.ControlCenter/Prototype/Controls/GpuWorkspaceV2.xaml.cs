@@ -56,6 +56,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         PresetToolbar.PresetUseRequested += OnGpuPresetUseRequested;
         PresetToolbar.EditingModeChanged += OnGpuEditingModeChanged;
         PresetToolbar.SaveAsRequested += OnGpuSaveAsRequested;
+        PresetToolbar.EnablePresetReset(OnResetGpuPreset);
         foreach (var rail in new UIElement[] { CoreRail, MemoryRail, CoreOffsetRail })
         {
             rail.AddHandler(PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => gpuRailPointerHeld = true), true);

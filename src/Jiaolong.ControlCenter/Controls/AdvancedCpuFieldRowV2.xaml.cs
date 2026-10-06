@@ -65,9 +65,10 @@ public sealed partial class AdvancedCpuFieldRowV2 : UserControl
         synchronizing = true;
         draftValue = value;
         // A movable seed is not a submitted target until the user edits this row.
-        Rail.SetValue(value ?? (allowUnknownDraft ? hardwareRawValue ?? RecommendedValue : null));
+        double? displayedValue = value ?? hardwareRawValue;
+        Rail.SetValue(displayedValue ?? (allowUnknownDraft ? RecommendedValue : null));
         ValueBox.IsEnabled = value.HasValue || allowUnknownDraft;
-        SetSynchronizedText(value is double actual ? Format(actual) : string.Empty);
+        SetSynchronizedText(displayedValue is double actual ? Format(actual) : string.Empty);
         synchronizing = false;
     }
 
@@ -125,6 +126,12 @@ public sealed partial class AdvancedCpuFieldRowV2 : UserControl
 
     private void OnValueBoxLostFocus(object sender, RoutedEventArgs args)
     {
+        // Showing a hardware readback must not turn it into a new write target on blur.
+        if (ValueBox.Text == synchronizedText)
+        {
+            SetValue(draftValue);
+            return;
+        }
         double? value = TryParse(ValueBox.Text, out double displayed)
             ? Math.Clamp(PerformanceDisplayValue.ToRaw(displayed, DisplayScale), Minimum, Maximum)
             : draftValue;
@@ -137,7 +144,7 @@ public sealed partial class AdvancedCpuFieldRowV2 : UserControl
     private void SetSynchronizedText(string text)
     {
         synchronizedText = text;
-        ValueBox.Text = text;
+        if (ValueBox.Text != text) ValueBox.Text = text;
     }
 
     private bool TryParse(string text, out double value) =>
