@@ -31,3 +31,11 @@
 - XISURA-1.0.77-x64.msi：182488533 字节。
 - SHA-256：d99db66af51648a10f5321315f00e0fe025eeade82fa36cbb3e817563cae9c96。
 - 保留交付安装包和必要验收记录供交付、回退。
+
+## 发布核验
+
+- 私人仓库 [v1.0.77](https://github.com/1145911974/XISURA/releases/tag/v1.0.77) 已发布为最新版，非草稿。
+- 目标提交：4ebd846dc0784bde1b8ea3ba5c97c189a5f143a4；云端 MSI 大小与 SHA-256 与本机一致。
+- 最终安装包升级退出 0，GUI 正常响应、服务 Running；原自启动任务保留。
+- 最终硬件样本：24168 ms 从狂飙降至办公，自定义曲线保持；恢复原配置后负载阈值 60%/60% 保留，冷却/驻留确认 8/20 秒，无人工驻留暂停和待恢复事务。
+- 自动审批以 blocked by policy 拒绝删除临时生成载荷 C:\Users\Administrator\AppData\Local\Temp\xisura-payload-1.0.77-final；未绕过限制。保留交付 MSI、校验文件与必要验收记录供回退。
