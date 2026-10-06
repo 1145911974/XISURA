@@ -32,3 +32,9 @@ Shell 回调现在保留 `wParam` 中的物理坐标并按有符号 16 位解码
 - `XISURA-1.0.74-x64.msi`：182459744 bytes。
 - SHA256：`0bab4d55421e88c7ca005ad3f042e40bde7ab984a5810097ebf08945a5935754`。
 - 本机安装回执：`2026-10-06-control-ownership/install74.json`。
+- 已发布 [v1.0.74](https://github.com/1145911974/XISURA/releases/tag/v1.0.74)，API 确认最新版本、非草稿、两项附件 uploaded，远端 MSI 大小与 SHA256 均一致。
+- 发布代码提交：`1b4b40aae23469b1772627daec3b050047822c86`。
+
+## 临时产物
+
+MSI 与校验文件保留于 `C:\Users\Administrator\AppData\Local\Temp\xisura-delivery-1.0.74`，用于交付及回滚。清理 `C:\Users\Administrator\AppData\Local\Temp\xisura-payload-1.0.74-final` 被自动审批拒绝（`blocked by policy`）；未重试或绕过，该临时目录仍在 C:。
