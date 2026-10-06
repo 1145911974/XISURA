@@ -128,14 +128,6 @@ public sealed partial class PerformanceWorkspace : UserControl
         saveFeedbackFade = null;
     }
 
-    public Task<AdaptivePresetApplyResult> ApplyAutomaticPresetAsync(PresetKey key, CancellationToken cancellationToken)
-    {
-        PresetKey.Create(key.Mode, key.Slot);
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromException<AdaptivePresetApplyResult>(new InvalidOperationException(
-            "自动预设需要服务端调度确认，客户端不会代填或写入默认参数。"));
-    }
-
     public void ApplyState(HomeStateSnapshot snapshot)
     {
         if (isShutdown) return;

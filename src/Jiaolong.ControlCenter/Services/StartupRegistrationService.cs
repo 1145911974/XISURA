@@ -135,7 +135,8 @@ public sealed class StartupRegistrationService : IStartupRegistration
             Element("Settings", new object[] {
                 Element("MultipleInstancesPolicy", "IgnoreNew"), Element("DisallowStartIfOnBatteries", "false"),
                 Element("StopIfGoingOnBatteries", "false"), Element("StartWhenAvailable", "true"),
-                Element("Enabled", "true"), Element("ExecutionTimeLimit", "PT0S") }),
+                Element("Enabled", "true"), Element("ExecutionTimeLimit", "PT0S"), Element("Priority", "4"),
+                Element("RestartOnFailure", new object[] { Element("Interval", "PT1M"), Element("Count", "3") }) }),
             new XElement(ns + "Actions", new XAttribute("Context", "CurrentUser"),
                 new XElement(ns + "Exec", Element("Command", path), Element("WorkingDirectory", Path.GetDirectoryName(path)!)))))
             .ToString(SaveOptions.DisableFormatting);

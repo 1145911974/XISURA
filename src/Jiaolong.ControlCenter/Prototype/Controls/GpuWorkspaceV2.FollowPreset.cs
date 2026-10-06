@@ -1,4 +1,4 @@
-﻿using Jiaolong.Contracts.Models;
+using Jiaolong.Contracts.Models;
 using Jiaolong_ControlCenter.Services;
 
 namespace Jiaolong_ControlCenter.Prototype.Controls;
@@ -18,6 +18,17 @@ public sealed partial class GpuWorkspaceV2
     private PresetKey? pendingGpuFollowTarget;
     private PresetKey? appliedGpuKey;
     private GpuWorkspacePreset? appliedGpuPreset;
+    private bool gpuFollowingSuspended;
+    private int gpuFollowOperations;
+
+    public async Task PausePresetFollowingAsync(CancellationToken token)
+    {
+        gpuFollowingSuspended = true;
+        while (gpuFollowOperations > 0 || GpuWritePending)
+            await Task.Delay(40, token);
+    }
+
+    public void ResumePresetFollowing() => gpuFollowingSuspended = false;
 
     private GpuWorkspacePreset CaptureGpuEditor(bool changedOnly) => new(
         clockReady && (!changedOnly || clockDirty) ? (int)Math.Round(CoreValueBox.Value) : null,
@@ -36,24 +47,34 @@ public sealed partial class GpuWorkspaceV2
 
     public async void SetFollowPresetTarget(PresetKey key)
     {
-        var slots = followPreferences.Load().GpuPresetSlots;
-        key = PresetKey.Create(key.Mode, slots.TryGetValue(key.Mode.ToString(), out int slot) && slot is >= 1 and <= 3 ? slot : 2);
-        if (followGpuTarget?.Mode == key.Mode) return;
-        followGpuTarget = key;
-        if (!IsFollowingPreset || session is null) return;
-        if (PresetToolbar.IsEditingPreset) { pendingGpuFollowTarget = key; return; }
-        while (GpuWritePending || gpuEditorLoading)
+        if (gpuFollowingSuspended) return;
+        gpuFollowOperations++;
+        try
         {
-            await Task.Delay(40);
-            if (!IsFollowingPreset || followGpuTarget != key) return;
+            var slots = followPreferences.Load().GpuPresetSlots;
+            key = PresetKey.Create(key.Mode, slots.TryGetValue(key.Mode.ToString(), out int slot) && slot is >= 1 and <= 3 ? slot : 2);
+            if (followGpuTarget?.Mode == key.Mode) return;
+            followGpuTarget = key;
+            if (!IsFollowingPreset || session is null) return;
             if (PresetToolbar.IsEditingPreset) { pendingGpuFollowTarget = key; return; }
+            while (GpuWritePending || gpuEditorLoading)
+            {
+                await Task.Delay(40);
+                if (gpuFollowingSuspended || !IsFollowingPreset || followGpuTarget != key) return;
+                if (PresetToolbar.IsEditingPreset) { pendingGpuFollowTarget = key; return; }
+            }
+            gpuFollowSelecting = true;
+            PresetToolbar.SelectedKey = key;
+            gpuFollowSelecting = false;
+            await LoadGpuPresetAsync(key, restoreEditor: false);
+            if (!gpuFollowingSuspended && IsFollowingPreset && followGpuTarget == key && selectedGpuPreset is not null && !gpuPresetDirty)
+                await ApplyGpuPresetAsync(automatic: true);
         }
-        gpuFollowSelecting = true;
-        PresetToolbar.SelectedKey = key;
-        gpuFollowSelecting = false;
-        await LoadGpuPresetAsync(key, restoreEditor: false);
-        if (IsFollowingPreset && followGpuTarget == key && selectedGpuPreset is not null && !gpuPresetDirty)
-            await ApplyGpuPresetAsync(automatic: true);
+        catch (Exception error)
+        {
+            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] GPU preset follow: {error}\n");
+        }
+        finally { gpuFollowOperations--; }
     }
 
     private void RestoreLiveGpuState()

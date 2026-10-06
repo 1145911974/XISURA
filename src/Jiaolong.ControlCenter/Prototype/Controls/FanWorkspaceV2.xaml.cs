@@ -62,7 +62,8 @@ public sealed partial class FanWorkspaceV2 : UserControl
     public void ApplyControlState(HomeStateSnapshot state)
     {
         UpdateFanActiveBadge(state);
-        if (!PresetToolbar.IsEditingPreset && !applyingPreset && !liveFanQueued) RestoreLiveFanState(state);
+        if (!PresetToolbar.IsEditingPreset && !applyingPreset && !liveFanQueued &&
+            !fanSliderPointerHeld && !FanCurveWorkspace.IsInteracting) RestoreLiveFanState(state);
         maximumRpmAvailable = state.Controls.FanAutomaticCeilingAvailable;
         automaticCeilingActive = state.Controls.FanAutomaticCeilingActive;
         if (StrategyHelp is not null)
@@ -335,7 +336,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
 
     private async void OnFanSaveAsRequested(object? sender, PresetKey key) => await SaveFanPresetAsync(key);
 
-    private async Task<bool> ApplyFanStateAsync(FanCurveState? liveState = null)
+    private async Task<bool> ApplyFanStateAsync(FanCurveState? liveState = null, bool preserveStrongCooling = false)
     {
         if (applyingPreset || savingPreset || fanEditorLoading || session is null) return false;
         if (session.State?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) != true)
@@ -395,7 +396,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
             }
 
             HardwareCommand command = state.Strategy == "Auto" && !automaticCeilingRequested
-                ? new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.UserRequested)
+                ? new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.UserRequested) { PreserveStrongCooling = preserveStrongCooling }
                 : new SetFanControlCommand(Guid.NewGuid(), new FanControlPlan(
                     (state.IsShared ? state.Shared : state.Cpu).Select(p => new FanPoint(p.Temperature, p.TargetPercent)).ToArray())
                 {
@@ -403,8 +404,14 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     Strategy = state.Strategy,
                     FixedRpm = state.Strategy == "Fixed" ? state.FixedRpm : null,
                     MaximumRpm = automaticCeilingRequested ? state.MaximumRpm : null
-                }, RiskConfirmed: true);
+                }, RiskConfirmed: true) { PreserveStrongCooling = preserveStrongCooling };
+            if (!preserveStrongCooling) pendingFanFollowTarget = null;
             var result = await session.ExecuteAsync(command, CancellationToken.None);
+            if (preserveStrongCooling && result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.CommandInProgress)
+            {
+                pendingFanFollowTarget = key;
+                return false;
+            }
             bool succeeded = result.State == CommandState.Applied && result.Error is null;
             await PresetToolbar.ShowStatusAsync(succeeded
                 ? state.Strategy == "Auto"
@@ -475,6 +482,8 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private void UpdateStrategyPanels()
     {
         if (AutomaticCeilingPanel is null || FixedTargetPanel is null) return;
+        if (strategyPanelTransition is null && AutomaticCeilingPanel.Opacity == (AutoStrategy.IsChecked == true ? 1 : 0.48) &&
+            FixedTargetPanel.Opacity == (FixedStrategy.IsChecked == true ? 1 : 0.48)) return;
         StopStrategyPanelTransition();
         if (!IsLoaded || ReducedMotion || !uiSettings.AnimationsEnabled)
         {
@@ -562,6 +571,9 @@ public sealed partial class FanWorkspaceV2 : UserControl
             StrongCoolingButton.IsChecked = enabled == true;
         }
         finally { syncingStrongCooling = false; }
+        if (enabled == false && IsFollowingPreset && !PresetToolbar.IsEditingPreset &&
+            !applyingPreset && !savingPreset && !fanEditorLoading && pendingFanFollowTarget is { } pending)
+            SetFollowPresetTarget(pending);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e) => UpdateMotionState();

@@ -16,6 +16,16 @@ public sealed class FanMaximumRpmTests
         Assert.IsNull(CommandValidation.Validate(command));
         string json = JsonSerializer.Serialize(command, ProtocolJsonContext.Default.HardwareCommand);
         Assert.AreEqual(4200, ((SetFanControlCommand)JsonSerializer.Deserialize(json, ProtocolJsonContext.Default.HardwareCommand)!).Plan.MaximumRpm);
+        Assert.IsFalse(((SetFanControlCommand)JsonSerializer.Deserialize(json, ProtocolJsonContext.Default.HardwareCommand)!).PreserveStrongCooling);
+        foreach (HardwareCommand protectedCommand in new HardwareCommand[] {
+            new SetFanControlCommand(Guid.NewGuid(), plan, true) { PreserveStrongCooling = true },
+            new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.UserRequested) { PreserveStrongCooling = true } })
+        {
+            var protectedJson = JsonSerializer.Serialize(protectedCommand, ProtocolJsonContext.Default.HardwareCommand);
+            var protectedReadback = JsonSerializer.Deserialize(protectedJson, ProtocolJsonContext.Default.HardwareCommand);
+            Assert.IsTrue(protectedReadback is SetFanControlCommand { PreserveStrongCooling: true }
+                or ReleaseFanControlCommand { PreserveStrongCooling: true });
+        }
         Assert.IsNotNull(CommandValidation.Validate(new SetFanControlCommand(Guid.NewGuid(), plan with { MaximumRpm = 1799 }, true)));
         Assert.IsNotNull(CommandValidation.Validate(new SetFanControlCommand(Guid.NewGuid(), plan with { MaximumRpm = 5801 }, true)));
         Assert.IsNull(new FanControlPlan([new(30, 20), new(100, 100)]).MaximumRpm);

@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Numerics;
 using Jiaolong.Contracts.Models;
 using Jiaolong_ControlCenter.Branding;
@@ -15,7 +15,6 @@ namespace Jiaolong_ControlCenter.Prototype.Controls;
 
 public sealed partial class HomeHero : UserControl
 {
-    private Storyboard? frostStoryboard;
     private Storyboard? viewStoryboard;
     private readonly Stopwatch radarClock = new();
     private readonly double[] radarValues = new double[5];
@@ -26,7 +25,7 @@ public sealed partial class HomeHero : UserControl
     private Color[] radarColorTarget = new Color[3];
     private TimeSpan radarDuration;
     private bool radarRenderingSubscribed;
-    private bool frostVisible = true;
+    private bool adaptiveEffectsVisible = true;
     private bool showingLogo = true;
     private bool suppressAdaptiveModeChanged;
     private bool adaptiveRequestPending;
@@ -113,7 +112,7 @@ public sealed partial class HomeHero : UserControl
             geometry.Size = new Vector2(158, 148);
             geometry.CornerRadius = new Vector2(28);
             visual.Clip = visual.Compositor.CreateGeometricClip(geometry);
-            ApplyAutomaticVisual(frostVisible && AutomaticModeButton.IsChecked == true);
+            ApplyAutomaticVisual(adaptiveEffectsVisible && AutomaticModeButton.IsChecked == true);
         };
         radarColors = RadarEnergyBrush.GradientStops.Select(stop => stop.Color).ToArray();
         LogoVisualHost.Translation = new Vector3(0, 0, 24);
@@ -310,16 +309,12 @@ public sealed partial class HomeHero : UserControl
         AdaptiveModeChanged?.Invoke(enabled);
     }
 
-    public void SetFrostVisible(bool visible)
+    public void SetAdaptiveEffectsVisible(bool visible)
     {
-        frostVisible = visible;
-        frostStoryboard?.Stop();
+        adaptiveEffectsVisible = visible;
         automaticHaloStoryboard?.Stop();
         AutoModeHaloLayer.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        StrongCoolingAmbientLayer.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        StrongCoolingFreezeLayer.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         var enabled = visible && AutomaticModeButton.IsChecked == true;
-        ApplyFrost(StrongCoolingMotion.Resolve(enabled, reducedMotion: true));
         ApplyAutomaticVisual(enabled);
     }
 
@@ -341,14 +336,14 @@ public sealed partial class HomeHero : UserControl
         var current = automaticHaloTransforms.Select(transform =>
             (transform.ScaleX, transform.ScaleY, transform.TranslateX, transform.TranslateY)).ToArray();
         automaticHaloStoryboard?.Stop();
-        enabled &= frostVisible;
+        enabled &= adaptiveEffectsVisible;
         AutoModeHaloLayer.Opacity = opacity;
         for (var index = 0; index < automaticHaloTransforms.Length; index++)
         {
             var transform = automaticHaloTransforms[index];
             (transform.ScaleX, transform.ScaleY, transform.TranslateX, transform.TranslateY) = current[index];
         }
-        if (ReducedMotion || !frostVisible)
+        if (ReducedMotion || !adaptiveEffectsVisible)
         {
             ApplyAutomaticVisual(enabled);
             return;
@@ -378,61 +373,9 @@ public sealed partial class HomeHero : UserControl
         storyboard.Begin();
     }
 
-    private void AnimateFrost(bool enabled)
-    {
-        var layers = FrostLayers();
-        var current = layers.Select(layer => layer.Opacity).ToArray();
-        var ambientOpacity = StrongCoolingAmbientLayer.Opacity;
-        frostStoryboard?.Stop();
-        for (var index = 0; index < layers.Length; index++) layers[index].Opacity = current[index];
-        StrongCoolingAmbientLayer.Opacity = ambientOpacity;
-        if (!frostVisible)
-        {
-            ApplyFrost(StrongCoolingMotion.Resolve(enabled: false, reducedMotion: true));
-            return;
-        }
-
-        var target = StrongCoolingMotion.Resolve(enabled, ReducedMotion);
-        if (target.Duration <= TimeSpan.Zero)
-        {
-            ApplyFrost(target);
-            return;
-        }
-
-        frostStoryboard = new Storyboard();
-        for (var index = 0; index < layers.Length; index++)
-        {
-            var order = target.Enabled ? index : layers.Length - 1 - index;
-            var delay = TimeSpan.FromTicks(target.Stagger.Ticks * order);
-            AddAnimation(frostStoryboard, layers[index], "Opacity", current[index], target.LayerOpacity, target.LayerDuration, dependent: false, delay);
-        }
-        AddAnimation(frostStoryboard, StrongCoolingAmbientLayer, "Opacity", ambientOpacity, target.AmbientOpacity, target.Duration, dependent: false);
-        var storyboard = frostStoryboard!;
-        storyboard.Completed += (_, _) =>
-        {
-            if (!ReferenceEquals(frostStoryboard, storyboard)) return;
-            ApplyFrost(target);
-            storyboard.Stop();
-            frostStoryboard = null;
-        };
-        storyboard.Begin();
-    }
-
-    private void ApplyFrost(StrongCoolingMotionState state)
-    {
-        StrongCoolingFreezeLayer.Opacity = 1;
-        foreach (var layer in FrostLayers()) layer.Opacity = state.LayerOpacity;
-        StrongCoolingAmbientLayer.Opacity = state.AmbientOpacity;
-    }
-
-    private Image[] FrostLayers() =>
-        [StrongCoolingFrame01, StrongCoolingFrame02, StrongCoolingFrame03, StrongCoolingFrame04,
-         StrongCoolingFrame05, StrongCoolingFrame06, StrongCoolingFrame07, StrongCoolingFrame08];
-
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         StopRadarAnimation();
-        frostStoryboard?.Stop();
         automaticHaloStoryboard?.Stop();
         viewStoryboard?.Stop();
     }

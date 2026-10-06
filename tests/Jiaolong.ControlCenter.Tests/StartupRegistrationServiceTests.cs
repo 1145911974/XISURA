@@ -21,6 +21,9 @@ public sealed class StartupRegistrationServiceTests
         Assert.AreEqual("false", xml.Descendants(ns + "DisallowStartIfOnBatteries").Single().Value);
         Assert.AreEqual("false", xml.Descendants(ns + "StopIfGoingOnBatteries").Single().Value);
         Assert.AreEqual("PT0S", xml.Descendants(ns + "ExecutionTimeLimit").Single().Value);
+        Assert.AreEqual("4", xml.Descendants(ns + "Priority").Single().Value);
+        Assert.AreEqual("PT1M", xml.Descendants(ns + "RestartOnFailure").Single().Element(ns + "Interval")?.Value);
+        Assert.AreEqual("3", xml.Descendants(ns + "RestartOnFailure").Single().Element(ns + "Count")?.Value);
     }
 
     [TestMethod]

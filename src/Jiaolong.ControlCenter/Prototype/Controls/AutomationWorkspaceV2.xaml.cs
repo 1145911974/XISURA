@@ -14,15 +14,12 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
 {
     private readonly UserPreferencesStore preferences = new();
     private readonly AdaptiveStrategySelection selection;
-    private readonly AdaptiveRuleSession runtimeSession = new();
-    private AdaptivePresetExecutor? presetExecutor;
     private AdaptiveTargetMap savedMap;
     private AdaptiveTargetMap draftMap;
     private AdaptiveTargetMap activeMap;
     private AdaptiveTriggerPolicy savedPolicy;
     private AdaptiveTriggerPolicy draftPolicy;
     private AdaptiveTriggerPolicy activePolicy = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive);
-    private AdaptiveStage? currentStage;
     private AdaptivePowerSource mapPower = AdaptivePowerSource.Ac;
     private AdaptiveStage mapStage = AdaptiveStage.Office;
     private bool loadingMap;
@@ -34,11 +31,6 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
     private HardwareSnapshot? lastTelemetry;
     private readonly DispatcherTimer staleTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private bool autoEnabled;
-    private bool serviceReady;
-    private CancellationTokenSource? pendingApplyCancellation;
-    private (PresetKey Key, AdaptiveStage Stage)? automaticStageOverride;
-    private string? automaticStatus;
-    private DateTimeOffset? manualOverrideUntilUtc;
 
     public AutomationWorkspaceV2()
     {
@@ -57,7 +49,6 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
         Loaded += (_, _) => staleTimer.Start();
         Unloaded += (_, _) =>
         {
-            pendingApplyCancellation?.Cancel();
             StopLoadMotion();
             staleTimer.Stop();
             foreach (var transition in surfaceAnimations.Values.ToArray())
@@ -75,34 +66,9 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
     public void SetAutomationEnabled(bool enabled)
     {
         if (autoEnabled == enabled) return;
-        runtimeSession.Reset();
         autoEnabled = enabled;
         RequestServiceConfiguration();
-        automaticStatus = null;
-        if (enabled) manualOverrideUntilUtc = null;
-        if (!enabled) pendingApplyCancellation?.Cancel();
-        if (!enabled && presetExecutor?.IsApplying != true)
-        {
-            presetExecutor?.Reset();
-        }
         RenderReason();
-        RefreshTelemetry();
-    }
-
-    public void SetPresetApplier(Func<PresetKey, CancellationToken, Task<AdaptivePresetApplyResult>> applyPreset) =>
-        presetExecutor = new AdaptivePresetExecutor(applyPreset ?? throw new ArgumentNullException(nameof(applyPreset)));
-
-    public void ResetAutomaticModeTracking()
-    {
-        pendingApplyCancellation?.Cancel();
-        automaticStageOverride = null;
-        manualOverrideUntilUtc = DateTimeOffset.UtcNow.AddSeconds(activePolicy.Advanced.MinimumDwellSeconds);
-        runtimeSession.Reset();
-        automaticStatus = null;
-        if (presetExecutor?.IsApplying != true)
-        {
-            presetExecutor?.Reset();
-        }
         RefreshTelemetry();
     }
 
@@ -126,176 +92,14 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
                 RenderMapping();
             }
         }
-        if (automationService is not null)
-        {
-            RefreshServiceStatus();
-            return;
-        }
-        if (autoEnabled && manualOverrideUntilUtc is { } overrideUntil)
-        {
-            var remaining = overrideUntil - DateTimeOffset.UtcNow;
-            if (remaining > TimeSpan.Zero)
-            {
-                runtimeSession.Reset();
-                DecisionDetailsText.Text = $"手动模式优先；{Math.Ceiling(remaining.TotalSeconds):0} 秒后恢复自动判定。";
-                return;
-            }
-            manualOverrideUntilUtc = null;
-        }
-        if (!autoEnabled || !serviceReady || currentStage is null || lastTelemetry is not { } snapshot
-            || display.CpuUsage == "--" || display.GpuUsage == "--" || display.Power == "供电待确认")
-        {
-            runtimeSession.Reset();
-            if (presetExecutor?.IsApplying != true)
-            {
-                presetExecutor?.Reset();
-            }
-            DecisionDetailsText.Text = !autoEnabled ? "首页未开启自动判定。"
-                : !serviceReady ? "服务状态不可用，停止自动判定。"
-                : currentStage is null ? "当前硬件模式不可识别，停止自动判定。"
-                : "CPU、GPU 或供电遥测缺失/过期；清除连续计时，不产生候选。";
-            return;
-        }
-
-        var signals = AdaptiveRuntimeSignals.Read();
-        if (activePolicy.Advanced.ApplicationRules.Length > 0 && !signals.Foreground)
-        {
-            runtimeSession.Reset();
-            if (presetExecutor?.IsApplying != true) presetExecutor?.Reset();
-            automaticStatus = null;
-            DecisionDetailsText.Text = "无法读取当前前台进程；应用规则未执行，也不回退到负载自动切换。";
-            return;
-        }
-        if (activePolicy.Advanced.IdleReturnEnabled && signals.IdleSeconds is null)
-        {
-            runtimeSession.Reset();
-            if (presetExecutor?.IsApplying != true) presetExecutor?.Reset();
-            automaticStatus = null;
-            DecisionDetailsText.Text = "系统空闲时间不可用；自动判定暂停，未发送命令。";
-            return;
-        }
-        var result = runtimeSession.Evaluate(activePolicy, new AdaptiveTrialInput
-        {
-            CpuPercent = snapshot.CpuUsagePercent,
-            GpuPercent = snapshot.GpuUsagePercent,
-            CpuTemperature = snapshot.CpuTemperatureC,
-            GpuTemperature = snapshot.GpuTemperatureC,
-            AcConnected = snapshot.AcPowerConnected,
-            BatteryPercent = snapshot.BatteryPercent,
-            BatterySaver = signals.BatterySaver,
-            Executable = signals.Executable,
-            Foreground = signals.Foreground,
-            IdleSeconds = signals.IdleSeconds.GetValueOrDefault(),
-            Current = currentStage.Value
-        }, snapshot.CapturedAtUtc);
-        var activeName = selection.Active switch
-        {
-            AdaptiveStrategyId.QuietFirst => "安静优先",
-            AdaptiveStrategyId.ResponseFirst => "响应优先",
-            _ => "均衡自适应"
-        };
-        if (result.Target is { } target)
-        {
-            var livePower = display.Power == "DC 供电" ? AdaptivePowerSource.Dc : AdaptivePowerSource.Ac;
-            var targetKey = activeMap.GetTarget(livePower, target);
-            if (presetExecutor is null)
-            {
-                automaticStatus = "自动目标没有连接到硬件应用器。";
-            }
-            else
-            {
-                var applyCancellation = new CancellationTokenSource();
-                if (presetExecutor.TryStartApply(targetKey, applyCancellation.Token, out var completion))
-                {
-                    pendingApplyCancellation = applyCancellation;
-                    automaticStatus = $"正在提交目标预设：{TargetName(targetKey, preferences.Load().PresetNames)}。";
-                    _ = ObserveAutomaticApplyAsync(targetKey, target, completion, applyCancellation);
-                }
-                else
-                {
-                    applyCancellation.Dispose();
-                    if (presetExecutor.IsApplying) automaticStatus = "等待当前目标的服务回执。";
-                }
-            }
-        }
-        else if (presetExecutor?.IsApplying != true)
-        {
-            presetExecutor?.Reset();
-        }
-
-        var details = result.Target is { } candidate
-            ? $"实时遥测已满足条件：{StageName(candidate)} 候选（{result.Reason}）。使用方案：{activeName}。"
-            : $"{result.Reason}\n使用已保存的{activeName}策略持续判定。";
-        DecisionDetailsText.Text = string.IsNullOrWhiteSpace(automaticStatus) ? details : $"{details}\n{automaticStatus}";
-    }
-
-    private async Task ObserveAutomaticApplyAsync(
-        PresetKey key,
-        AdaptiveStage stage,
-        Task<AdaptivePresetApplyResult?> completion,
-        CancellationTokenSource cancellationSource)
-    {
-        try
-        {
-            AdaptivePresetApplyResult? application = await completion;
-            if (application is null)
-            {
-                automaticStatus = "目标预设没有获得服务回执。";
-            }
-            else if (application.Command.State == CommandState.Applied && application.Command.Error is null)
-            {
-                automaticStageOverride = (key, stage);
-                currentStage = stage;
-                automaticStatus = application.IsPartial
-                    ? $"自动目标部分应用：{application.PartialReason}。方案：{TargetName(key, preferences.Load().PresetNames)}。"
-                    : $"已应用目标预设：{TargetName(key, preferences.Load().PresetNames)}；服务回执 Applied。";
-            }
-            else
-            {
-                var result = application.Command;
-                automaticStatus = $"目标预设未应用：{result.State}{(result.Error is null ? "" : $"（{result.Error.Code}）")}。";
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            presetExecutor?.Reset();
-            automaticStatus = "自动应用已被后续操作取消，等待重新判定。";
-        }
-        catch (Exception exception)
-        {
-            automaticStatus = $"目标预设应用失败：{exception.Message}";
-        }
-        finally
-        {
-            if (ReferenceEquals(pendingApplyCancellation, cancellationSource))
-            {
-                pendingApplyCancellation.Dispose();
-                pendingApplyCancellation = null;
-            }
-            if (!autoEnabled) presetExecutor?.Reset();
-            RefreshTelemetry();
-        }
+        RefreshServiceStatus();
     }
 
     public void ApplyState(HomeStateSnapshot snapshot)
     {
         serviceAutomationStatus = snapshot.Controls.AdaptiveAutomation;
         RefreshServiceConnection();
-        serviceReady = snapshot.Capabilities.SupportState == DeviceSupportState.Ready;
-        var mode = snapshot.Controls.PerformanceMode;
-        if (automaticStageOverride is { } applied && AdaptiveTargetMap.PerformanceModeFor(applied.Key) == mode)
-            currentStage = applied.Stage;
-        else
-        {
-            automaticStageOverride = null;
-            currentStage = serviceReady ? mode switch
-            {
-                PerformanceMode.Quiet => AdaptiveStage.Office,
-                PerformanceMode.Balanced => AdaptiveStage.Game,
-                PerformanceMode.Turbo => AdaptiveStage.Turbo,
-                _ => null
-            } : null;
-        }
+        bool serviceReady = snapshot.Capabilities.SupportState == DeviceSupportState.Ready;
         CurrentModeText.Text = serviceReady ? snapshot.Controls.PerformanceMode switch
         {
             PerformanceMode.Quiet => "办公",
@@ -308,19 +112,7 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
         RenderReason();
     }
 
-    private void RenderReason()
-    {
-        if (automationService is not null)
-        {
-            RefreshServiceStatus();
-            return;
-        }
-        DecisionReasonText.Text = !autoEnabled
-        ? "首页未开启自动"
-        : !serviceReady
-            ? "服务状态不可用，停止自动判定"
-            : "根据实时遥测连续判定；稳定目标经服务校验后应用保存预设";
-    }
+    private void RenderReason() => RefreshServiceStatus();
 
     private static string StageName(AdaptiveStage stage) => stage switch
     {
@@ -744,13 +536,9 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
             savedAppearance = draftAppearance;
             if (selection.Editing == selection.Active)
             {
-                pendingApplyCancellation?.Cancel();
                 activeMap = savedMap;
                 activePolicy = savedPolicy;
                 RequestServiceConfiguration();
-                runtimeSession.Reset();
-                presetExecutor?.Reset();
-                automaticStatus = null;
             }
             ReportStatus("当前方案已保存到本机；不会自动切换硬件。");
             RenderSelection();

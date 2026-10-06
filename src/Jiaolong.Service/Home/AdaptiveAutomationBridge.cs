@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Jiaolong.Contracts.Commands;
@@ -68,9 +68,22 @@ public sealed class AdaptiveAutomationStateStore
         {
             await EnsureLoadedLockedAsync(cancellationToken);
             var prior = configuration;
+            var priorOverride = manualOverrideUntilUtc;
+            bool priorManualModeChanged = manualModeChanged;
             configuration = AdaptiveAutomationConfigurationValidator.Clone(value);
+            if (configuration.Enabled && prior?.Enabled != true)
+            {
+                manualOverrideUntilUtc = null;
+                manualModeChanged = false;
+            }
             try { await SaveLockedAsync(cancellationToken); }
-            catch { configuration = prior; throw; }
+            catch
+            {
+                configuration = prior;
+                manualOverrideUntilUtc = priorOverride;
+                manualModeChanged = priorManualModeChanged;
+                throw;
+            }
             loadFailure = null;
             revision++;
             // Applied must expose this persisted configuration immediately, even
@@ -278,6 +291,14 @@ public sealed class AdaptiveAutomationHardwareProvider(
     private const string ContextCapability = nameof(UpdateAdaptiveAutomationContextCommand);
     private readonly ConcurrentDictionary<Guid, long> automaticOperations = new();
     private readonly SemaphoreSlim cpuModeCommandGate = new(1, 1);
+    private readonly SemaphoreSlim automationCycleGate = new(1, 1);
+
+    public async Task RunAutomationCycleAsync(Func<CancellationToken, Task> cycle, CancellationToken token)
+    {
+        await automationCycleGate.WaitAsync(token);
+        try { await cycle(token); }
+        finally { automationCycleGate.Release(); }
+    }
 
     public async Task<HomeHardwareState> DiagnoseAsync(CancellationToken cancellationToken) =>
         AddAutomationCapabilities(await inner.DiagnoseAsync(cancellationToken));
@@ -301,13 +322,13 @@ public sealed class AdaptiveAutomationHardwareProvider(
             switch (command)
             {
                 case SetAdaptiveAutomationConfigurationCommand set:
-                    await cpuModeCommandGate.WaitAsync(cancellationToken);
+                    await automationCycleGate.WaitAsync(cancellationToken);
                     try
                     {
                         await store.SetConfigurationAsync(set.Configuration, cancellationToken);
                         return Applied(command.OperationId);
                     }
-                    finally { cpuModeCommandGate.Release(); }
+                    finally { automationCycleGate.Release(); }
                 case UpdateAdaptiveAutomationContextCommand context:
                     await store.SetClientContextAsync(context.Context, cancellationToken);
                     return Applied(command.OperationId);
@@ -331,25 +352,31 @@ public sealed class AdaptiveAutomationHardwareProvider(
         }
 
         bool serialize = command is SetPerformanceModeCommand or SetCpuTuningCommand or SetCpuTuningBatchCommand;
-        if (serialize) await cpuModeCommandGate.WaitAsync(cancellationToken);
+        bool manual = serialize && !automaticOperations.ContainsKey(command.OperationId);
+        if (manual) await automationCycleGate.WaitAsync(cancellationToken);
         try
         {
-            if (serialize && automaticOperations.TryGetValue(command.OperationId, out var expectedRevision))
+            if (serialize) await cpuModeCommandGate.WaitAsync(cancellationToken);
+            try
             {
-                var automation = await store.ReadAsync(cancellationToken);
-                if (automation.ManualOverrideUntilUtc is { } until && DateTimeOffset.UtcNow < until)
-                    return Rejected(command.OperationId, ErrorCode.CommandInProgress);
-                if (expectedRevision >= 0 && automation.Revision != expectedRevision)
-                    return Rejected(command.OperationId, ErrorCode.CommandInProgress);
+                if (serialize && automaticOperations.TryGetValue(command.OperationId, out var expectedRevision))
+                {
+                    var automation = await store.ReadAsync(cancellationToken);
+                    if (automation.ManualOverrideUntilUtc is { } until && DateTimeOffset.UtcNow < until)
+                        return Rejected(command.OperationId, ErrorCode.CommandInProgress);
+                    if (expectedRevision >= 0 && automation.Revision != expectedRevision)
+                        return Rejected(command.OperationId, ErrorCode.CommandInProgress);
+                }
+                var result = await inner.ExecuteAsync(command, cancellationToken);
+                if (serialize && result.State == CommandState.Applied && result.Error is null &&
+                    !automaticOperations.ContainsKey(command.OperationId))
+                    await store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow,
+                        command is SetPerformanceModeCommand or SetCpuTuningBatchCommand { NativeMode: not null }, CancellationToken.None);
+                return result;
             }
-            var result = await inner.ExecuteAsync(command, cancellationToken);
-            if (serialize && result.State == CommandState.Applied && result.Error is null &&
-                !automaticOperations.ContainsKey(command.OperationId))
-                await store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow,
-                    command is SetPerformanceModeCommand or SetCpuTuningBatchCommand { NativeMode: not null }, CancellationToken.None);
-            return result;
+            finally { if (serialize) cpuModeCommandGate.Release(); }
         }
-        finally { if (serialize) cpuModeCommandGate.Release(); }
+        finally { if (manual) automationCycleGate.Release(); }
     }
 
     public async Task<CommandResult> ExecuteAutomaticCommandAsync(

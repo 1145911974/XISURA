@@ -147,35 +147,6 @@
                 </StackPanel>
               </Grid>
             </controls:PrototypeToggleButton>
-            <Border
-                x:Name="StrongCoolingAmbientLayer"
-                CornerRadius="28"
-                IsHitTestVisible="False"
-                Opacity="0">
-                <Border.Background>
-                    <LinearGradientBrush StartPoint="0.08,0" EndPoint="0.92,1">
-                        <GradientStop Color="#00268AB5" Offset="0" />
-                        <GradientStop Color="#5036B8E8" Offset="0.48" />
-                        <GradientStop Color="#B25DE3FF" Offset="1" />
-                    </LinearGradientBrush>
-                </Border.Background>
-            </Border>
-            <Border
-                x:Name="StrongCoolingFreezeLayer"
-                CornerRadius="28"
-                IsHitTestVisible="False"
-                Opacity="0">
-                <Grid>
-                    <Image x:Name="StrongCoolingFrame01" Source="ms-appx:///Assets/StrongCooling/Frames/Frame01.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                    <Image x:Name="StrongCoolingFrame02" Source="ms-appx:///Assets/StrongCooling/Frames/Frame02.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                    <Image x:Name="StrongCoolingFrame03" Source="ms-appx:///Assets/StrongCooling/Frames/Frame03.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                    <Image x:Name="StrongCoolingFrame04" Source="ms-appx:///Assets/StrongCooling/Frames/Frame04.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                    <Image x:Name="StrongCoolingFrame05" Source="ms-appx:///Assets/StrongCooling/Frames/Frame05.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                    <Image x:Name="StrongCoolingFrame06" Source="ms-appx:///Assets/StrongCooling/Frames/Frame06.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                    <Image x:Name="StrongCoolingFrame07" Source="ms-appx:///Assets/StrongCooling/Frames/Frame07.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                    <Image x:Name="StrongCoolingFrame08" Source="ms-appx:///Assets/StrongCooling/Frames/Frame08.png" Stretch="UniformToFill" Opacity="0" CacheMode="BitmapCache" />
-                </Grid>
-            </Border>
         </Grid>
     </Canvas>
 </UserControl>

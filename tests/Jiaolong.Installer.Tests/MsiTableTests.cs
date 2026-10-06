@@ -62,7 +62,7 @@ public sealed class MsiTableTests
         var service = msi.GetService("JiaolongControlService");
 
         Assert.AreEqual("LocalSystem", service.Account);
-        Assert.IsTrue(service.IsDelayedAutoStart);
+        Assert.IsFalse(service.IsDelayedAutoStart);
         Assert.AreEqual("unrestricted", service.ServiceSid);
         CollectionAssert.AreEqual(new[] { "SeChangeNotifyPrivilege" }, service.RequiredPrivileges);
     }

@@ -1089,43 +1089,14 @@ public sealed class PrototypeContractTests
         Assert.AreEqual(TimeSpan.Zero, reduced.Duration);
     }
 
-    [TestMethod]
-    public void Strong_cooling_motion_has_animated_enter_exit_and_reduced_motion_snap()
-    {
-        var enter = StrongCoolingMotion.Resolve(enabled: true, reducedMotion: false);
-        var exit = StrongCoolingMotion.Resolve(enabled: false, reducedMotion: false);
-        var reduced = StrongCoolingMotion.Resolve(enabled: false, reducedMotion: true);
-
-        Assert.AreEqual(1d, enter.LayerOpacity);
-        Assert.AreEqual(.18d, enter.AmbientOpacity);
-        Assert.AreEqual(TimeSpan.FromMilliseconds(90), enter.LayerDuration);
-        Assert.AreEqual(TimeSpan.FromMilliseconds(42), enter.Stagger);
-        Assert.AreEqual(0d, exit.LayerOpacity);
-        Assert.AreEqual(0d, exit.AmbientOpacity);
-        Assert.AreEqual(TimeSpan.FromMilliseconds(70), exit.LayerDuration);
-        Assert.AreEqual(TimeSpan.FromMilliseconds(28), exit.Stagger);
-        Assert.AreEqual(TimeSpan.Zero, reduced.Duration);
-    }
 
     [TestMethod]
-    public void Strong_cooling_uses_selected_c_raster_layers_without_vector_frost()
+    public void Adaptive_mode_does_not_load_the_old_strong_cooling_frames()
     {
         var hero = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "HomeHero.xaml");
-        var document = XDocument.Parse(hero);
-        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
-        XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
-        var frost = document.Descendants()
-            .Single(element => (string?)element.Attribute(xaml + "Name") == "StrongCoolingFreezeLayer");
-
-        Assert.AreEqual(8, frost.Descendants(presentation + "Image").Count());
-        for (var frame = 1; frame <= 8; frame++)
-            StringAssert.Contains(hero, $"Assets/StrongCooling/Frames/Frame{frame:00}.png");
-        Assert.IsFalse(frost.ToString().Contains("TranslateX", StringComparison.Ordinal));
-        Assert.IsFalse(frost.ToString().Contains("TranslateY", StringComparison.Ordinal));
-        Assert.AreEqual(0, frost.Descendants(presentation + "Path").Count());
-        Assert.AreEqual(0, frost.Descendants(presentation + "Canvas").Count());
-        Assert.IsFalse(hero.Contains("StrongCoolingFrostBranches", StringComparison.Ordinal));
-        Assert.IsFalse(hero.Contains("StrongCoolingFrostVeil", StringComparison.Ordinal));
+        Assert.IsFalse(hero.Contains("Assets/StrongCooling/Frames", StringComparison.Ordinal));
+        StringAssert.Contains(hero, "x:Name=\"AutoModeHaloLayer\"");
+        StringAssert.Contains(hero, "Assets/Icons/NavAutomationFilled.svg");
     }
 
     [TestMethod]
@@ -1149,8 +1120,8 @@ public sealed class PrototypeContractTests
         StringAssert.Contains(theme, "x:Name=\"QuickGlow\"");
         StringAssert.Contains(hero, "x:Name=\"HeroSelectionPlate\"");
         StringAssert.Contains(hero, "x:Name=\"RadarEnergyFill\"");
-        StringAssert.Contains(hero, "x:Name=\"StrongCoolingFrame01\"");
-        StringAssert.Contains(hero, "x:Name=\"StrongCoolingFrame08\"");
+        Assert.IsFalse(hero.Contains("x:Name=\"StrongCoolingFrame01\"", StringComparison.Ordinal));
+        Assert.IsFalse(hero.Contains("x:Name=\"StrongCoolingFrame08\"", StringComparison.Ordinal));
         Assert.IsFalse(hero.Contains("RenderTransformOrigin=\"1,1\"", StringComparison.Ordinal));
         Assert.IsFalse(hero.Contains("StrongCoolingFrostBloom", StringComparison.Ordinal));
         StringAssert.Contains(monitor, "Background=\"{StaticResource PrototypeControlAcrylicBrush}\"");

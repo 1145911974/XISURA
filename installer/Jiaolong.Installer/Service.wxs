@@ -14,7 +14,7 @@
         ErrorControl="normal"
         Vital="yes">
         <ServiceConfig
-          DelayedAutoStart="yes"
+          DelayedAutoStart="no"
           ServiceSid="unrestricted"
           PreShutdownDelay="180000"
           OnInstall="yes"

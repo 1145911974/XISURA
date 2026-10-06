@@ -27,6 +27,7 @@ public sealed partial class FanCurveWorkspaceV2 : UserControl
     public event EventHandler? DraftChanged;
     public void SetPresetCaption(string name) => EditingPresetText.Text = $"当前编辑：{name}";
     public FanCurveState Export() => CurvePlot.Export();
+    public bool IsInteracting => CurvePlot.IsInteracting;
     public void Import(FanCurveState state)
     {
         CurvePlot.Import(state);

@@ -299,6 +299,98 @@ public sealed class HomeServiceRuntimeTests
         new HardwareIdentity("MRID6-23", "MRID6_23_P_V39", "AMD Ryzen 7 7745HX", "NVIDIA GeForce RTX 4070 Laptop GPU"),
         null);
 
+    [TestMethod]
+    public async Task Automatic_fan_follow_yields_to_strong_cooling_without_stealing_ownership()
+    {
+        var provider = new FakeProvider(AvailableState("fanControl"))
+        {
+            LiveControls = new HomeControlState(PerformanceMode.Balanced, true, [])
+        };
+        var runtime = new HomeServiceRuntime(provider);
+        var owner = Guid.NewGuid();
+        var follower = Guid.NewGuid();
+        var plan = new FanControlPlan([new FanPoint(30, 30), new FanPoint(100, 100)]);
+        var manual = new SetFanControlCommand(Guid.NewGuid(), plan, true);
+        Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(manual, CancellationToken.None, owner)).State);
+        foreach (bool? strongCooling in new bool?[] { true, null })
+        {
+            provider.LiveControls = provider.LiveControls with { StrongCooling = strongCooling };
+            HardwareCommand[] commands = [
+                manual with { OperationId = Guid.NewGuid(), PreserveStrongCooling = true },
+                new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.UserRequested) { PreserveStrongCooling = true }
+            ];
+            foreach (var command in commands)
+            {
+                var result = await runtime.ExecuteAsync(command, CancellationToken.None, follower);
+                Assert.AreEqual(CommandState.Rejected, result.State);
+                Assert.AreEqual(ErrorCode.CommandInProgress, result.Error?.Code);
+            }
+        }
+        Assert.AreEqual(1, provider.ExecuteCount);
+        Assert.IsNull(await runtime.ReleaseClientFanAsync(follower));
+        Assert.AreEqual(CommandState.Applied, (await runtime.ReleaseClientFanAsync(owner))!.State);
+        provider.LiveControls = provider.LiveControls with { StrongCooling = false };
+        Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(manual with { PreserveStrongCooling = true }, CancellationToken.None, follower)).State);
+        Assert.AreEqual(3, provider.ExecuteCount);
+    }
+
+    [TestMethod]
+    [Timeout(10000)]
+    public async Task Adaptive_handoff_drains_the_entire_cycle_and_explicit_enable_releases_manual_override()
+    {
+        string root = Path.Combine(@"C:\Users\Administrator\AppData\Local\Temp", "xisura-cycle-test-" + Guid.NewGuid().ToString("N"));
+        var store = new AdaptiveAutomationStateStore();
+        // Isolate persistence from the running service's ProgramData state.
+        typeof(AdaptiveAutomationStateStore).GetField("loaded", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(store, true);
+        typeof(AdaptiveAutomationStateStore).GetField("jsonStore", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(store, new Jiaolong.Service.Storage.AtomicJsonStore(root, "adaptive.json"));
+        var provider = new FakeProvider(AvailableState("performanceMode"));
+        var bridge = new AdaptiveAutomationHardwareProvider(provider, store);
+        var runtime = new HomeServiceRuntime(bridge);
+        await runtime.InitializeAsync(CancellationToken.None);
+        var office = PresetKey.Create(ControlModeId.Office, 2);
+        var game = PresetKey.Create(ControlModeId.Gaming, 2);
+        var turbo = PresetKey.Create(ControlModeId.Turbo, 2);
+        var configuration = new AdaptiveAutomationConfiguration(false, AdaptiveAutomationStrategyId.BalancedAdaptive,
+            new(40, 35, 8, true, 85, 90, 30, 20, 15, 120, 20, 25, true, 85, 85, 15, 30, 2, false, 300, []),
+            new(office, game, turbo, office, game),
+            [new(office, PerformanceMode.Quiet, null), new(game, PerformanceMode.Balanced, null), new(turbo, PerformanceMode.Turbo, null)]);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cycle = bridge.RunAutomationCycleAsync(async token =>
+        {
+            await release.Task.WaitAsync(token);
+            var result = await bridge.ExecuteAutomaticCommandAsync(runtime, new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), token);
+            Assert.AreEqual(CommandState.Applied, result.State);
+        }, CancellationToken.None);
+        try
+        {
+            var disable = bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration), CancellationToken.None);
+            var manual = bridge.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Quiet), CancellationToken.None);
+            Assert.IsFalse(disable.IsCompleted);
+            Assert.IsFalse(manual.IsCompleted);
+            Assert.AreEqual(0, provider.ExecuteCount);
+            using var cancelled = new CancellationTokenSource();
+            var interrupted = bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration), cancelled.Token);
+            cancelled.Cancel();
+            try { await interrupted; Assert.Fail("Cancelled handoff should not acquire the cycle gate"); }
+            catch (OperationCanceledException) { }
+            release.SetResult();
+            await Task.WhenAll(cycle, disable, manual);
+            Assert.AreEqual(2, provider.ExecuteCount);
+            Assert.IsNotNull((await store.ReadAsync(CancellationToken.None)).ManualOverrideUntilUtc);
+            await bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration with { Enabled = true }), CancellationToken.None);
+            Assert.IsNull((await store.ReadAsync(CancellationToken.None)).ManualOverrideUntilUtc);
+            await store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow, true, CancellationToken.None);
+            await bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration with { Enabled = true }), CancellationToken.None);
+            Assert.IsNotNull((await store.ReadAsync(CancellationToken.None)).ManualOverrideUntilUtc);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await cycle;
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static HomeHardwareState AvailableState(string key) => new(
         new CapabilitySnapshot([new CapabilityDescriptor(key, CapabilityState.Available, null)]),
         DeviceSupportState.Ready,

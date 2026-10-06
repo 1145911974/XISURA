@@ -52,8 +52,6 @@ public sealed partial class AutomationWorkspaceV2
             if (changeEnabled)
             {
                 autoEnabled = enabled;
-                if (enabled) manualOverrideUntilUtc = null;
-                else pendingApplyCancellation?.Cancel();
             }
             else
             {
@@ -62,11 +60,7 @@ public sealed partial class AutomationWorkspaceV2
                 selection.Choose(previousEditing);
                 activeMap = map;
                 activePolicy = policy;
-                pendingApplyCancellation?.Cancel();
             }
-            runtimeSession.Reset();
-            if ((!changeEnabled || !enabled) && presetExecutor?.IsApplying != true) presetExecutor?.Reset();
-            automaticStatus = null;
             servicePublishPending = false;
             serviceSubmissionError = null;
             RenderReason();

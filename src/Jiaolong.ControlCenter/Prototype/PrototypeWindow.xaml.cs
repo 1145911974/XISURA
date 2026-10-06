@@ -1,4 +1,4 @@
-﻿using Jiaolong_ControlCenter.Services;
+using Jiaolong_ControlCenter.Services;
 using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Errors;
 using Jiaolong.Contracts.Models;
@@ -133,7 +133,6 @@ public sealed partial class PrototypeWindow : Window
             ConfirmPerformancePreset(key, animate: true);
         };
         PageWorkspace.LogoStyleChanged += ApplyLogoStyle;
-        PageWorkspace.SetAutomaticPresetApplier(PerformanceWorkspace.ApplyAutomaticPresetAsync);
         PageWorkspace.SetAutomaticPresetReader(PerformanceWorkspace.ReadAutomaticServicePresetsAsync);
         PageWorkspace.StrongCoolingRequested += OnStrongCoolingChanged;
         PageWorkspace.LidLogoRequested += enabled => OnQuickSettingChanged(QuickSettingKind.LidLogo, enabled);
@@ -1020,7 +1019,7 @@ public sealed partial class PrototypeWindow : Window
         var highContrast = accessibilitySettings.HighContrast;
         ModeAmbientBackdrop.SetMotionPaused(ModeAmbientActivityPolicy.ShouldPause(isDeactivated, minimized, savingPower));
         ModeAmbientBackdrop.SetDecorationsVisible(ModeAmbientActivityPolicy.DecorationsVisible(highContrast));
-        Hero.SetFrostVisible(!highContrast);
+        Hero.SetAdaptiveEffectsVisible(!highContrast);
         Hero.SetHighContrast(highContrast);
     }
 
@@ -1209,7 +1208,6 @@ public sealed partial class PrototypeWindow : Window
         }
         queuedModeRequest = null;
         int revision = ++manualModeRevision;
-        if (!await PauseAdaptiveForManualControlAsync() || revision != manualModeRevision) return;
         if (mode == PrototypePerformanceMode.Custom)
         {
             OnCustomProfileRequested(customProfile);
@@ -1222,6 +1220,9 @@ public sealed partial class PrototypeWindow : Window
             _ => ControlModeId.Gaming
         };
         var key = RememberedPerformancePreset(controlMode);
+        if (!appliedMode.ShouldApply(mode) &&
+            !(key.HasValue && PerformanceWorkspaceV2Preview.IsFollowingPreset)) return;
+        if (!await PauseAdaptiveForManualControlAsync() || revision != manualModeRevision) return;
         if (!key.HasValue)
         {
             var saved = preferences.Load();
@@ -1233,7 +1234,6 @@ public sealed partial class PrototypeWindow : Window
             modeCommandTask = ApplyOfficialModeWithPresetAsync(mode, controlMode, key.Value);
             return;
         }
-        PageWorkspace.ResetAutomaticModeTracking();
         if (!appliedMode.ShouldApply(mode) && !isModeCommandPending) return;
         modeReconciliation.Request(mode);
         if (isModeCommandPending) return;
@@ -1264,7 +1264,6 @@ public sealed partial class PrototypeWindow : Window
                 return;
             }
             modeReconciliation.AcceptObservation(mode);
-            PageWorkspace.ResetAutomaticModeTracking();
             state.Mode = PrototypeModeCommandCoordinator.Map(outcome.ContractMode);
             appliedMode.Confirm(mode);
             confirmedAutomaticApply = confirmed.Controls.AdaptiveAutomation?.LastApplyUtc;
@@ -1496,13 +1495,13 @@ public sealed partial class PrototypeWindow : Window
 
     private async Task<bool> ApplyPerformancePresetAsync(PresetKey key)
     {
-        if (!await PauseAdaptiveForManualControlAsync()) return false;
         if (key.Mode == ControlModeId.Turbo && turboBranch?.ActiveTier is not null)
         {
             await ShowCustomProfileStatusAsync("静音/极限狂飙使用内置策略；切回普通狂飙后可应用预设", WindowSurface.XamlRoot);
             return false;
         }
         PresetKey.Create(key.Mode, key.Slot);
+        if (!await PauseAdaptiveForManualControlAsync()) return false;
         var targetMode = AdaptiveTargetMap.PerformanceModeFor(key);
         homeSession.SupersedeAutomaticRestore();
         customActivationPending = true;
@@ -1534,7 +1533,6 @@ public sealed partial class PrototypeWindow : Window
                 await ShowCustomProfileStatusAsync("自定义功耗未读回确认；预设未标记为使用", root);
                 return false;
             }
-            PageWorkspace.ResetAutomaticModeTracking();
             PageWorkspace.SetLightingPresetTarget(key);
             state.Mode = PrototypeModeCommandCoordinator.Map(targetMode);
             modeReconciliation.Request(state.Mode);
@@ -1634,12 +1632,21 @@ public sealed partial class PrototypeWindow : Window
     private async void OnAdaptiveModeChanged(bool enabled)
     {
         if (adaptiveActivationPending || strategyActivationPending) return;
+        if (isModeCommandPending || customActivationPending)
+        {
+            Hero.ApplyAdaptiveModeState(adaptiveModeEnabled, available: true);
+            trayQuickConsole?.ApplyAdaptiveState(adaptiveModeEnabled, available: true);
+            OnRestoreWarning("正在切换模式，请稍后启用自适应");
+            return;
+        }
         adaptiveActivationPending = true;
         Hero.ApplyAdaptiveModeState(enabled, available: true, pending: true);
         trayQuickConsole?.ApplyAdaptiveState(enabled, available: true, pending: true);
         try
         {
             homeSession.SupersedeAutomaticRestore();
+            if (enabled && turboBranch?.ActiveTier is not null)
+                await ExitTurboBranchAsync(lifetimeCancellation.Token);
             if (await PageWorkspace.SetAutomationEnabledConfirmedAsync(enabled))
             {
                 userPreferences = preferences.Load();

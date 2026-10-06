@@ -401,7 +401,7 @@ public sealed class ModeVisualSystemTests
     }
 
     [TestMethod]
-    public void Strong_cooling_and_home_toggles_expose_synchronized_two_layer_states()
+    public void Home_toggles_keep_feedback_without_legacy_cooling_layers()
     {
         var sidebar = XDocument.Load(SourcePath(
             "src", "Jiaolong.ControlCenter", "Prototype", "Controls", "HomeSidebar.xaml"));
@@ -449,23 +449,16 @@ public sealed class ModeVisualSystemTests
         Assert.IsFalse(strongStyleText.Contains("StrongCoolingEnabledAcrylicBrush", StringComparison.Ordinal));
         Assert.IsFalse(strongStyleText.Contains("ModeAccentBrush", StringComparison.Ordinal));
         Assert.IsFalse(hero.Contains("StrongCoolingFrost.png", StringComparison.Ordinal));
-        StringAssert.Contains(hero, "x:Name=\"StrongCoolingAmbientLayer\"");
-        StringAssert.Contains(hero, "x:Name=\"StrongCoolingFreezeLayer\"");
-        for (var frame = 1; frame <= 8; frame++)
-            StringAssert.Contains(hero, $"x:Name=\"StrongCoolingFrame{frame:00}\"");
-        Assert.IsFalse(hero.Contains("M158,148 L72,148", StringComparison.Ordinal));
-        var frostAnimationCode = heroCode[heroCode.IndexOf("private void AnimateFrost", StringComparison.Ordinal)..];
-        Assert.IsFalse(frostAnimationCode.Contains("TranslateX", StringComparison.Ordinal));
-        Assert.IsFalse(frostAnimationCode.Contains("TranslateY", StringComparison.Ordinal));
-        StringAssert.Contains(heroCode, "FrostLayers()");
-        StringAssert.Contains(heroCode, "target.Stagger");
+        Assert.IsFalse(hero.Contains("StrongCoolingFrame", StringComparison.Ordinal));
+        Assert.IsFalse(hero.Contains("StrongCoolingFreezeLayer", StringComparison.Ordinal));
+        Assert.IsFalse(heroCode.Contains("AnimateFrost", StringComparison.Ordinal));
         StringAssert.Contains(hero, "LinearGradientBrush");
         StringAssert.Contains(hero, "x:Name=\"AutomaticModeButton\"");
         StringAssert.Contains(hero, "x:Name=\"AutoModeHaloLayer\"");
         Assert.IsFalse(hero.Contains("StrongCoolingAccentBrush", StringComparison.Ordinal));
         Assert.IsFalse(heroCode.Contains("StrongCoolingIcon.Fill = enabled", StringComparison.Ordinal));
         Assert.IsFalse(heroCode.Contains("VisualStateManager.GoToState(StrongCoolingButton", StringComparison.Ordinal));
-        StringAssert.Contains(heroCode, "SetFrostVisible");
+        StringAssert.Contains(heroCode, "SetAdaptiveEffectsVisible");
     }
 
     [TestMethod]

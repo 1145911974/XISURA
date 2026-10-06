@@ -32,9 +32,15 @@ public sealed record SetPerformanceModeCommand(Guid OperationId, PerformanceMode
 
 public sealed record SetMuxModeCommand(Guid OperationId, MuxMode Mode, bool UserConfirmedRestartImpact) : HardwareCommand(OperationId);
 
-public sealed record SetFanControlCommand(Guid OperationId, FanControlPlan Plan, bool RiskConfirmed) : HardwareCommand(OperationId);
+public sealed record SetFanControlCommand(Guid OperationId, FanControlPlan Plan, bool RiskConfirmed) : HardwareCommand(OperationId)
+{
+    public bool PreserveStrongCooling { get; init; }
+}
 
-public sealed record ReleaseFanControlCommand(Guid OperationId, ReleaseReason Reason) : HardwareCommand(OperationId);
+public sealed record ReleaseFanControlCommand(Guid OperationId, ReleaseReason Reason) : HardwareCommand(OperationId)
+{
+    public bool PreserveStrongCooling { get; init; }
+}
 
 public sealed record SetKeyboardLightingCommand(Guid OperationId, KeyboardLightingPlan Plan) : HardwareCommand(OperationId)
 {

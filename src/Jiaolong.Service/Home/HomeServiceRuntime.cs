@@ -81,6 +81,9 @@ public sealed class HomeServiceRuntime(IHomeHardwareProvider provider)
         var previousOwner = fanOwner;
         try
         {
+            if (command is SetFanControlCommand { PreserveStrongCooling: true } or ReleaseFanControlCommand { PreserveStrongCooling: true } &&
+                (await provider.ReadControlsAsync(cancellationToken)).StrongCooling != false)
+                return Rejected(command, ErrorCode.CommandInProgress);
             // Claim before dispatch: cancellation can arrive after a partial EC write.
             fanOwner = connectionId;
             var result = await ExecuteCoreAsync(command, cancellationToken);

@@ -40,7 +40,7 @@ public sealed class AdaptiveAutomationWorker(
                 {
                     var pending = recovery with { Pending = true };
                     if (await store.ReplaceOwnedRecoveryAsync(pending, recovery, stoppingToken))
-                        await RestorePendingAsync(stoppingToken, force: true);
+                        await hardware.RunAutomationCycleAsync(token => RestorePendingAsync(token, force: true), stoppingToken);
                 }
             }
             catch (Exception exception) { logger.LogWarning(exception, "Pending adaptive recovery will retry in the service loop."); }
@@ -48,7 +48,7 @@ public sealed class AdaptiveAutomationWorker(
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
                 await cycleGate.WaitAsync(stoppingToken);
-                try { await TickAsync(stoppingToken); }
+                try { await hardware.RunAutomationCycleAsync(TickAsync, stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
                 catch (Exception exception)
                 {
@@ -78,7 +78,7 @@ public sealed class AdaptiveAutomationWorker(
                     {
                         var pending = recovery with { Pending = true };
                         if (await store.ReplaceOwnedRecoveryAsync(pending, recovery, CancellationToken.None))
-                            await RestorePendingAsync(CancellationToken.None, force: true);
+                            await hardware.RunAutomationCycleAsync(token => RestorePendingAsync(token, force: true), CancellationToken.None);
                     }
                 }
                 catch (Exception exception) { logger.LogError(exception, "Adaptive automation stop recovery failed; recovery state remains persisted."); }

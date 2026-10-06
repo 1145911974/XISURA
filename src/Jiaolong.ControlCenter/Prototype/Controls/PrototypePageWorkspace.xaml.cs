@@ -45,6 +45,8 @@ public sealed partial class PrototypePageWorkspace : UserControl
     public void ApplyLidLogoState(bool? enabled, bool available) => LightingWorkspace.ApplyLogoReadback(enabled, available);
     public void SetLightingPresetTarget(PresetKey key) => LightingWorkspace.SetFollowPresetTarget(key);
     public void SetFanPresetTarget(PresetKey key) => FanWorkspace.SetFollowPresetTarget(key);
+    public Task PauseFanPresetFollowingAsync(CancellationToken token) => FanWorkspace.PausePresetFollowingAsync(token);
+    public void ResumeFanPresetFollowing() => FanWorkspace.ResumePresetFollowing();
     public void SetConfirmedPerformanceTarget(PresetKey? key) => LightingWorkspace.SetConfirmedPerformanceTarget(key);
     public void SetReducedMotion(bool reduced)
     {
@@ -195,13 +197,10 @@ public sealed partial class PrototypePageWorkspace : UserControl
     public Task<bool> SelectAdaptiveStrategyAsync(AdaptiveStrategyId strategy) => AutomationWorkspace.SelectSavedStrategyAsync(strategy);
     public void StopAutomationClient() => AutomationWorkspace.StopServiceClient();
 
-    public void SetAutomaticPresetApplier(Func<PresetKey, CancellationToken, Task<AdaptivePresetApplyResult>> applyPreset) =>
-        AutomationWorkspace.SetPresetApplier(applyPreset);
 
     public void SetAutomaticPresetReader(Func<IReadOnlyCollection<PresetKey>, CancellationToken, Task<AdaptiveAutomationPreset[]>> readPresets) =>
         AutomationWorkspace.SetServicePresetReader(readPresets);
 
-    public void ResetAutomaticModeTracking() => AutomationWorkspace.ResetAutomaticModeTracking();
 
     public void ApplyTelemetry(HardwareSnapshot snapshot)
     {

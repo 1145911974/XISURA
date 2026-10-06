@@ -6,6 +6,24 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class FanCurveDraftTests
 {
     [TestMethod]
+    public void Curve_readback_compares_values_and_ignores_unrelated_control_settings()
+    {
+        var match = typeof(FanCurveDraft).GetMethod("MatchesCurve");
+        Assert.IsNotNull(match, "Identical telemetry must not replay the curve transition.");
+        var draft = new FanCurveDraft(1);
+        var same = new FanCurveState(1, false, draft.Cpu.ToArray(), draft.Gpu.ToArray(), draft.Shared.ToArray());
+        bool Matches(FanCurveState state) => (bool)match.Invoke(draft, [state])!;
+        Assert.IsTrue(Matches(same));
+        Assert.IsTrue(Matches(same with { Strategy = "Auto", FixedRpm = 4100, MaximumRpm = 4500 }));
+        Assert.IsFalse(Matches(same with { Profile = 0 }));
+        Assert.IsFalse(Matches(same with { IsShared = true }));
+        var changed = same.Gpu.ToArray();
+        changed[1] = changed[1] with { TargetPercent = changed[1].TargetPercent + 1 };
+        Assert.IsFalse(Matches(same with { Gpu = changed }));
+        Assert.IsTrue(Matches(same));
+    }
+
+    [TestMethod]
     public void Preset_round_trip_keeps_curves_strategy_and_fixed_target()
     {
         var points = FanCurveDraft.Recommended(1);

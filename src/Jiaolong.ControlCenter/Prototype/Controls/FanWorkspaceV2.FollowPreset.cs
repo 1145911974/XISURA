@@ -1,4 +1,4 @@
-﻿using Jiaolong.Contracts.Models;
+using Jiaolong.Contracts.Models;
 using Jiaolong_ControlCenter.Services;
 
 namespace Jiaolong_ControlCenter.Prototype.Controls;
@@ -14,6 +14,17 @@ public sealed partial class FanWorkspaceV2
     private PresetKey? pendingFanFollowTarget;
     private PresetKey? appliedFanKey;
     private FanCurveState? appliedFanPreset;
+    private bool fanFollowingSuspended;
+    private int fanFollowOperations;
+
+    public async Task PausePresetFollowingAsync(CancellationToken token)
+    {
+        fanFollowingSuspended = true;
+        while (fanFollowOperations > 0 || applyingPreset || savingPreset)
+            await Task.Delay(40, token);
+    }
+
+    public void ResumePresetFollowing() => fanFollowingSuspended = false;
 
     private async void OnFollowPresetChanged(object? sender, bool enabled)
     {
@@ -22,25 +33,38 @@ public sealed partial class FanWorkspaceV2
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { PresetToolbar.SetFollowPreset(IsFollowingPreset); await PresetToolbar.ShowStatusAsync("保存跟随设置失败"); return; }
         IsFollowingPreset = enabled;
+        if (!enabled) pendingFanFollowTarget = null;
     }
 
     public async void SetFollowPresetTarget(PresetKey key)
     {
-        var slots = followPreferences.Load().FanPresetSlots;
-        key = PresetKey.Create(key.Mode, slots.TryGetValue(key.Mode.ToString(), out int slot) && slot is >= 1 and <= 3 ? slot : 2);
-        if (followFanTarget?.Mode == key.Mode) return;
-        followFanTarget = key;
-        if (!IsFollowingPreset || session is null) return;
-        if (PresetToolbar.IsEditingPreset) { pendingFanFollowTarget = key; return; }
-        while (applyingPreset || savingPreset || fanEditorLoading)
+        if (fanFollowingSuspended) return;
+        fanFollowOperations++;
+        try
         {
-            await Task.Delay(40);
-            if (!IsFollowingPreset || followFanTarget != key) return;
+            var slots = followPreferences.Load().FanPresetSlots;
+            key = PresetKey.Create(key.Mode, slots.TryGetValue(key.Mode.ToString(), out int slot) && slot is >= 1 and <= 3 ? slot : 2);
+            if (followFanTarget?.Mode == key.Mode && pendingFanFollowTarget != key) return;
+            followFanTarget = key;
+            if (!IsFollowingPreset || session is null) return;
             if (PresetToolbar.IsEditingPreset) { pendingFanFollowTarget = key; return; }
+            if (session.State?.Controls.StrongCooling != false) { pendingFanFollowTarget = key; return; }
+            pendingFanFollowTarget = null;
+            while (applyingPreset || savingPreset || fanEditorLoading)
+            {
+                await Task.Delay(40);
+                if (fanFollowingSuspended || !IsFollowingPreset || followFanTarget != key) return;
+                if (PresetToolbar.IsEditingPreset) { pendingFanFollowTarget = key; return; }
+            }
+            editingKey = key;
+            syncingPreset = true; PresetToolbar.SelectedKey = key; syncingPreset = false;
+            if (!fanFollowingSuspended && IsFollowingPreset && followFanTarget == key) await ApplyFanStateAsync(preserveStrongCooling: true);
         }
-        editingKey = key;
-        syncingPreset = true; PresetToolbar.SelectedKey = key; syncingPreset = false;
-        if (IsFollowingPreset && followFanTarget == key) await ApplyFanStateAsync();
+        catch (Exception error)
+        {
+            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Fan preset follow: {error}\n");
+        }
+        finally { fanFollowOperations--; }
     }
 
     private void UpdateFanActiveBadge(HomeStateSnapshot state)

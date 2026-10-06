@@ -20,6 +20,9 @@ public sealed class FanCurveDraft
     public bool IsShared { get; set; }
     public int Profile { get; }
 
+    public bool MatchesCurve(FanCurveState state) => Profile == state.Profile && IsShared == state.IsShared
+        && Cpu.SequenceEqual(state.Cpu) && Gpu.SequenceEqual(state.Gpu) && Shared.SequenceEqual(state.Shared);
+
     public FanCurveDraft(int profile)
     {
         Profile = Math.Clamp(profile, 0, 2);

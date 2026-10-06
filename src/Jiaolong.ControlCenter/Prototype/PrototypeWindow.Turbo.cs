@@ -1,4 +1,4 @@
-﻿using Jiaolong.Contracts.Models;
+using Jiaolong.Contracts.Models;
 using Jiaolong_ControlCenter.Services;
 
 namespace Jiaolong_ControlCenter.Prototype;
@@ -10,6 +10,8 @@ public sealed partial class PrototypeWindow
     private async Task ExitTurboBranchAsync(CancellationToken token)
     {
         if (turboBranch is not null) await turboBranch.ReleaseAsync(token);
+        GpuWorkspaceV2.ResumePresetFollowing();
+        PageWorkspace.ResumeFanPresetFollowing();
         SetTurboTierVisual("Normal");
     }
 
@@ -20,7 +22,7 @@ public sealed partial class PrototypeWindow
         trayQuickConsole?.SetModeBusy(true);
         try
         {
-            if (turboBranch is not null) await turboBranch.ReleaseAsync(lifetimeCancellation.Token);
+            await ExitTurboBranchAsync(lifetimeCancellation.Token);
         }
         catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested) { }
         catch (Exception error)
@@ -52,13 +54,13 @@ public sealed partial class PrototypeWindow
     private async Task ApplyTurboTierAsync(string tier)
     {
         if (tier is not ("Normal" or "Quiet" or "Extreme")) return;
-        if (!await PauseAdaptiveForManualControlAsync()) return;
         isModeCommandPending = true;
         HomeModeBar.IsCommandPending = true;
         trayQuickConsole?.SetModeBusy(true);
         bool normalReady = false;
         try
         {
+            if (!await PauseAdaptiveForManualControlAsync()) return;
             homeSession.SupersedeAutomaticRestore();
             turboBranch ??= new TurboBranchController(() => homeSession.State, homeSession.ExecuteAsync);
             if (tier == "Normal")
@@ -68,13 +70,14 @@ public sealed partial class PrototypeWindow
             }
             else
             {
+                await Task.WhenAll(GpuWorkspaceV2.PausePresetFollowingAsync(lifetimeCancellation.Token),
+                    PageWorkspace.PauseFanPresetFollowingAsync(lifetimeCancellation.Token));
                 await turboBranch.ApplyAsync(tier, lifetimeCancellation.Token);
                 state.Mode = PrototypePerformanceMode.Turbo;
                 appliedMode.Confirm(state.Mode);
                 PublishConfirmedMode(ControlModeId.Turbo, null, animate: true);
                 RequestModeVisuals(state.Mode, animate: true);
                 SetTurboTierVisual(tier);
-                PageWorkspace.ResetAutomaticModeTracking();
             }
         }
         catch (Exception error)
@@ -86,6 +89,11 @@ public sealed partial class PrototypeWindow
         }
         finally
         {
+            if (turboBranch?.ActiveTier is null)
+            {
+                GpuWorkspaceV2.ResumePresetFollowing();
+                PageWorkspace.ResumeFanPresetFollowing();
+            }
             isModeCommandPending = false;
             HomeModeBar.IsCommandPending = false;
             trayQuickConsole?.SetModeBusy(false);

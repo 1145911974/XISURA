@@ -25,7 +25,6 @@ public sealed partial class AutomationWorkspaceV2
     public void AttachService(HomeControlSession value)
     {
         automationService = value;
-        pendingApplyCancellation?.Cancel();
         serviceContextTimer.Tick += (_, _) => RefreshServiceConnection();
         serviceContextTimer.Start();
         Loaded += (_, _) => serviceContextTimer.Start();

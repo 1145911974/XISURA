@@ -50,6 +50,7 @@ public sealed class FanCurvePlot : UserControl
     public FanCurveDraft Draft => drafts[profile];
     public int PointCount => GetPoints(activeSeries).Count;
     public int Profile => profile;
+    public bool IsInteracting => dragging || IsAddingPoint;
     public FanCurveState Export() => new(profile, Draft.IsShared, Draft.Cpu.ToArray(), Draft.Gpu.ToArray(), Draft.Shared.ToArray());
     public bool ReducedMotion
     {
@@ -68,6 +69,7 @@ public sealed class FanCurvePlot : UserControl
     public void Import(FanCurveState state)
     {
         if (!state.IsValid()) throw new ArgumentException("曲线预设无效");
+        if (Draft.MatchesCurve(state)) return;
         var previous = CaptureFrame();
         CancelPlacement();
         profile = state.Profile;
