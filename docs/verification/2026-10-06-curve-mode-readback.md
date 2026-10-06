@@ -13,3 +13,5 @@ MSI：XISURA-1.0.71-x64.msi，182467936 bytes。
 SHA256：a9c14b1de204a760a177a57b90e4a387d003c53690523cf996fe1c78c7d02590。
 
 交付 MSI/校验文件保留供下载及回滚；清理限制沿用本聊天已报告的执行环境 “blocked by policy”，未重试被拒操作。
+
+GitHub v1.0.71 已发布为 latest；远端 MSI 182467936 bytes，SHA256 与本机交付文件一致。
