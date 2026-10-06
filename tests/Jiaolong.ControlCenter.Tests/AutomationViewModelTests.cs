@@ -67,19 +67,19 @@ public sealed class AutomationViewModelTests
     }
 
     [TestMethod]
-    public void Recommended_trigger_policies_match_the_three_unverified_research_candidates()
+    public void Recommended_trigger_policies_use_responsive_downshift_timing()
     {
         var quiet = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.QuietFirst);
         var balanced = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive);
         var responsive = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.ResponseFirst);
 
-        Assert.AreEqual((55, 45, 15, false, 90),
+        Assert.AreEqual((55, 45, 15, false, 30),
             (quiet.GameCpuPercent, quiet.GameGpuPercent, quiet.GameSeconds, quiet.TurboEnabled, quiet.OfficeSeconds));
-        Assert.AreEqual((40, 35, 8, true, 85, 90, 30, 120),
+        Assert.AreEqual((40, 35, 8, true, 85, 90, 30, 20),
             (balanced.GameCpuPercent, balanced.GameGpuPercent, balanced.GameSeconds,
              balanced.TurboEnabled, balanced.TurboCpuPercent, balanced.TurboGpuPercent,
              balanced.TurboSeconds, balanced.OfficeSeconds));
-        Assert.AreEqual((30, 25, 4, 75, 85, 15, 180),
+        Assert.AreEqual((30, 25, 4, 75, 85, 15, 15),
             (responsive.GameCpuPercent, responsive.GameGpuPercent, responsive.GameSeconds,
              responsive.TurboCpuPercent, responsive.TurboGpuPercent, responsive.TurboSeconds,
              responsive.OfficeSeconds));

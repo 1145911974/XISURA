@@ -12,6 +12,52 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class DefaultControlPresetTests
 {
     [TestMethod]
+    public void Balanced_defaults_leave_OEM_CPU_limits_and_fan_curve_under_firmware_control()
+    {
+        foreach (var mode in Enum.GetValues<ControlModeId>())
+        {
+            var key = PresetKey.Create(mode, 2);
+            var envelope = DefaultControlPresets.Create(ControlPageId.Performance, key);
+            Assert.IsTrue(envelope.Payload.GetProperty("useOfficialCpuPolicy").GetBoolean());
+            var draft = SavedPerformancePreset.ReadDraft(envelope, key);
+            var state = new CpuTuningState(85, 45, 65, 4500, true, null, draft.WindowsPowerSchemeId, null, "verified")
+            { AcMaxFrequencyMhz = 4500, DcMaxFrequencyMhz = 3000, AcMinActiveCoresPercent = 100, DcMinActiveCoresPercent = 100 };
+            var plan = PerformanceCommandFactory.CreatePresetCommands(draft, state, true, false, false, false, true);
+            Assert.IsNull(plan.Error);
+            Assert.IsTrue(plan.Steps.All(step => step.Command.Plan.TemperatureLimitC is null &&
+                step.Command.Plan.SplWatts is null && step.Command.Plan.SpptWatts is null && step.Command.Plan.Advanced is null));
+            var fan = DefaultControlPresets.Create(ControlPageId.Fan, key).Payload.Deserialize<FanCurveState>()!;
+            Assert.AreEqual("Auto", fan.Strategy);
+            Assert.IsNull(fan.MaximumRpm);
+            Assert.IsTrue(fan.IsValid());
+        }
+    }
+
+    [TestMethod]
+    public void Untouched_old_balanced_defaults_upgrade_but_custom_values_are_preserved()
+    {
+        var key = PresetKey.Create(ControlModeId.Gaming, 2);
+        var factory = DefaultControlPresets.Create(ControlPageId.Performance, key);
+        var properties = factory.Payload.EnumerateObject().Where(p => p.Name != "useOfficialCpuPolicy")
+            .ToDictionary(p => p.Name, p => p.Value);
+        var legacy = factory with { DisplayName = "保留名称", Payload = JsonSerializer.SerializeToElement(properties) };
+        var upgraded = DefaultControlPresets.Complete(legacy);
+        Assert.IsTrue(upgraded.Payload.GetProperty("useOfficialCpuPolicy").GetBoolean());
+        Assert.AreEqual(legacy.DisplayName, upgraded.DisplayName);
+        properties["temperatureLimitC"] = JsonSerializer.SerializeToElement(81);
+        var custom = DefaultControlPresets.Complete(legacy with { Payload = JsonSerializer.SerializeToElement(properties) });
+        Assert.AreEqual(81, custom.Payload.GetProperty("temperatureLimitC").GetInt32());
+        Assert.IsFalse(custom.Payload.GetProperty("useOfficialCpuPolicy").GetBoolean());
+        var manual = factory with { Payload = JsonSerializer.SerializeToElement(
+            SavedPerformancePreset.ReadDraft(factory, key) with { UseOfficialCpuPolicy = false }, new JsonSerializerOptions(JsonSerializerDefaults.Web)) };
+        Assert.IsFalse(DefaultControlPresets.Complete(manual).Payload.GetProperty("useOfficialCpuPolicy").GetBoolean());
+        var fan = DefaultControlPresets.Create(ControlPageId.Fan, key);
+        var oldFan = fan with { Payload = JsonSerializer.SerializeToElement(fan.Payload.Deserialize<FanCurveState>()! with { Strategy = "Curve" }) };
+        Assert.AreEqual("Auto", DefaultControlPresets.Complete(oldFan).Payload.Deserialize<FanCurveState>()!.Strategy);
+        var customizedFan = oldFan with { Payload = JsonSerializer.SerializeToElement(oldFan.Payload.Deserialize<FanCurveState>()! with { FixedRpm = 3200 }) };
+        Assert.AreEqual("Curve", DefaultControlPresets.Complete(customizedFan).Payload.Deserialize<FanCurveState>()!.Strategy);
+    }
+    [TestMethod]
     public async Task Fresh_install_has_72_complete_usable_presets_without_writes()
     {
         var paths = new RecordingPathProvider();
@@ -33,7 +79,7 @@ public sealed class DefaultControlPresetTests
                     break;
                 case ControlPageId.Gpu:
                     Assert.IsTrue((bool)gpuValidate.Invoke(null, [JsonSerializer.Deserialize(preset.Payload.GetRawText(), gpuType)])!);
-                    bool reset = key.Mode is ControlModeId.Turbo or ControlModeId.Custom3 && key.Slot >= 2;
+                    bool reset = key.Slot == 2 || key.Mode is ControlModeId.Turbo or ControlModeId.Custom3 && key.Slot == 3;
                     Assert.AreEqual(reset, preset.Payload.GetProperty("ResetCoreFrequencyLimit").GetBoolean());
                     if (reset) Assert.AreEqual(JsonValueKind.Null, preset.Payload.GetProperty("CoreFrequencyLimitMhz").ValueKind);
                     else Assert.IsTrue(preset.Payload.GetProperty("CoreFrequencyLimitMhz").GetInt32() is >= 1200 and <= 2400);

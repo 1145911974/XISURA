@@ -34,8 +34,8 @@ public sealed record AdaptiveAdvancedSettings
     public bool RespectBatterySaver { get; init; } = true;
     public int CpuTemperatureCeiling { get; init; } = 85;
     public int GpuTemperatureCeiling { get; init; } = 80;
-    public int CooldownSeconds { get; init; } = 30;
-    public int MinimumDwellSeconds { get; init; } = 90;
+    public int CooldownSeconds { get; init; } = 8;
+    public int MinimumDwellSeconds { get; init; } = 20;
     public int ApplicationSeconds { get; init; } = 5;
     public bool IdleReturnEnabled { get; init; }
     public int IdleSeconds { get; init; } = 300;
@@ -70,6 +70,8 @@ public sealed record AdaptiveTrialInput
     public int IdleSeconds { get; init; }
     public AdaptiveStage Current { get; init; } = AdaptiveStage.Office;
     public bool ReapplyCurrentTarget { get; init; }
+    public bool ApplicationContextAvailable { get; init; } = true;
+    public bool IdleContextAvailable { get; init; } = true;
 }
 
 public sealed record AdaptiveTrialResult(AdaptiveStage? Target, string Reason);
@@ -94,12 +96,9 @@ public static class AdaptiveRuleTrial
             if (settings.RespectBatterySaver && input.BatterySaver is null)
                 return Hold("电池节能状态未知：不产生切换候选。");
         }
-        if (input.CpuTemperature is null || input.GpuTemperature is null || !double.IsFinite(input.CpuTemperature.Value) || !double.IsFinite(input.GpuTemperature.Value))
-            return Hold("温度数据不完整：阻止升档，需确认保护状态。");
-        if (input.CpuTemperature >= settings.CpuTemperatureCeiling || input.GpuTemperature >= settings.GpuTemperatureCeiling)
-            return Hold("达到温度保护门槛：否决性能升档，不试探硬件调校。");
         if (input.SinceSwitchSeconds < settings.CooldownSeconds) return Hold("仍在切换冷却期。");
-        var app = settings.ApplicationRules.FirstOrDefault(r => string.Equals(r.Executable, input.Executable.Trim(), StringComparison.OrdinalIgnoreCase) && (!r.ForegroundOnly || input.Foreground));
+        var app = input.ApplicationContextAvailable ? settings.ApplicationRules.FirstOrDefault(r =>
+            string.Equals(r.Executable, input.Executable.Trim(), StringComparison.OrdinalIgnoreCase) && (!r.ForegroundOnly || input.Foreground)) : null;
         AdaptiveStage? target = app?.Target;
         var duration = app is not null ? settings.ApplicationSeconds : 0;
         var reason = app is not null ? $"应用规则命中：{app.Executable}" : "持续负载规则";
@@ -109,17 +108,31 @@ public static class AdaptiveRuleTrial
             var gpu = input.GpuPercent;
             if (cpu is null || gpu is null || !double.IsFinite(cpu.Value) || !double.IsFinite(gpu.Value) || cpu < 0 || cpu > 100 || gpu < 0 || gpu > 100)
                 return Hold("负载数据不完整或无效。");
-            if (policy.TurboEnabled && (cpu >= policy.TurboCpuPercent || gpu >= policy.TurboGpuPercent)) { target = AdaptiveStage.Turbo; duration = policy.TurboSeconds; }
-            else if (cpu >= policy.GameCpuPercent || gpu >= policy.GameGpuPercent) { target = AdaptiveStage.Game; duration = policy.GameSeconds; }
-            else if (cpu < policy.OfficeCpuPercent && gpu < policy.OfficeGpuPercent)
+            if (cpu < policy.OfficeCpuPercent && gpu < policy.OfficeGpuPercent)
             {
                 target = AdaptiveStage.Office; duration = policy.OfficeSeconds;
-                if (settings.IdleReturnEnabled && input.IdleSeconds < settings.IdleSeconds) return Hold("低负载，但尚未满足空闲时长。");
+                if (settings.IdleReturnEnabled && input.IdleContextAvailable && input.IdleSeconds < settings.IdleSeconds) return Hold("低负载，但尚未满足空闲时长。");
             }
+            else if (policy.TurboEnabled && (cpu >= policy.TurboCpuPercent || gpu >= policy.TurboGpuPercent)) { target = AdaptiveStage.Turbo; duration = policy.TurboSeconds; }
+            else if ((cpu >= policy.GameCpuPercent || gpu >= policy.GameGpuPercent) &&
+                (input.Current != AdaptiveStage.Turbo || !policy.TurboEnabled ||
+                 cpu < policy.TurboCpuPercent - 10 && gpu < policy.TurboGpuPercent - 10))
+            { target = AdaptiveStage.Game; duration = policy.GameSeconds; }
+            else if (input.Current == AdaptiveStage.Turbo && (!policy.TurboEnabled ||
+                cpu < policy.TurboCpuPercent - 10 && gpu < policy.TurboGpuPercent - 10))
+            { target = AdaptiveStage.Game; duration = policy.GameSeconds; reason = "狂飙负载已持续回落"; }
         }
         if (target is null) return Hold("处于阈值滞回区，保持当前模式。");
         if (target == AdaptiveStage.Turbo && (!policy.TurboEnabled || input.AcConnected == false))
         { target = AdaptiveStage.Game; reason += "；供电/策略上限限制为游戏"; }
+        // A cooling GPU can stop reporting temperature; that must never lock a higher-power mode.
+        if (target >= input.Current)
+        {
+            if (input.CpuTemperature is null || input.GpuTemperature is null || !double.IsFinite(input.CpuTemperature.Value) || !double.IsFinite(input.GpuTemperature.Value))
+                return Hold("温度数据不完整：阻止升档，需确认保护状态。");
+            if (input.CpuTemperature >= settings.CpuTemperatureCeiling || input.GpuTemperature >= settings.GpuTemperatureCeiling)
+                return Hold("达到温度保护门槛：否决性能升档，不试探硬件调校。");
+        }
         if (target == input.Current && !input.ReapplyCurrentTarget) return Hold("已经是目标模式，不重复切换。");
         if (input.ConditionSeconds < duration) return Hold($"{reason}；仍需连续满足 {duration} 秒。");
         if (target < input.Current && input.SinceSwitchSeconds < settings.MinimumDwellSeconds) return Hold("降档等待最短驻留时间。");
@@ -195,7 +208,12 @@ public sealed class AdaptiveRuleSession
         }
 
         CandidateStage = target;
-        var key = $"{target}|{possible.Reason}|{liveInput.AcConnected}|{liveInput.Executable}|{liveInput.Foreground}";
+        // Load continuity belongs to the load signal, not whichever window the user focuses.
+        var application = liveInput.ApplicationContextAvailable ? policy.Advanced.ApplicationRules.FirstOrDefault(rule =>
+            string.Equals(rule.Executable, liveInput.Executable.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            (!rule.ForegroundOnly || liveInput.Foreground)) : null;
+        var source = application?.Executable.ToUpperInvariant() ?? "load";
+        var key = $"{target}|{source}|{liveInput.AcConnected}|{liveInput.ApplicationContextAvailable}|{liveInput.IdleContextAvailable}";
         if (candidateKey != key)
         {
             candidateKey = key;

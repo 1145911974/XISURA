@@ -144,12 +144,6 @@ public sealed class AdaptiveAutomationWorker(
             return;
         }
         var currentStage = ResolveCurrentStage(mode);
-        if (HasManualCoolingControl(state.Controls))
-        {
-            ruleSession.Reset();
-            await PublishStatusAsync(configuration, false, "风扇曲线或强冷正在控制散热，暂停自动模式切换。", telemetry.CapturedAtUtc, cancellationToken);
-            return;
-        }
         if (currentStage is null)
         {
             ruleSession.Reset();
@@ -159,29 +153,14 @@ public sealed class AdaptiveAutomationWorker(
 
         var context = IsFresh(saved.ClientContext, now) ? saved.ClientContext : null;
         var policy = runtimePolicy ??= AdaptiveAutomationConfigurationValidator.ToTriggerPolicy(configuration);
-        if (policy.Advanced.ApplicationRules.Any(rule => rule.ForegroundOnly) && context?.ForegroundExecutable is null)
-        {
-            ruleSession.Reset();
-            await PublishStatusAsync(configuration, false, "前台进程上下文缺失或已过期，应用规则暂停。", telemetry.CapturedAtUtc, cancellationToken);
-            return;
-        }
-        if (policy.Advanced.ApplicationRules.Any(rule => !rule.ForegroundOnly) && context?.RunningExecutables is null)
-        {
-            ruleSession.Reset();
-            await PublishStatusAsync(configuration, false, "运行进程上下文缺失或已过期，后台应用规则暂停。", telemetry.CapturedAtUtc, cancellationToken);
-            return;
-        }
+        bool contextIncomplete = policy.Advanced.ApplicationRules.Any(rule =>
+            rule.ForegroundOnly ? context?.ForegroundExecutable is null : context?.RunningExecutables is null) ||
+            policy.Advanced.IdleReturnEnabled && context?.IdleSeconds is null;
         var matchedApplication = policy.Advanced.ApplicationRules.FirstOrDefault(rule => rule.ForegroundOnly
             ? string.Equals(rule.Executable, context?.ForegroundExecutable, StringComparison.OrdinalIgnoreCase)
             : context?.RunningExecutables?.Contains(rule.Executable, StringComparer.OrdinalIgnoreCase) == true);
         var executable = matchedApplication?.Executable ?? context?.ForegroundExecutable ?? string.Empty;
-        if (policy.Advanced.IdleReturnEnabled && context?.IdleSeconds is null)
-        {
-            ruleSession.Reset();
-            await PublishStatusAsync(configuration, false, "空闲时长上下文缺失或已过期，空闲返回规则暂停。", telemetry.CapturedAtUtc, cancellationToken);
-            return;
-        }
-        var idleSeconds = policy.Advanced.IdleReturnEnabled ? context!.IdleSeconds!.Value : 0;
+        var idleSeconds = policy.Advanced.IdleReturnEnabled ? context?.IdleSeconds ?? 0 : 0;
         var input = new AdaptiveTrialInput
         {
             CpuPercent = telemetry.CpuUsagePercent,
@@ -195,13 +174,20 @@ public sealed class AdaptiveAutomationWorker(
             Foreground = context?.ForegroundExecutable is { } foreground && string.Equals(executable, foreground, StringComparison.OrdinalIgnoreCase),
             IdleSeconds = idleSeconds,
             Current = currentStage.Value,
-            ReapplyCurrentTarget = true
+            ReapplyCurrentTarget = true,
+            ApplicationContextAvailable = !contextIncomplete,
+            IdleContextAvailable = context?.IdleSeconds is not null
         };
         var result = ruleSession.Evaluate(policy, input, telemetry.CapturedAtUtc);
         lastEvaluationUtc = telemetry.CapturedAtUtc;
         if (result.Target is not { } target)
         {
             await PublishStatusAsync(configuration, true, result.Reason, lastEvaluationUtc, cancellationToken);
+            return;
+        }
+        if (contextIncomplete && target >= currentStage.Value)
+        {
+            await PublishStatusAsync(configuration, true, "应用规则暂停。空闲返回规则暂停。上下文不完整时仅允许负载降档。", lastEvaluationUtc, cancellationToken);
             return;
         }
 
@@ -474,10 +460,6 @@ public sealed class AdaptiveAutomationWorker(
                 PerCoreCurveOptimizer: HasRestorableCurve(state) ? new Dictionary<int,int>(state.PerCoreCurveOptimizer!) : null)
         } is { } plan && IsNonEmptySafePlan(plan) ? plan : null;
     }
-
-    internal static bool HasManualCoolingControl(HomeControlState controls) =>
-        controls.StrongCooling == true || !controls.FanAutomaticCeilingActive && controls.FanEcControl is { } ec &&
-        ((ec.Control & 0x0A) != 0 || ec.CpuTarget != 0 || ec.GpuTarget != 0);
 
     internal static bool CanApplyAndRestore(CpuTuningPlan plan, CpuTuningState? state)
     {

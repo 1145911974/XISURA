@@ -20,6 +20,7 @@ public sealed class PrototypeRoughPageContractTests
         StringAssert.Contains(code, "if (revision != manualModeRevision) return;");
         StringAssert.Contains(code, "isCurrentRequest: () => revision == manualModeRevision");
         StringAssert.Contains(workspace, "if (isCurrentRequest?.Invoke() == false) return false;");
+        StringAssert.Contains(code, "!presetDraft.UseOfficialCpuPolicy && controls?.CpuTuning?.OemCustomPowerMode != true");
     }
 
     [TestMethod]
@@ -45,6 +46,10 @@ public sealed class PrototypeRoughPageContractTests
         StringAssert.Contains(worker, "IsFresh(saved.ClientContext, now)");
         StringAssert.Contains(worker, "应用规则暂停。");
         StringAssert.Contains(worker, "空闲返回规则暂停。");
+        Assert.IsFalse(worker.Contains("HasManualCoolingControl", StringComparison.Ordinal));
+        var heartbeat = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "AutomationWorkspaceV2.Service.cs");
+        Assert.IsFalse(heartbeat.Contains("Unloaded += (_, _) => serviceContextTimer.Stop()", StringComparison.Ordinal));
+        StringAssert.Contains(heartbeat, "public void StopServiceClient()");
     }
 
     [TestMethod]

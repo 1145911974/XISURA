@@ -56,6 +56,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private HomeControlSession? session;
     private CpuTuningState? currentState;
     private PerformanceDraft? selectedSavedDraft;
+    private bool useOfficialCpuPolicy;
     private int? acFrequencyMhz;
     private int? dcFrequencyMhz;
     private Guid? windowsPowerSchemeDraftId;
@@ -508,6 +509,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     {
         if (!synchronizing)
         {
+            useOfficialCpuPolicy = false;
             AdvancedWorkspace.SynchronizeBasicAliases(
                 ReferenceEquals(sender, TemperatureRow) ? value : null,
                 ReferenceEquals(sender, BurstPowerRow) ? value : null);
@@ -596,6 +598,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             if (selectedPreset.Mode != mode) return;
             var draft = envelope is null ? null : SavedPerformancePreset.ReadDraft(envelope, key);
             PresetToolbar.SetSlotSummary(slot, draft is null ? "未配置" :
+                draft.UseOfficialCpuPolicy ? $"官方调度 · {draft.AcMaxFrequencyMhz / 1000d:0.0}GHz" :
                 $"{draft.TemperatureLimitC}°C · {draft.SplWatts}W · {draft.AcMaxFrequencyMhz / 1000d:0.0}GHz");
         }
     }
@@ -826,6 +829,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             if (isCurrentRequest?.Invoke() == false) return false;
             _ = PresetToolbar.ShowStatusAsync("正在应用完整预设");
             inFlight = "完整性能预设";
+            if (draft.UseOfficialCpuPolicy && session.State?.Telemetry?.AcPowerConnected is not true)
+                nativeMode = null;
             var batch = new SetCpuTuningBatchCommand(Guid.NewGuid(), commandPlan.Steps
                 .Select(step => ((SetCpuTuningCommand)step.Command).Plan).ToArray(), true)
             { NativeMode = nativeMode };
@@ -997,6 +1002,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private void ApplyDraft(PerformanceDraft draft, bool animate = false)
     {
         synchronizing = true;
+        useOfficialCpuPolicy = draft.UseOfficialCpuPolicy;
         _ = ApplyPresetRecommendationsAsync(selectedPreset, animate);
         if (animate)
         {
@@ -1044,6 +1050,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
         return new PerformanceDraft
         {
+            UseOfficialCpuPolicy = PresetToolbar.IsEditingPreset && useOfficialCpuPolicy,
             TemperatureLimitC = temperature,
             SplWatts = sustained,
             SpptWatts = burst,
@@ -1092,6 +1099,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     {
         if (!synchronizing)
         {
+            useOfficialCpuPolicy = false;
             synchronizing = true;
             var advanced = AdvancedWorkspace.ReadDraft();
             if (advanced?.FastPptWatts is double fast) BurstPowerRow.SetValue(fast);

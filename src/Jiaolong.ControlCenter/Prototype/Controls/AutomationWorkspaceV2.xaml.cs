@@ -229,7 +229,7 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
         try
         {
             policy.Validate();
-            return policy;
+            return AdaptiveTriggerPolicy.UpgradeRecommended(strategy, policy);
         }
         catch (ArgumentException)
         {

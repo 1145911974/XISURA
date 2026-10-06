@@ -11,7 +11,7 @@ public static class DefaultControlPresets
         PresetKey.Create(key.Mode, key.Slot);
         if (page == ControlPageId.Performance) return DefaultPerformancePresets.Create(key);
         int family = key.Mode is ControlModeId.Office or ControlModeId.Custom1 ? 0 : key.Mode is ControlModeId.Turbo or ControlModeId.Custom3 ? 2 : 1;
-        bool resetGpuClock = family == 2 && key.Slot >= 2;
+        bool resetGpuClock = key.Slot == 2 || family == 2 && key.Slot == 3;
         object payload = page switch
         {
             ControlPageId.Gpu => new
@@ -36,7 +36,8 @@ public static class DefaultControlPresets
         var curves = new FanCurveDraft(profile);
         int extra = (key.Slot - 1) * (profile == 2 ? 4 : 2);
         CurvePoint[] Cooling(IEnumerable<CurvePoint> points) => points.Select(point => point with { TargetPercent = Math.Min(100, point.TargetPercent + extra) }).ToArray();
-        return new(profile, false, Cooling(curves.Cpu), Cooling(curves.Gpu), Cooling(curves.Shared));
+        return new(profile, false, Cooling(curves.Cpu), Cooling(curves.Gpu), Cooling(curves.Shared),
+            Strategy: key.Slot == 2 ? "Auto" : "Curve");
     }
 
     public static PagePresetEnvelope Complete(PagePresetEnvelope preset)
@@ -47,6 +48,9 @@ public static class DefaultControlPresets
 
         var saved = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
         foreach (var property in preset.Payload.EnumerateObject()) saved[property.Name] = property.Value;
+        bool hadOfficialPolicy = saved.ContainsKey("useOfficialCpuPolicy");
+        if (preset.Page == ControlPageId.Performance && !hadOfficialPolicy)
+            saved["useOfficialCpuPolicy"] = JsonSerializer.SerializeToElement(false);
         // Absence in an older saved preset means no reset request, even when the new factory default resets.
         if (preset.Page == ControlPageId.Gpu && (!saved.TryGetValue("ResetCoreFrequencyLimit", out var resetFlag) || resetFlag.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined))
             saved["ResetCoreFrequencyLimit"] = JsonSerializer.SerializeToElement(false);
@@ -64,6 +68,20 @@ public static class DefaultControlPresets
         if (preset.Page == ControlPageId.Performance && saved.TryGetValue("maxFrequencyMhz", out var frequency) && frequency.ValueKind == JsonValueKind.Number)
             foreach (var name in new[] { "acMaxFrequencyMhz", "dcMaxFrequencyMhz" })
                 if (!saved.TryGetValue(name, out var value) || value.ValueKind == JsonValueKind.Null) values[name] = frequency.Clone();
-        return preset with { Payload = JsonSerializer.SerializeToElement(values) };
+        var payload = JsonSerializer.SerializeToElement(values);
+        if (preset.Key.Slot == 2)
+        {
+            JsonElement? legacy = preset.Page switch
+            {
+                ControlPageId.Performance when !hadOfficialPolicy => JsonSerializer.SerializeToElement(
+                    DefaultPerformancePresets.CreateDraft(preset.Key) with { UseOfficialCpuPolicy = false },
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                ControlPageId.Fan => JsonSerializer.SerializeToElement(CreateFanDraft(preset.Key) with { Strategy = "Curve" }),
+                _ => null
+            };
+            if (legacy is { } prior && JsonElement.DeepEquals(payload, prior))
+                return defaults with { DisplayName = preset.DisplayName, SavedAtUtc = preset.SavedAtUtc };
+        }
+        return preset with { Payload = payload };
     }
 }

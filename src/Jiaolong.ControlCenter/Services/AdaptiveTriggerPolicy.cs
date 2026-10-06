@@ -16,11 +16,26 @@ public sealed record AdaptiveTriggerPolicy(
     public AdaptiveAdvancedSettings Advanced { get; init; } = new();
     public static AdaptiveTriggerPolicy Recommended(AdaptiveStrategyId strategy) => strategy switch
     {
-        AdaptiveStrategyId.QuietFirst => new(55, 45, 15, false, 85, 90, 30, 20, 15, 90),
-        AdaptiveStrategyId.BalancedAdaptive => new(40, 35, 8, true, 85, 90, 30, 20, 15, 120),
-        AdaptiveStrategyId.ResponseFirst => new(30, 25, 4, true, 75, 85, 15, 15, 10, 180),
+        AdaptiveStrategyId.QuietFirst => new(55, 45, 15, false, 85, 90, 30, 20, 15, 30),
+        AdaptiveStrategyId.BalancedAdaptive => new(40, 35, 8, true, 85, 90, 30, 20, 15, 20),
+        AdaptiveStrategyId.ResponseFirst => new(30, 25, 4, true, 75, 85, 15, 15, 10, 15),
         _ => throw new ArgumentOutOfRangeException(nameof(strategy))
     };
+
+    public static AdaptiveTriggerPolicy UpgradeRecommended(AdaptiveStrategyId strategy, AdaptiveTriggerPolicy saved)
+    {
+        var recommended = Recommended(strategy);
+        int legacyOfficeSeconds = strategy == AdaptiveStrategyId.QuietFirst ? 90 : strategy == AdaptiveStrategyId.BalancedAdaptive ? 120 : 180;
+        int office = saved.OfficeSeconds == legacyOfficeSeconds ? recommended.OfficeSeconds : saved.OfficeSeconds;
+        var advanced = saved.Advanced with
+        {
+            CooldownSeconds = saved.Advanced.CooldownSeconds == 30 ? recommended.Advanced.CooldownSeconds : saved.Advanced.CooldownSeconds,
+            MinimumDwellSeconds = saved.Advanced.MinimumDwellSeconds == 90 ? recommended.Advanced.MinimumDwellSeconds : saved.Advanced.MinimumDwellSeconds
+        };
+        // Old default waits also occur in strategies with customized load thresholds.
+        return office == saved.OfficeSeconds && advanced == saved.Advanced ? saved :
+            saved with { OfficeSeconds = office, Advanced = advanced };
+    }
 
     public void Validate()
     {

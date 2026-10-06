@@ -41,6 +41,7 @@ public static class DefaultPerformancePresets
         return new PerformanceDraft
         {
             Mode = family == 0 ? PerformanceMode.Quiet : family == 1 ? PerformanceMode.Balanced : PerformanceMode.Turbo,
+            UseOfficialCpuPolicy = key.Slot == 2,
             TemperatureLimitC = temperature,
             SplWatts = spl,
             SpptWatts = sppt,

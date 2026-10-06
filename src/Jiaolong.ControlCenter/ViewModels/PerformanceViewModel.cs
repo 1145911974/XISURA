@@ -12,6 +12,7 @@ public sealed record PerformanceDraft
     private int dcMaxFrequencyMhz = 4_500;
 
     public PerformanceMode Mode { get; set; } = PerformanceMode.Balanced;
+    public bool UseOfficialCpuPolicy { get; set; }
     public int TemperatureLimitC { get; set; } = 95;
     public int SplWatts { get; set; } = 45;
     public int SpptWatts { get; set; } = 65;

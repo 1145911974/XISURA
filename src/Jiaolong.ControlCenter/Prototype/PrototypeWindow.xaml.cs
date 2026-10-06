@@ -1567,12 +1567,14 @@ public sealed partial class PrototypeWindow : Window
             await ExitTurboBranchAsync(lifetimeCancellation.Token);
             var root = trayQuickConsole is { } visiblePopup && visiblePopup.AppWindow.IsVisible
                 ? visiblePopup.PopupXamlRoot ?? WindowSurface.XamlRoot : WindowSurface.XamlRoot;
-            if (await new ControlPresetStore().LoadAsync(ControlPageId.Performance, key, CancellationToken.None) is null)
+            var presetEnvelope = await new ControlPresetStore().LoadAsync(ControlPageId.Performance, key, CancellationToken.None);
+            if (presetEnvelope is null)
             {
                 string message = $"请先在性能页保存 {key.Mode} 的预设 {key.Slot}";
                 await ShowCustomProfileStatusAsync(message, root);
                 return false;
             }
+            var presetDraft = SavedPerformancePreset.ReadDraft(presetEnvelope, key);
             // The service applies and verifies the complete CPU preset as one transaction.
             bool applied = await PerformanceWorkspaceV2Preview.ApplyStoredPresetAsync(key, root, isCurrentRequest: isCurrentRequest,
                 queueCancellationToken: queueCancellationToken);
@@ -1584,7 +1586,7 @@ public sealed partial class PrototypeWindow : Window
                 return false;
             }
             var controls = homeSession.State?.Controls;
-            if (controls?.CpuTuning?.OemCustomPowerMode != true)
+            if (!presetDraft.UseOfficialCpuPolicy && controls?.CpuTuning?.OemCustomPowerMode != true)
             {
                 await ShowCustomProfileStatusAsync("自定义功耗未读回确认；预设未标记为使用", root);
                 return false;

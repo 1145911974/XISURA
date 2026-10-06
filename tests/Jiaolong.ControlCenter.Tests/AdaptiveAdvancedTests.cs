@@ -9,6 +9,70 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class AdaptiveAdvancedTests
 {
     [TestMethod]
+    public void Low_load_downshift_survives_hot_sensors_and_foreground_changes()
+    {
+        var policy = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive) with
+        { OfficeSeconds = 4, Advanced = new() { CooldownSeconds = 1, MinimumDwellSeconds = 1 } };
+        var sample = new AdaptiveTrialInput { Current = AdaptiveStage.Turbo, AcConnected = true,
+            CpuPercent = 3, GpuPercent = 0, CpuTemperature = 92, GpuTemperature = null };
+        var session = new AdaptiveRuleSession();
+        var start = DateTimeOffset.UnixEpoch;
+        for (int second = 0; second < 4; second++)
+            Assert.IsNull(session.Evaluate(policy, sample with { Executable = $"window{second}.exe", Foreground = second % 2 == 0 }, start.AddSeconds(second)).Target);
+        Assert.AreEqual(AdaptiveStage.Office, session.Evaluate(policy, sample with { Executable = "desktop.exe" }, start.AddSeconds(4)).Target);
+        Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { Current = AdaptiveStage.Office,
+            CpuPercent = 95, GpuPercent = 99, ConditionSeconds = 100, SinceSwitchSeconds = 100 }).Target);
+    }
+
+    [TestMethod]
+    public void Turbo_exits_to_game_in_moderate_load_and_still_honors_dwell()
+    {
+        var policy = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive);
+        var sample = new AdaptiveTrialInput { Current = AdaptiveStage.Turbo, AcConnected = true,
+            CpuPercent = 25, GpuPercent = 20, CpuTemperature = 90, GpuTemperature = 82,
+            ConditionSeconds = 100, SinceSwitchSeconds = 100 };
+        Assert.AreEqual(AdaptiveStage.Game, AdaptiveRuleTrial.Evaluate(policy, sample).Target);
+        Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { SinceSwitchSeconds = 0 }).Target);
+        Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { Current = AdaptiveStage.Game }).Target);
+        Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { CpuPercent = 82, GpuPercent = 88 }).Target);
+        var session = new AdaptiveRuleSession();
+        var start = DateTimeOffset.UnixEpoch;
+        for (int second = 0; second <= policy.Advanced.MinimumDwellSeconds; second++)
+        {
+            var result = session.Evaluate(policy, sample with { CpuPercent = second % 2 == 0 ? 25 : 45 }, start.AddSeconds(second));
+            if (second == policy.Advanced.MinimumDwellSeconds) Assert.AreEqual(AdaptiveStage.Game, result.Target);
+            else Assert.IsNull(result.Target);
+        }
+        foreach (var strategy in Enum.GetValues<AdaptiveStrategyId>())
+        {
+            var recommended = AdaptiveTriggerPolicy.Recommended(strategy);
+            Assert.IsTrue(recommended.OfficeSeconds <= 30);
+            Assert.IsTrue(recommended.Advanced.MinimumDwellSeconds <= 30);
+        }
+    }
+
+    [TestMethod]
+    public void Legacy_default_waits_upgrade_without_overwriting_custom_thresholds_or_timing()
+    {
+        foreach (var strategy in Enum.GetValues<AdaptiveStrategyId>())
+        {
+            var recommended = AdaptiveTriggerPolicy.Recommended(strategy);
+            var old = recommended with { OfficeSeconds = strategy == AdaptiveStrategyId.QuietFirst ? 90 :
+                strategy == AdaptiveStrategyId.BalancedAdaptive ? 120 : 180,
+                Advanced = new() { CooldownSeconds = 30, MinimumDwellSeconds = 90 } };
+            var upgraded = AdaptiveTriggerPolicy.UpgradeRecommended(strategy, old);
+            Assert.AreEqual(recommended.OfficeSeconds, upgraded.OfficeSeconds);
+            Assert.AreEqual(recommended.Advanced.MinimumDwellSeconds, upgraded.Advanced.MinimumDwellSeconds);
+            Assert.AreEqual(recommended.Advanced.CooldownSeconds, upgraded.Advanced.CooldownSeconds);
+            var custom = old with { GameSeconds = old.GameSeconds + 1 };
+            var customUpgraded = AdaptiveTriggerPolicy.UpgradeRecommended(strategy, custom);
+            Assert.AreEqual(custom.GameSeconds, customUpgraded.GameSeconds);
+            Assert.AreEqual(recommended.Advanced.MinimumDwellSeconds, customUpgraded.Advanced.MinimumDwellSeconds);
+            var customTiming = custom with { OfficeSeconds = 35, Advanced = old.Advanced with { CooldownSeconds = 13, MinimumDwellSeconds = 45 } };
+            Assert.AreSame(customTiming, AdaptiveTriggerPolicy.UpgradeRecommended(strategy, customTiming));
+        }
+    }
+    [TestMethod]
     public void Target_map_resolves_each_supported_power_and_stage_pair()
     {
         var map = new AdaptiveTargetMap(

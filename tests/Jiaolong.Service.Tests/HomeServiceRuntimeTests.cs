@@ -266,16 +266,6 @@ public sealed class HomeServiceRuntimeTests
         Assert.AreEqual(ReleaseReason.SessionEnded, ((ReleaseFanControlCommand)provider.LastCommand!).Reason);
         Assert.IsNull(await runtime.ReleaseClientFanAsync(second));
         Assert.AreEqual(3, provider.ExecuteCount);
-        var controls = new HomeControlState(PerformanceMode.Turbo, false, []);
-        var ec = new FanEcControlState(DateTimeOffset.UtcNow, 0, 4, 58, 58, 0);
-        Assert.IsTrue(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { FanEcControl = ec }));
-        Assert.IsTrue(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { FanEcControl = ec with { CpuTarget = 0 } }));
-        Assert.IsTrue(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { FanEcControl = ec with { GpuTarget = 0 } }));
-        Assert.IsFalse(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { FanEcControl = ec with { CpuTarget = 0, GpuTarget = 0 } }));
-        Assert.IsTrue(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { StrongCooling = true }));
-        Assert.IsFalse(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { FanEcControl = ec, FanAutomaticCeilingActive = true }));
-        Assert.IsTrue(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { FanEcControl = ec, FanAutomaticCeilingActive = true, StrongCooling = true }));
-        Assert.IsTrue(AdaptiveAutomationWorker.HasManualCoolingControl(controls with { FanEcControl = ec with { Control = 10, CpuTarget = 0, GpuTarget = 0 } }));
         using var held = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         using var contenderStarted = new ManualResetEventSlim();
@@ -433,6 +423,56 @@ public sealed class HomeServiceRuntimeTests
         new HardwareIdentity("MRID6-23", "MRID6_23_P_V39", "AMD Ryzen 7 7745HX", "NVIDIA GeForce RTX 4070 Laptop GPU"),
         null);
 
+    [TestMethod]
+    public async Task Adaptive_downshifts_with_curves_strong_cooling_or_missing_client_context()
+    {
+        foreach (int scenario in Enumerable.Range(0, 4))
+        {
+            string root = Path.Combine(Path.GetTempPath(), "xisura-adaptive77-" + Guid.NewGuid().ToString("N"));
+            var store = new AdaptiveAutomationStateStore();
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            typeof(AdaptiveAutomationStateStore).GetField("loaded", flags)!.SetValue(store, true);
+            typeof(AdaptiveAutomationStateStore).GetField("jsonStore", flags)!.SetValue(store,
+                new Jiaolong.Service.Storage.AtomicJsonStore(root, "adaptive.json"));
+            try
+            {
+                var office = PresetKey.Create(ControlModeId.Office, 2);
+                var game = PresetKey.Create(ControlModeId.Gaming, 2);
+                var turbo = PresetKey.Create(ControlModeId.Turbo, 2);
+                var rules = scenario == 3 ? new[] { new AdaptiveAutomationApplicationRule("game.exe", false, AdaptiveAutomationStageId.Turbo) } : [];
+                await store.SetConfigurationAsync(new(true, AdaptiveAutomationStrategyId.BalancedAdaptive,
+                    new(40, 35, 1, true, 85, 90, 1, 20, 15, 1, 20, 30, true, 85, 80, 1, 1, 1, scenario == 3, 30, rules),
+                    new(office, game, turbo, office, game),
+                    [new(office, PerformanceMode.Quiet, null), new(game, PerformanceMode.Balanced, null), new(turbo, PerformanceMode.Turbo, null)]), CancellationToken.None);
+                var controls = new HomeControlState(PerformanceMode.Turbo, scenario == 1, [])
+                { FanEcControl = new(DateTimeOffset.UtcNow, 0, 4, 35, 35, 0), FanAutomaticCeilingActive = scenario == 2 };
+                var ready = AvailableState("performanceMode");
+                var provider = new FakeProvider(ready with { Capabilities = ready.Capabilities with { SupportState = DeviceSupportState.Ready } })
+                { LiveControls = controls, FollowModeWrites = true };
+                var bridge = new AdaptiveAutomationHardwareProvider(provider, store);
+                var runtime = new HomeServiceRuntime(bridge);
+                await runtime.InitializeAsync(CancellationToken.None);
+                var worker = new AdaptiveAutomationWorker(store, runtime, bridge,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<AdaptiveAutomationWorker>.Instance);
+                var tick = typeof(AdaptiveAutomationWorker).GetMethod("TickAsync", flags)!;
+                var start = DateTimeOffset.UtcNow.AddSeconds(-1);
+                for (int second = 0; second <= 1; second++)
+                {
+                    provider.LiveTelemetry = new HardwareSnapshot(start.AddSeconds(second), "connected", 92, scenario == 2 ? null : 82, 8, 0)
+                    { CpuUsagePercent = 3, GpuUsagePercent = 0, AcPowerConnected = true, BatteryPercent = 95 };
+                    await bridge.RunAutomationCycleAsync(token => (Task)tick.Invoke(worker, [token])!, CancellationToken.None);
+                }
+                Assert.AreEqual(PerformanceMode.Quiet, provider.LiveControls.PerformanceMode,
+                    $"scenario {scenario}: {(await store.ReadAsync(CancellationToken.None)).Status?.Reason}");
+                Assert.AreEqual(office, (await store.ReadAsync(CancellationToken.None)).Status!.CurrentTarget);
+                Assert.AreEqual(1, provider.ExecuteCount);
+                Assert.AreEqual(controls.FanEcControl, provider.LiveControls.FanEcControl);
+                Assert.AreEqual(controls.StrongCooling, provider.LiveControls.StrongCooling);
+            }
+            finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        }
+    }
+
     private sealed class FakeProvider(HomeHardwareState state) : IHomeHardwareProvider
     {
         public HomeHardwareState State { get; private set; } = state;
@@ -447,6 +487,7 @@ public sealed class HomeServiceRuntimeTests
         public HomeControlState LiveControls { get; set; } = state.Controls;
         public HardwareSnapshot? LiveTelemetry { get; set; }
         public PerformanceMode? VerifiedMode { get; init; }
+        public bool FollowModeWrites { get; init; }
         public Task<HardwareSnapshot>? PendingTelemetry { get; init; }
 
         public Task<HomeHardwareState> DiagnoseAsync(CancellationToken cancellationToken)
@@ -483,6 +524,8 @@ public sealed class HomeServiceRuntimeTests
         {
             ExecuteCount++;
             LastCommand = command;
+            if (FollowModeWrites && command is SetPerformanceModeCommand mode)
+                LiveControls = LiveControls with { PerformanceMode = mode.Mode };
             return Task.FromResult(new CommandResult(command.OperationId, ResultState, State.Telemetry, RequiredUserAction.None, null, false)
                 { VerifiedPerformanceMode = VerifiedMode });
         }

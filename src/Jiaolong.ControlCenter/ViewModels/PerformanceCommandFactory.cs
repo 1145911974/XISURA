@@ -121,6 +121,8 @@ public static class PerformanceCommandFactory
         if (HasPlanValues(windowsPlan))
             steps.Add(Step("Windows 频率/Boost/电源方案/停泊", windowsPlan, windowsPlan));
 
+        // Balanced factory presets tune Windows policy only; the OEM mode owns power/thermal limits.
+        if (draft.UseOfficialCpuPolicy) return new(steps, skipped);
         var temperaturePlan = new CpuTuningPlan(draft.TemperatureLimitC, null, null, null, null, null, null, null);
         var splPlan = new CpuTuningPlan(null, draft.SplWatts, null, null, null, null, null, null);
         var spptPlan = new CpuTuningPlan(null, null, draft.SpptWatts, null, null, null, null, null);
@@ -286,9 +288,9 @@ public static class PerformanceCommandFactory
         bool hasFrequencyReadBack = state.AcFrequency() is not null && state.DcFrequency() is not null;
         CpuTuningPlan plan = command.Plan with
         {
-            TemperatureLimitC = state.TemperatureLimitC is null ? null : draft.TemperatureLimitC,
-            SplWatts = state.SplWatts is null ? null : draft.SplWatts,
-            SpptWatts = state.SpptWatts is null ? null : draft.SpptWatts,
+            TemperatureLimitC = draft.UseOfficialCpuPolicy || state.TemperatureLimitC is null ? null : draft.TemperatureLimitC,
+            SplWatts = draft.UseOfficialCpuPolicy || state.SplWatts is null ? null : draft.SplWatts,
+            SpptWatts = draft.UseOfficialCpuPolicy || state.SpptWatts is null ? null : draft.SpptWatts,
             MaxFrequencyMhz = hasFrequencyReadBack ? draft.MaxFrequencyMhz : null,
             BoostEnabled = state.BoostEnabled is null ? null : draft.IsBoostEnabled,
             WindowsPowerSchemeId = state.WindowsPowerSchemeId is null || draft.WindowsPowerSchemeId == Guid.Empty
@@ -345,18 +347,18 @@ public static class PerformanceCommandFactory
         new(
             operationId ?? Guid.NewGuid(),
             new CpuTuningPlan(
-                draft.TemperatureLimitC,
-                draft.SplWatts,
-                draft.SpptWatts,
+                draft.UseOfficialCpuPolicy ? null : draft.TemperatureLimitC,
+                draft.UseOfficialCpuPolicy ? null : draft.SplWatts,
+                draft.UseOfficialCpuPolicy ? null : draft.SpptWatts,
                 draft.MaxFrequencyMhz,
                 draft.IsBoostEnabled,
                 null,
                 draft.WindowsPowerSchemeId == Guid.Empty ? null : draft.WindowsPowerSchemeId,
-                draft.AdvancedCpuTuning is null ? draft.NegativeCurveOptimizer : null)
+                !draft.UseOfficialCpuPolicy && draft.AdvancedCpuTuning is null ? draft.NegativeCurveOptimizer : null)
             {
                 AcMaxFrequencyMhz = draft.AcMaxFrequencyMhz,
                 DcMaxFrequencyMhz = draft.DcMaxFrequencyMhz,
-                Advanced = ToPlan(draft.AdvancedCpuTuning, draft.NegativeCurveOptimizer)
+                Advanced = draft.UseOfficialCpuPolicy ? null : ToPlan(draft.AdvancedCpuTuning, draft.NegativeCurveOptimizer)
             },
             riskConfirmed);
 

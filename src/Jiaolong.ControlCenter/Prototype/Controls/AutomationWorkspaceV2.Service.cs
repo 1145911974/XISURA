@@ -28,7 +28,7 @@ public sealed partial class AutomationWorkspaceV2
         serviceContextTimer.Tick += (_, _) => RefreshServiceConnection();
         serviceContextTimer.Start();
         Loaded += (_, _) => serviceContextTimer.Start();
-        Unloaded += (_, _) => serviceContextTimer.Stop();
+        // Page visibility does not end scheduling; StopServiceClient owns the heartbeat lifetime.
     }
 
     public void SetServicePresetReader(Func<IReadOnlyCollection<PresetKey>, CancellationToken, Task<AdaptiveAutomationPreset[]>> reader)
