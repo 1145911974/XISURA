@@ -724,7 +724,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
 
         bool forcePreset = presetKey is not null;
-        PerformanceMode? nativeMode = presetKey is null ? null : presetKey.Value.Mode switch
+        PerformanceMode? nativeMode = presetKey is null ? session.State?.Controls.PerformanceMode : presetKey.Value.Mode switch
         {
             ControlModeId.Office => PerformanceMode.Quiet,
             ControlModeId.Gaming => PerformanceMode.Balanced,

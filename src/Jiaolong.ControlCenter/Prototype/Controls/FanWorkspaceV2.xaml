@@ -115,9 +115,6 @@
                 </Grid.ColumnDefinitions>
                 <Grid Grid.Column="0">
                     <local:FanCurveWorkspaceV2 x:Name="FanCurveWorkspace" VerticalAlignment="Stretch" />
-                    <Border x:Name="LiveFanUnknownPanel" Visibility="Collapsed" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="24">
-                        <TextBlock x:Name="LiveFanUnknownText" Text="当前由 EC 自动控制，固件曲线无法读取。&#xA;选择“温度曲线”后，可从推荐曲线开始设置。" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.75" />
-                    </Border>
                 </Grid>
                 <Border Grid.Column="1" VerticalAlignment="Stretch" MinHeight="520" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="18">
                     <StackPanel Spacing="14">

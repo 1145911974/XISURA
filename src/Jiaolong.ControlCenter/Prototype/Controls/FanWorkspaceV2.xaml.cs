@@ -86,6 +86,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private void RestoreDraft(FanCurveState state)
     {
         importingPreset = true;
+        if (PresetToolbar.IsEditingPreset) FanCurveWorkspace.Opacity = 1;
         FanCurveWorkspace.Import(state);
         (state.Strategy == "Auto" ? AutoStrategy : state.Strategy == "Fixed" ? FixedStrategy : CurveStrategy).IsChecked = true;
         FixedTarget.Value = state.FixedRpm;

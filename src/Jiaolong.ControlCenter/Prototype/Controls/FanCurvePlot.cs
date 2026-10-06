@@ -140,6 +140,7 @@ public sealed class FanCurvePlot : UserControl
     public FanCurvePlot()
     {
         Content = surface;
+        RegisterPropertyChangedCallback(IsEnabledProperty, (_, _) => surface.Invalidate());
         Unloaded += (_, _) => StopLayoutTransition();
         surface.Draw += Draw;
         surface.PointerPressed += OnPointerPressed;
@@ -226,6 +227,8 @@ public sealed class FanCurvePlot : UserControl
     private void DrawFrame(CanvasControl sender, CanvasDrawingSession drawing, float width, float height, CurveFrame frame, float opacity)
     {
         if (opacity <= 0) return;
+        var cpuColor = IsEnabled ? CpuColor : Color.FromArgb(255, 160, 165, 174);
+        var gpuColor = IsEnabled ? GpuColor : Color.FromArgb(255, 160, 165, 174);
         var recommendation = FanCurveDraft.Recommended(frame.Profile, frame.IsShared || frame.ActiveSeries == FanCurveSeries.Gpu);
         using (var stroke = new CanvasStrokeStyle { DashStyle = CanvasDashStyle.Dash })
             for (int i = 1; i < recommendation.Length; i++)
@@ -234,12 +237,12 @@ public sealed class FanCurvePlot : UserControl
                     WithOpacity(Color.FromArgb(85, 210, 215, 224), opacity), 1, stroke);
         if (!frame.IsShared)
         {
-            DrawSmoothCurve(sender, drawing, width, height, frame.Gpu, GpuColor, frame.ActiveSeries == FanCurveSeries.Gpu, opacity);
-            DrawNodes(drawing, width, height, frame.Gpu, GpuColor, frame.ActiveSeries == FanCurveSeries.Gpu, FanCurveSeries.Gpu, opacity);
+            DrawSmoothCurve(sender, drawing, width, height, frame.Gpu, gpuColor, frame.ActiveSeries == FanCurveSeries.Gpu, opacity);
+            DrawNodes(drawing, width, height, frame.Gpu, gpuColor, frame.ActiveSeries == FanCurveSeries.Gpu, FanCurveSeries.Gpu, opacity);
         }
         var cpu = frame.IsShared ? frame.Shared : frame.Cpu;
-        DrawSmoothCurve(sender, drawing, width, height, cpu, CpuColor, frame.IsShared || frame.ActiveSeries == FanCurveSeries.Cpu, opacity);
-        DrawNodes(drawing, width, height, cpu, CpuColor, frame.IsShared || frame.ActiveSeries == FanCurveSeries.Cpu,
+        DrawSmoothCurve(sender, drawing, width, height, cpu, cpuColor, frame.IsShared || frame.ActiveSeries == FanCurveSeries.Cpu, opacity);
+        DrawNodes(drawing, width, height, cpu, cpuColor, frame.IsShared || frame.ActiveSeries == FanCurveSeries.Cpu,
             frame.ActiveSeries == FanCurveSeries.Gpu && frame.IsShared ? FanCurveSeries.Gpu : FanCurveSeries.Cpu, opacity);
     }
 

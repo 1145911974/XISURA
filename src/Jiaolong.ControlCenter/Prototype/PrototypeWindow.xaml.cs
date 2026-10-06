@@ -116,7 +116,15 @@ public sealed partial class PrototypeWindow : Window
             userPreferences = preferences.Load();
             trayQuickConsole?.ApplyQuickMenuLayout(userPreferences.ResolveTrayQuickMenuLayout());
         };
-        PerformanceWorkspaceV2Preview.PrepareManualControlAsync = PauseAdaptiveForManualControlAsync;
+        PerformanceWorkspaceV2Preview.PrepareManualControlAsync = async () =>
+        {
+            if (turboBranch?.ActiveTier is not null)
+            {
+                _ = PerformanceWorkspaceV2Preview.ShowPresetStatusAsync("内置狂飙策略正在控制 CPU；切回普通狂飙后可实时调节");
+                return false;
+            }
+            return await PauseAdaptiveForManualControlAsync();
+        };
         PerformanceWorkspaceV2Preview.PresetSaved += InvalidateSavedPerformancePreset;
         PerformanceWorkspaceV2Preview.SetConfirmedActivePreset(null);
         PerformanceWorkspaceV2Preview.PresetApplied += key =>

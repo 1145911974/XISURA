@@ -73,15 +73,14 @@ public sealed partial class FanWorkspaceV2
     {
         bool curve = CurveStrategy.IsChecked == true;
         bool fixedSpeed = FixedStrategy.IsChecked == true;
-        LiveFanUnknownText.Text = fixedSpeed ? "当前使用固定转速，未运行温度曲线。" :
-            "当前由 EC 自动控制，固件曲线无法读取。\n选择“温度曲线”后，可从推荐曲线开始设置。";
         FixedTarget.Visibility = FixedTargetSlider.Visibility = fixedSpeed ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         MaximumRpmTarget.Visibility = AutoStrategy.IsChecked == true && MaximumRpmToggle.IsOn ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
-        LiveFanUnknownPanel.Visibility = curve ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
-        FanCurveWorkspace.Visibility = curve ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        FanCurveWorkspace.Opacity = curve ? 1 : 0.48;
         FanCurveWorkspace.IsEnabled = curve && session?.State?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) == true;
-        FanCurveWorkspace.SetPresetCaption(session?.State?.Controls.ActiveFanControlPlan?.Strategy == "Curve"
-            ? "当前硬件曲线" : "推荐起点，修改后实时应用");
+        FanCurveWorkspace.SetPresetCaption(!curve
+            ? fixedSpeed ? "固定转速控制 · 曲线未运行" : "EC 自动控制 · 参考曲线未运行"
+            : session?.State?.Controls.ActiveFanControlPlan?.Strategy == "Curve"
+                ? "当前硬件曲线" : "推荐起点，修改后实时应用");
     }
 
     private async void QueueLiveFanChange()
