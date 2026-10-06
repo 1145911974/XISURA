@@ -1,0 +1,17 @@
+{
+  "Version": "1.0.74.0",
+  "Hashes": [
+    {
+      "Match": true,
+      "File": "Jiaolong.ControlCenter.dll"
+    },
+    {
+      "Match": true,
+      "File": "Jiaolong.Service.dll"
+    }
+  ],
+  "Pid": 120064,
+  "Responding": true,
+  "Service": "Running",
+  "MsiExit": 0
+}

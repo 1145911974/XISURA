@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using Jiaolong_ControlCenter.Prototype;
@@ -9,6 +9,38 @@ namespace Jiaolong.ControlCenter.Tests;
 [TestClass]
 public sealed class TrayInteractionTests
 {
+    [TestMethod]
+    public void Shell_selection_keeps_its_monitor_anchor_until_owner_dispatch()
+    {
+        foreach (var (x, y, notification) in new[] { (2500, 1400, 0x400), (-1800, -40, 0x202), (800, 900, 0x401) })
+        {
+            Action? queued = null;
+            Windows.Graphics.PointInt32? received = null;
+            var tray = new TrayIconService(_ => Assert.Fail("Selection must retain its anchor"), action => queued = action);
+            var data = typeof(TrayIconService).GetField("data", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            data.SetValue(tray, Activator.CreateInstance(data.FieldType));
+            tray.QuickConsoleRequested += point => received = point;
+            var packedPoint = new nint(unchecked((int)((uint)(ushort)x | ((uint)(ushort)y << 16))));
+            Assert.IsTrue(tray.HandleWindowMessage(0x8000, new nint(0x10000 | notification), packedPoint));
+            Assert.IsNull(received);
+            Assert.IsNotNull(queued);
+            queued();
+            Assert.AreEqual(x, received!.Value.X);
+            Assert.AreEqual(y, received.Value.Y);
+        }
+    }
+
+    [TestMethod]
+    public void Acceptance_main_window_placement_cannot_override_tray_or_disable_dismissal()
+    {
+        var shell = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.xaml.cs");
+        var start = shell.IndexOf("private void ShowTrayQuickConsole(", StringComparison.Ordinal);
+        var show = shell[start..shell.IndexOf("private TrayQuickConsoleWindow CreateTrayQuickConsole", start, StringComparison.Ordinal)];
+        Assert.IsFalse(show.Contains("acceptanceSecondaryDisplay", StringComparison.Ordinal));
+        Assert.IsFalse(show.Contains("IsModalActionPending = true", StringComparison.Ordinal));
+        StringAssert.Contains(show, "ShowDocked(anchor)");
+    }
+
     [TestMethod]
     public void Runtime_icons_use_six_approved_C_modes_and_keep_the_fixed_fallback()
     {
@@ -27,7 +59,7 @@ public sealed class TrayInteractionTests
     public void Quick_console_repeated_show_does_not_toggle_or_fade_the_surface()
     {
         var code = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "TrayQuickConsoleWindow.xaml.cs");
-        StringAssert.Contains(code, "if (isVisible && !isClosing) return;");
+        StringAssert.Contains(code, "if (isVisible && !isClosing && !changingDisplay) return;");
         Assert.IsFalse(code.Contains("ConsoleSurface.Opacity = animate ? 0 : 1"));
         StringAssert.Contains(code, "CompositionTarget.Rendering");
         StringAssert.Contains(code, "AnimationsEnabled");
@@ -249,7 +281,7 @@ public sealed class TrayInteractionTests
         StringAssert.Contains(xaml, "Text=\"电源未读取\" FontSize=\"9\" HorizontalAlignment=\"Left\"");
         StringAssert.Contains(xaml, "AutomationProperties.Name=\"开启控制台\"");
         StringAssert.Contains(code, "添加快捷项");
-        foreach (var text in new[] { "ShowDocked", "SetWindowOpacity", "CompositionTarget.Rendering", "AppWindow.Hide", "ApplyTelemetry", "ApplyState", "PopupXamlRoot", "IsModalActionPending", "SetModeBusy(bool busy)", "ShowStatus(string message)", "ReducedMotion", "ApplyAdaptiveState(bool enabled, bool available, bool pending = false)", "Microsoft.UI.Xaml.Automation", "if (isVisible && !isClosing)", "pendingQuickSettings" })
+        foreach (var text in new[] { "ShowDocked", "SetWindowOpacity", "CompositionTarget.Rendering", "AppWindow.Hide", "ApplyTelemetry", "ApplyState", "PopupXamlRoot", "IsModalActionPending", "SetModeBusy(bool busy)", "ShowStatus(string message)", "ReducedMotion", "ApplyAdaptiveState(bool enabled, bool available, bool pending = false)", "Microsoft.UI.Xaml.Automation", "if (isVisible && !isClosing && !changingDisplay)", "pendingQuickSettings" })
             StringAssert.Contains(code, text);
         foreach (var field in new[] { "CpuTemperatureText", "GpuPowerText", "CpuFanText", "MemoryText", "CapturedAtUtc" })
             StringAssert.Contains(code, field);

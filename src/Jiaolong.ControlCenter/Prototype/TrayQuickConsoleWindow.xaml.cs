@@ -44,6 +44,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
     private bool displayedAdaptiveEnabled;
     private bool adaptiveRequestPending;
     private PointInt32 dockPosition;
+    private RectInt32 dockWorkArea;
     private int entranceDistance;
     private bool configured;
     private bool isVisible;
@@ -325,13 +326,17 @@ public sealed partial class TrayQuickConsoleWindow : Window
 
     public void ShowDocked(PointInt32? anchor = null)
     {
+        GetCursorPos(out var cursor);
+        var displayArea = DisplayArea.GetFromPoint(anchor ?? new PointInt32(cursor.X, cursor.Y), DisplayAreaFallback.Nearest);
+        var workArea = displayArea?.WorkArea ?? new RectInt32(0, 0, 1920, 1080);
+        bool changingDisplay = !dockWorkArea.Equals(workArea);
         // Shell can deliver both button-up and selection for the same gesture.
-        if (isVisible && !isClosing) return;
+        if (isVisible && !isClosing && !changingDisplay) return;
         PopulateQuickMenu();
         CloseSelector(false);
         RefreshVisualState(false);
         freshnessTimer.Start();
-        if (isClosing)
+        if (isClosing && !changingDisplay)
         {
             BeginTransition(false);
             Activate();
@@ -339,9 +344,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
             return;
         }
         SetWindowOpacity(0);
-        GetCursorPos(out var cursor);
-        var displayArea = DisplayArea.GetFromPoint(anchor ?? new PointInt32(cursor.X, cursor.Y), DisplayAreaFallback.Primary);
-        var workArea = displayArea?.WorkArea ?? new RectInt32(0, 0, 1920, 1080);
+        dockWorkArea = workArea;
         // Move onto the target monitor before reading its per-window DPI.
         AppWindow.Move(new PointInt32(workArea.X, workArea.Y));
         var (scaledWidth, scaledHeight) = GetScaledSize();

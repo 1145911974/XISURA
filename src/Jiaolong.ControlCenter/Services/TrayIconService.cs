@@ -48,6 +48,7 @@ public sealed class TrayIconService : IDisposable
     private long lastContextMenuTick;
 
     public event Action<PointInt32>? ContextMenuRequested;
+    public event Action<PointInt32>? QuickConsoleRequested;
 
     public TrayIconService(Action<TrayCommand> commandHandler, Action<Action>? dispatchOnOwner = null)
     {
@@ -95,10 +96,10 @@ public sealed class TrayIconService : IDisposable
         return true;
     }
 
-    public bool HandleWindowMessage(uint message, nint lParam)
+    public bool HandleWindowMessage(uint message, nint lParam, nint? wParam = null)
     {
         if (message != WmApp) return false;
-        HandleCallback(lParam);
+        HandleCallback(lParam, wParam);
         return true;
     }
 
@@ -128,7 +129,7 @@ public sealed class TrayIconService : IDisposable
         return true;
     }
 
-    public void HandleCallback(nint lParam)
+    public void HandleCallback(nint lParam, nint? wParam = null)
     {
         if (data is null) return;
 
@@ -139,7 +140,18 @@ public sealed class TrayIconService : IDisposable
             case WmLButtonUp:
             case NinSelect:
             case NinKeySelect:
-                Dispatch(TrayCommand.ShowQuickConsole);
+                // Version 4 supplies the gesture's physical anchor, including keyboard selection.
+                PointInt32 anchor;
+                if (wParam is { } packed)
+                    anchor = new PointInt32(unchecked((short)packed.ToInt64()), unchecked((short)(packed.ToInt64() >> 16)));
+                else if (GetCursorPos(out var cursor))
+                    anchor = new PointInt32(cursor.X, cursor.Y);
+                else { Dispatch(TrayCommand.ShowQuickConsole); break; }
+                dispatchOnOwner(() =>
+                {
+                    if (QuickConsoleRequested is { } requested) requested(anchor);
+                    else commandHandler(TrayCommand.ShowQuickConsole);
+                });
                 break;
             case WmRButtonUp:
             case WmContextMenu:
@@ -236,7 +248,7 @@ public sealed class TrayIconService : IDisposable
         lock (CallbackWindowGate)
             CallbackWindows.TryGetValue(hwnd, out service);
 
-        if (service is not null && service.HandleWindowMessage(message, lParam))
+        if (service is not null && service.HandleWindowMessage(message, lParam, wParam))
             return nint.Zero;
         if (message == WmDestroy)
         {

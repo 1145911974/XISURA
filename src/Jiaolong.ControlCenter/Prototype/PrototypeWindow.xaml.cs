@@ -92,6 +92,7 @@ public sealed partial class PrototypeWindow : Window
         InitializeComponent();
         tray = new TrayIconService(HandleTrayCommand, action => DispatcherQueue.TryEnqueue(() => action()));
         tray.ContextMenuRequested += ShowTrayContextMenu;
+        tray.QuickConsoleRequested += point => ShowTrayQuickConsole(point);
         userPreferences = preferences.Load();
         var reduceMotion = userPreferences.ReduceMotion ||
             new MotionSettingsService().IsReducedMotionEnabled || !new UISettings().AnimationsEnabled;
@@ -673,7 +674,7 @@ public sealed partial class PrototypeWindow : Window
         trayContextMenu.ShowNearCursor(cursor);
     }
 
-    private void ShowTrayQuickConsole()
+    private void ShowTrayQuickConsole(PointInt32? anchor = null)
     {
         try
         {
@@ -690,13 +691,7 @@ public sealed partial class PrototypeWindow : Window
             _ = RefreshTrayPresetCatalogAsync();
             if (homeSession.State is { } snapshot) trayQuickConsole.ApplyState(snapshot);
             RefreshTrayFanState(homeSession.State);
-            // Keep the opt-in secondary-screen acceptance session stable during UI automation.
-            if (acceptanceSecondaryDisplay && TryGetSecondaryWorkArea(out var acceptanceArea))
-            {
-                trayQuickConsole.IsModalActionPending = true;
-                trayQuickConsole.ShowDocked(new PointInt32(acceptanceArea.Right - 30, acceptanceArea.Bottom - 20));
-            }
-            else trayQuickConsole.ShowDocked();
+            trayQuickConsole.ShowDocked(anchor);
         }
         catch (Exception error)
         {
