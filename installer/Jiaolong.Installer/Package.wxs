@@ -3,7 +3,7 @@
   <Package
     Name="XISURA"
     Manufacturer="XISURA"
-    Version="1.0.74.0"
+    Version="1.0.75.0"
     UpgradeCode="6D5E0FE5-7C27-4BB5-AE48-CA1A5E7E9B39"
     Scope="perMachine"
     Codepage="65001"
@@ -32,9 +32,18 @@
       Impersonate="no"
       Return="check"
       HideTarget="yes" />
+    <CustomAction
+      Id="JiaolongRemoveStartupTasks"
+      FileRef="ServiceExecutable"
+      ExeCommand="--remove-startup-tasks"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check"
+      HideTarget="yes" />
     <InstallExecuteSequence>
       <Custom Action="JiaolongConfigureServiceRecovery" After="InstallServices" Condition="NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="JiaolongRemoveProgramData" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND REMOVE_DATA=1" />
+      <Custom Action="JiaolongRemoveStartupTasks" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
     <Feature Id="MainFeature" Title="XISURA" Level="1">
       <ComponentGroupRef Id="ApplicationFiles" />

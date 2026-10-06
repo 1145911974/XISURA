@@ -578,7 +578,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
         if (XamlRoot is null) return;
         trayQuickMenuEditor ??= CreateTrayQuickMenuEditor();
         var available = QuickMenuCatalog.CreateDefault().ToDictionary(item => item.Kind,
-            item => item.IsAction || session?.State is { } state && IsCapabilityAvailable(state, item.CapabilityKey));
+            item => QuickMenuCatalog.IsAvailable(item, session?.State));
         trayQuickMenuEditor.ApplyLayout(preferences.Load().ResolveTrayQuickMenuLayout(), available, maxItems: 6);
         var popup = new Popup
         {
@@ -693,15 +693,11 @@ public sealed partial class PrototypePageWorkspace : UserControl
     private void OnOpenOfficialInstallerFolder(object sender, RoutedEventArgs e)
     {
         SettingsStatusText.Visibility = Visibility.Visible;
-        var folder = System.IO.Path.Combine(AppContext.BaseDirectory, "OfficialDependencies");
-        if (!System.IO.Directory.Exists(folder))
-        {
-            System.IO.Directory.CreateDirectory(folder);
-        }
+        var folder = AppContext.BaseDirectory;
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
-            SettingsStatusText.Text = $"已打开本地官方依赖目录：{folder}";
+            SettingsStatusText.Text = $"已打开程序与依赖文件目录：{folder}";
         }
         catch (Exception ex)
         {

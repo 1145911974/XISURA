@@ -24,7 +24,7 @@
  <Button x:Name="SharedButton" Style="{StaticResource ControlGlassButtonStyle}" Content="双扇共用一条" Click="OnLayoutChanged" Tag="1" Width="142" MinWidth="0" Padding="8,0" FontSize="14" FontWeight="SemiBold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" CornerRadius="0" Height="34" BorderThickness="0"/></StackPanel>
  </Border>
 
- <Button Grid.Column="2" Content="恢复推荐曲线" Click="OnResetClick"/>
+ <Button x:Name="RestoreCurveButton" Grid.Column="2" Content="恢复推荐曲线" Click="OnResetClick"/>
  </Grid>
  <Grid Grid.Row="2">
  <TextBlock Text="目标转速 (%)" FontSize="11" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/>

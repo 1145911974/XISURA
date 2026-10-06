@@ -18,6 +18,8 @@ public sealed partial class MonitorPanel : UserControl
     private const double DefaultTemperatureWallC = 95;
     private static readonly Color MarkerWhiteColor = Color.FromArgb(242, 255, 255, 255);
     private static readonly Color MarkerRedColor = Color.FromArgb(255, 222, 50, 54);
+    private readonly SolidColorBrush markerWhiteBrush = new(MarkerWhiteColor);
+    private readonly SolidColorBrush markerRedBrush = new(MarkerRedColor);
     private readonly Stopwatch thermalClock = new();
     private long lastThermalFrameTimestamp;
     private readonly Stopwatch temperatureWallClock = new();
@@ -246,7 +248,8 @@ public sealed partial class MonitorPanel : UserControl
         Canvas.SetLeft(TemperatureMarker, markerLeft);
         Canvas.SetLeft(TemperatureWallMarker, wallLeft);
         TemperatureMarker.Opacity = available ? 1 : 0;
-        TemperatureMarker.Fill = new SolidColorBrush(IsAtTemperatureWall(available) ? MarkerRedColor : MarkerWhiteColor);
+        var brush = IsAtTemperatureWall(available) ? markerRedBrush : markerWhiteBrush;
+        if (!ReferenceEquals(TemperatureMarker.Fill, brush)) TemperatureMarker.Fill = brush;
         SetReadout(TemperaturePeak, TemperatureWallText());
     }
 

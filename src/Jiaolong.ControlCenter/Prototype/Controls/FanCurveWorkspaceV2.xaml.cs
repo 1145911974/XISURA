@@ -11,6 +11,7 @@ public sealed partial class FanCurveWorkspaceV2 : UserControl
 {
     private bool updatingInspector;
     private bool reducedMotion;
+    private bool editingEnabled = true;
     private Storyboard? selectionTransition;
     private Button[] selectionTargets = [];
     public bool ReducedMotion
@@ -28,6 +29,14 @@ public sealed partial class FanCurveWorkspaceV2 : UserControl
     public void SetPresetCaption(string name) => EditingPresetText.Text = $"当前编辑：{name}";
     public FanCurveState Export() => CurvePlot.Export();
     public bool IsInteracting => CurvePlot.IsInteracting;
+    public void SetEditingEnabled(bool enabled)
+    {
+        editingEnabled = enabled;
+        IndependentButton.IsEnabled = SharedButton.IsEnabled = RestoreCurveButton.IsEnabled = enabled;
+        AddNodeButton.IsEnabled = TemperatureBox.IsEnabled = TargetBox.IsEnabled = enabled;
+        DeleteButton.IsEnabled = enabled && CurvePlot.PointCount > 2;
+        CurvePlot.IsEnabled = enabled;
+    }
     public void Import(FanCurveState state)
     {
         CurvePlot.Import(state);
@@ -106,7 +115,7 @@ public sealed partial class FanCurveWorkspaceV2 : UserControl
         RecommendationText.Text = point.Temperature >= 70
             ? $"{point.Temperature}°C 本档建议至少 {recommended}% · 高温低转速保存时提醒"
             : $"{point.Temperature}°C 本档参考 {recommended}% · 可自由调整转速";
-        DeleteButton.IsEnabled = total > 2;
+        DeleteButton.IsEnabled = editingEnabled && total > 2;
         GpuSeriesButton.IsEnabled = true;
         AddNodeButton.Content = CurvePlot.IsAddingPoint ? "取消加点" : "＋ 添加节点";
         EditHint.Text = CurvePlot.IsAddingPoint ? "在图中按下并拖动放置新节点" : "空白处按下加点 · 拖动定位";

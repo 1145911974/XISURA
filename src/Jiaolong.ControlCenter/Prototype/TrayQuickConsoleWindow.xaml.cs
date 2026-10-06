@@ -135,15 +135,13 @@ public sealed partial class TrayQuickConsoleWindow : Window
         }
     }
 
-    private static bool IsLocal(QuickSettingKind kind) => kind is QuickSettingKind.WinKey or QuickSettingKind.NumLock or QuickSettingKind.CapsLock or QuickSettingKind.DisplayOff;
-
     private void RefreshQuickButton(QuickSettingKind kind)
     {
         if (!quickButtons.TryGetValue(kind, out var button)) return;
         var enabled = quickSettings.GetValueOrDefault(kind);
         var pending = pendingQuickSettings.Contains(kind);
         bool action = kind == QuickSettingKind.DisplayOff;
-        bool supported = IsLocal(kind) || serviceConnected && (availableQuickSettings?.Contains(kind) ?? true);
+        bool supported = QuickMenuCatalog.IsLocal(kind) || serviceConnected && (availableQuickSettings?.Contains(kind) ?? true);
         button.IsEnabled = !pending && supported && (action || enabled.HasValue);
         var label = QuickSettingLabel(kind);
         var selected = enabled.HasValue && (kind == QuickSettingKind.FnLock
@@ -196,7 +194,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
     public void ApplyState(HomeStateSnapshot snapshot)
     {
         var catalog = QuickMenuCatalog.CreateDefault();
-        availableQuickSettings = catalog.Where(item => snapshot.Capabilities.Items.Any(capability => capability.Key == item.CapabilityKey && capability.State == CapabilityState.Available)).Select(item => item.Kind).ToHashSet();
+        availableQuickSettings = catalog.Where(item => QuickMenuCatalog.IsAvailable(item, snapshot)).Select(item => item.Kind).ToHashSet();
         SetQuickSettingState(QuickSettingKind.StrongCooling, snapshot.Controls.StrongCooling);
         foreach (var setting in snapshot.Controls.QuickSettings) SetQuickSettingState(setting.Setting, setting.Enabled);
         if (snapshot.Telemetry is { } telemetry) ApplyTelemetry(telemetry);
@@ -208,7 +206,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
         bool connectionChanged = serviceConnected != connected;
         serviceConnected = connected;
         if (!connected) { fanConnected = false; fanStrongCooling = null; }
-        if (!connected) foreach (var kind in quickSettings.Keys.Where(kind => !IsLocal(kind)).ToArray()) quickSettings[kind] = null;
+        if (!connected) foreach (var kind in quickSettings.Keys.Where(kind => !QuickMenuCatalog.IsLocal(kind)).ToArray()) quickSettings[kind] = null;
         if (available is not null) availableQuickSettings = available;
         foreach (var kind in quickButtons.Keys) RefreshQuickButton(kind);
         RefreshTelemetry();

@@ -715,7 +715,10 @@ public sealed class PrototypeContractTests
         var curveCode = ReadSource("src", "Jiaolong.ControlCenter", "Controls", "TelemetryCurve.xaml.cs");
         StringAssert.Contains(panel, "<shared:TelemetryCurve");
         StringAssert.Contains(grid, "<shared:TelemetryCurve");
-        StringAssert.Contains(curveCode, "Viewport.Clip = new RectangleGeometry");
+        StringAssert.Contains(curveCode, "Viewport.Clip = viewportClip");
+        StringAssert.Contains(curveCode, "new Rect(0, 0, ActualWidth, ActualHeight)");
+        StringAssert.Contains(curveCode, "CurveLine.Data = lineGeometry");
+        StringAssert.Contains(curveCode, "1d / 30d");
         StringAssert.Contains(curveCode, "new Rect(0, 0, ActualWidth, ActualHeight)");
 
         Assert.IsFalse(panel.Contains("ThermalVisualHost", StringComparison.Ordinal));

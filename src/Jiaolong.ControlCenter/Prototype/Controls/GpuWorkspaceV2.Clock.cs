@@ -43,6 +43,7 @@ public sealed partial class GpuWorkspaceV2
             CoreRail.Minimum = CoreValueBox.Minimum = state.MinimumMhz;
             CoreRail.Maximum = CoreValueBox.Maximum = state.MaximumMhz;
             CoreRail.LimitValue = state.MaximumMhz;
+            CoreRail.Configure();
             if (!clockInitialized && !clockDirty)
             {
                 CoreRail.SetValue(state.SubmittedMhz ?? state.MaximumMhz);

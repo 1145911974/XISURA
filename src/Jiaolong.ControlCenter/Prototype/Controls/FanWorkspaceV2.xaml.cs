@@ -74,6 +74,16 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     : automaticCeilingActive ? "当前 EC 自动目标上限已启用。" : "当前 EC 自动目标上限未启用。"
             };
         UpdateMaximumRpmAvailability();
+        UpdateFanPresetAvailability();
+    }
+    private bool FanHardwareAvailable => session?.Status == HomeSessionStatus.Connected &&
+        session.State?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) == true;
+
+    private void UpdateFanPresetAvailability()
+    {
+        bool idle = !savingPreset && !applyingPreset && !fanEditorLoading;
+        PresetToolbar.SetActionAvailability(idle, idle && PresetToolbar.IsEditingPreset && FanHardwareAvailable);
+        if (PresetToolbar.IsEditingPreset) FanCurveWorkspace.SetEditingEnabled(idle);
     }
     private readonly HashSet<PresetKey> dirtyPresets = [];
     private readonly HashSet<PresetKey> savedPresets = [];
@@ -105,7 +115,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         draftRevision++;
         dirtyPresets.Add(editingKey);
         PresetToolbar.SetEditingState(editingKey, true, false);
-        PresetToolbar.SetActionAvailability(!savingPreset && !applyingPreset, true);
+        UpdateFanPresetAvailability();
         _ = PresetToolbar.SetDirtyStatusAsync(true);
     }
 
@@ -175,7 +185,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
             fanEditorLoading = false;
             IsEnabled = true;
             FanCurveWorkspace.IsEnabled = true;
-            PresetToolbar.SetActionAvailability(true, true);
+            UpdateFanPresetAvailability();
             return;
         }
         var defaults = new FanCurveDraft(profile);
@@ -208,7 +218,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
                 fanEditorLoading = false;
                 IsEnabled = true;
                 FanCurveWorkspace.IsEnabled = true;
-                PresetToolbar.SetActionAvailability(true, true);
+                UpdateFanPresetAvailability();
                 curveDrafts[key] = CaptureDraft();
             }
         }
@@ -242,7 +252,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
             await PresetToolbar.ShowTransientStatusAsync("此预设已恢复默认推荐值");
         }
         catch { await PresetToolbar.ShowStatusAsync("恢复默认未完成，请重试"); }
-        finally { savingPreset = false; PresetToolbar.SetActionAvailability(true, PresetToolbar.IsEditingPreset); }
+        finally { savingPreset = false; UpdateFanPresetAvailability(); }
     }
 
     private async Task<bool> SaveFanPresetAsync(PresetKey? target = null)
@@ -319,7 +329,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         finally
         {
             savingPreset = false;
-            PresetToolbar.SetActionAvailability(true, PresetToolbar.IsEditingPreset);
+            UpdateFanPresetAvailability();
         }
     }
 
@@ -364,7 +374,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private async Task<bool> ApplyFanStateAsync(FanCurveState? liveState = null, bool preserveStrongCooling = false)
     {
         if (applyingPreset || savingPreset || fanEditorLoading || session is null) return false;
-        if (session.State?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) != true)
+        if (!FanHardwareAvailable)
         {
             await PresetToolbar.ShowStatusAsync("风扇驱动或设备链路不可用");
             return false;
@@ -470,7 +480,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         {
             applyingPreset = false;
             IsEnabled = true;
-            PresetToolbar.SetActionAvailability(true, PresetToolbar.IsEditingPreset);
+            UpdateFanPresetAvailability();
         }
     }
 
@@ -631,6 +641,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         }
 
         long now = Stopwatch.GetTimestamp();
+        if (now - lastFrameTimestamp < Stopwatch.Frequency / 30) return;
         double deltaSeconds = Math.Clamp((now - lastFrameTimestamp) / (double)Stopwatch.Frequency, 0d, 1d / 15d);
         lastFrameTimestamp = now;
         smoothedCpuRpm = targetCpuRpm is null ? 0 : FanMotionMath.SmoothToward(smoothedCpuRpm, targetCpuRpm ?? 0, deltaSeconds, .55);

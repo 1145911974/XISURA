@@ -7,7 +7,11 @@ using Jiaolong.Service.Home;
 using Jiaolong.Service.Ipc;
 using Jiaolong.Service.Installation;
 
-if (args.Length == 1 && string.Equals(args[0], "--print-home-telemetry", StringComparison.Ordinal))
+if (args.Length == 1 && string.Equals(args[0], "--remove-startup-tasks", StringComparison.Ordinal))
+{
+    Environment.ExitCode = StartupTaskCleanup.Run();
+}
+else if (args.Length == 1 && string.Equals(args[0], "--print-home-telemetry", StringComparison.Ordinal))
 {
     using var provider = new WindowsHomeHardwareProvider();
     var snapshot = provider.ReadTelemetryAsync(CancellationToken.None).GetAwaiter().GetResult();

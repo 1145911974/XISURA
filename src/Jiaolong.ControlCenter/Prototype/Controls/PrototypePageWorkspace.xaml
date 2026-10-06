@@ -1291,7 +1291,7 @@
                                             <StackPanel Grid.Row="1" Spacing="5"><TextBlock Text="核心服务" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock Text="JiaolongControlService" FontSize="14" FontWeight="SemiBold"/></StackPanel>
                                             <TextBlock Grid.Row="1" Grid.Column="1" x:Name="SettingsServiceConnectionText" Text="未知" FontSize="12" VerticalAlignment="Bottom" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/>
                                             <StackPanel Grid.Row="2" Spacing="5"><TextBlock Text="恢复策略" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/><TextBlock x:Name="SettingsRecoveryPlanText" Text="读取中" FontSize="14" FontWeight="SemiBold"/></StackPanel>
-                                            <Button Grid.Row="2" Grid.Column="1" Content="依赖目录" Click="OnOpenOfficialInstallerFolder" Height="32" Padding="12,0" VerticalAlignment="Bottom" AutomationProperties.Name="打开本地官方依赖目录" ToolTipService.ToolTip="打开本机官方安装目录；不会自动修复或下载驱动"/>
+                                            <Button Grid.Row="2" Grid.Column="1" Content="程序与依赖文件" Click="OnOpenOfficialInstallerFolder" Height="32" Padding="12,0" VerticalAlignment="Bottom" AutomationProperties.Name="打开程序与依赖文件目录" ToolTipService.ToolTip="打开当前程序的安装目录，查看程序与依赖文件"/>
                                         </Grid>
                                         </StackPanel>
                                     </Border>

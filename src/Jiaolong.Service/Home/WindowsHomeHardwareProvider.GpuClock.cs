@@ -9,22 +9,35 @@ namespace Jiaolong.Service.Home;
 public sealed partial class WindowsHomeHardwareProvider
 {
     private readonly NvidiaClockLimitTransport gpuClockTransport = new();
+    private readonly TimeProvider gpuClockTimeProvider = TimeProvider.System;
+    private readonly Func<CancellationToken, Task<NvidiaClockDevice>>? gpuClockProbe;
     private NvidiaClockDevice? gpuClockDevice;
     private GpuClockLimitState? gpuClockState;
+    private long? gpuClockProbeFailedAt;
+
+    internal WindowsHomeHardwareProvider(TimeProvider timeProvider, Func<CancellationToken, Task<NvidiaClockDevice>> probe) : this()
+    {
+        gpuClockTimeProvider = timeProvider;
+        gpuClockProbe = probe;
+    }
 
     private GpuClockLimitState? ReadGpuClockLimitLocked(CancellationToken token)
     {
-        if (gpuClockState is not null) return gpuClockState;
+        if (gpuClockState is not null && (gpuClockState.Error is null ||
+            gpuClockProbeFailedAt is long failedAt && gpuClockTimeProvider.GetElapsedTime(failedAt) < TimeSpan.FromSeconds(10)))
+            return gpuClockState;
         try
         {
-            gpuClockDevice = gpuClockTransport.ProbeAsync(token).GetAwaiter().GetResult();
+            gpuClockDevice = (gpuClockProbe?.Invoke(token) ?? gpuClockTransport.ProbeAsync(token)).GetAwaiter().GetResult();
             gpuClockState = new(gpuClockDevice.MinimumMhz, gpuClockDevice.MaximumMhz, null, false, null);
+            gpuClockProbeFailedAt = null;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             logger?.LogWarning(ex, "GPU clock range unavailable");
             gpuClockState = new(0, 0, null, false, "gpuClockRangeUnavailable");
+            gpuClockProbeFailedAt = gpuClockTimeProvider.GetTimestamp();
         }
         return gpuClockState;
     }

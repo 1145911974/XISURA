@@ -38,7 +38,7 @@ public sealed partial class QuickMenuEditor : UserControl
         {
             var option = new QuickMenuOption(item)
             {
-                IsAvailable = item.IsAction || availability?.TryGetValue(item.Kind, out var available) == true && available,
+                IsAvailable = QuickMenuCatalog.IsLocal(item.Kind) || item.IsAction || availability?.TryGetValue(item.Kind, out var available) == true && available,
                 IsEnabled = layout.EnabledOrder.Contains(item.Kind)
             };
             nextOptions.Add(option);
@@ -54,7 +54,7 @@ public sealed partial class QuickMenuEditor : UserControl
         var option = Options.FirstOrDefault(item => item.Item.Kind == kind);
         if (option is not null && !option.Item.IsAction)
         {
-            option.IsAvailable = available;
+            option.IsAvailable = QuickMenuCatalog.IsLocal(kind) || available;
             RefreshSelectionAvailability();
         }
     }

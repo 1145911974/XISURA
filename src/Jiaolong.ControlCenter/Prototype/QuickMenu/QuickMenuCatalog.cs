@@ -4,6 +4,12 @@ namespace Jiaolong_ControlCenter.Prototype.QuickMenu;
 
 public static class QuickMenuCatalog
 {
+    public static bool IsLocal(QuickSettingKind kind) => kind is QuickSettingKind.WinKey or QuickSettingKind.NumLock or QuickSettingKind.CapsLock or QuickSettingKind.DisplayOff;
+
+    public static bool IsAvailable(QuickMenuItem item, HomeStateSnapshot? snapshot) =>
+        IsLocal(item.Kind) || item.IsAction || snapshot?.Capabilities.Items.Any(capability =>
+            capability.Key == item.CapabilityKey && capability.State == CapabilityState.Available) == true;
+
     public static IReadOnlyList<QuickMenuItem> CreateDefault() =>
     [
         Item(QuickSettingKind.Wifi, "Wi-Fi", "ms-appx:///Assets/QuickMenu/QuickWifi.png"),

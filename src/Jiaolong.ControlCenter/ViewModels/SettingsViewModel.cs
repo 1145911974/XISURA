@@ -55,8 +55,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     public UserPreferences Preferences { get; private set; } = new(false, "system", false);
     public bool StartWithWindows { get; private set; }
-    public string RepairNotes { get; } = "依赖修复仅使用本机安装目录；不会下载、执行 OEM GUI 或访问网络。";
-    public string OfficialInstallerFolder => Path.Combine(AppContext.BaseDirectory, "OfficialDependencies");
+    public string RepairNotes { get; } = "查看当前程序安装目录中的程序与依赖文件。";
+    public string OfficialInstallerFolder => AppContext.BaseDirectory;
     public IReadOnlyList<string> SectionNames { get; } = ["应用行为", "设备兼容", "官方依赖", "服务健康", "诊断"];
     public IReadOnlyList<string> AllowedDiagnosticEntries { get; } =
     [

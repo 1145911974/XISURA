@@ -7,6 +7,15 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class QuickMenuEditorTests
 {
     [TestMethod]
+    public void Windows_local_shortcuts_can_be_added_without_hardware_service_capabilities()
+    {
+        foreach (var item in QuickMenuCatalog.CreateDefault())
+        {
+            bool expected = item.Kind is QuickSettingKind.WinKey or QuickSettingKind.CapsLock or QuickSettingKind.NumLock or QuickSettingKind.DisplayOff;
+            Assert.AreEqual(expected, QuickMenuCatalog.IsAvailable(item, null), item.Label);
+        }
+    }
+    [TestMethod]
     public void Catalog_contains_the_eight_selected_shortcuts_and_two_editable_actions()
     {
         var items = QuickMenuCatalog.CreateDefault();

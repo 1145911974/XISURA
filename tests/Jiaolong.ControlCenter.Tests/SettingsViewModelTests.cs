@@ -12,6 +12,15 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class SettingsViewModelTests
 {
     [TestMethod]
+    public void Dependency_folder_points_to_the_installed_program_files()
+    {
+        var vm = new SettingsViewModel(new RecordingDiagnosticClient());
+
+        Assert.AreEqual(AppContext.BaseDirectory, vm.OfficialInstallerFolder);
+        Assert.IsTrue(Directory.Exists(vm.OfficialInstallerFolder));
+    }
+
+    [TestMethod]
     public void Startup_preference_updates_the_registered_user_startup_entry()
     {
         var startup = new RecordingStartupRegistration();

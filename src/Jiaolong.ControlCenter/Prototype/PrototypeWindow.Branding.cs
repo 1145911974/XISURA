@@ -164,6 +164,7 @@ public sealed partial class PrototypeWindow
     {
         savedPerformanceDrafts.Remove(key);
         if (confirmedPerformancePreset == key) PublishConfirmedMode(confirmedControlMode, null, animate: false);
+        PageWorkspace.SetAutomaticPresetReader(PerformanceWorkspace.ReadAutomaticServicePresetsAsync);
         _ = RefreshTrayPresetCatalogAsync();
     }
 

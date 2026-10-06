@@ -147,9 +147,8 @@
                         <Grid x:Name="CoreTuningGroup" Height="96" VerticalAlignment="Center" Grid.Row="0" ColumnSpacing="8">
                             <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="54"/></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="114"/></Grid.ColumnDefinitions>
-                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><TextBlock Text="频率上限 (MHz)" FontSize="14" VerticalAlignment="Center"/><shared:ParameterHelpButton x:Name="CoreFrequencyHelp" ParameterName="核心频率上限"/></StackPanel>
+                            <StackPanel VerticalAlignment="Center" Spacing="2"><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="频率上限 (MHz)" FontSize="14" VerticalAlignment="Center"/><shared:ParameterHelpButton x:Name="CoreFrequencyHelp" ParameterName="核心频率上限"/></StackPanel><TextBlock x:Name="CoreLiveUnknown" Text="目标值 · 当前限制未读回" FontSize="10" Foreground="{StaticResource PrototypeSecondaryTextBrush}" Visibility="Collapsed" /></StackPanel>
                             <shared:GpuValueStepper x:Name="CoreValueBox" Grid.Column="1" VerticalAlignment="Center" Minimum="1800" Maximum="2685" Value="2280" SmallChange="1"/>
-                            <TextBlock x:Name="CoreLiveUnknown" Grid.Column="1" Text="当前上限未读回" FontSize="11" VerticalAlignment="Center" Visibility="Collapsed" />
                             <shared:PerformanceTuningRailV2 x:Name="CoreRail" Grid.Row="1" Grid.ColumnSpan="2" Margin="-16,-12,-16,0" Minimum="1800" Maximum="2685" RecommendedValue="2400" LimitValue="2685" Unit=" MHz" ShowCurrentLabel="False"/>
                         </Grid>
                         <Border Grid.Row="1" Height="1" Margin="0,6" Background="{StaticResource PrototypeDividerBrush}"/>

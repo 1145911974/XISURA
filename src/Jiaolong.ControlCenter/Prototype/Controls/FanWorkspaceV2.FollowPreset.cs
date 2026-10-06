@@ -100,7 +100,7 @@ public sealed partial class FanWorkspaceV2
         FixedTarget.Visibility = FixedTargetSlider.Visibility = fixedSpeed ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         MaximumRpmTarget.Visibility = AutoStrategy.IsChecked == true && MaximumRpmToggle.IsOn ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         FanCurveWorkspace.Opacity = curve ? 1 : 0.48;
-        FanCurveWorkspace.IsEnabled = curve && session?.State?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) == true;
+        FanCurveWorkspace.SetEditingEnabled(curve && FanHardwareAvailable);
         FanCurveWorkspace.SetPresetCaption(!curve
             ? fixedSpeed ? "固定转速控制 · 曲线未运行" : "EC 自动控制 · 参考曲线未运行"
             : session?.State?.Controls.ActiveFanControlPlan?.Strategy == "Curve"

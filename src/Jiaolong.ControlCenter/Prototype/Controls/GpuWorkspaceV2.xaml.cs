@@ -18,6 +18,8 @@ namespace Jiaolong_ControlCenter.Prototype.Controls;
 public sealed partial class GpuWorkspaceV2 : UserControl
 {
     private readonly ControlPresetStore presetStore = new();
+    private PathGeometry? usageGeometry;
+    private ArcSegment? usageArc;
     private bool gpuVfDirty;
     private bool gpuVfPending => GpuWritePending;
     private bool memorySynchronizing;
@@ -260,9 +262,9 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         if (PresetToolbar.IsEditingPreset || gpuEditorLoading) return;
         // Each group sets its own availability; a blanket reset restarts disabled-state motion on every poll.
         ApplyClockLimitState(snapshot.Controls.GpuClockLimit, tuningAvailable);
-        CoreValueBox.Visibility = clockDirty || snapshot.Controls.GpuClockLimit?.SubmittedMhz is not null ? Visibility.Visible : Visibility.Collapsed;
-        CoreLiveUnknown.Visibility = CoreValueBox.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-        if (!clockDirty && snapshot.Controls.GpuClockLimit?.SubmittedMhz is null && !liveGpuQueued && !GpuWritePending) CoreRail.SetValue(null);
+        CoreValueBox.Visibility = Visibility.Visible;
+        CoreLiveUnknown.Visibility = tuningAvailable && !clockDirty && snapshot.Controls.GpuClockLimit?.SubmittedMhz is null
+            ? Visibility.Visible : Visibility.Collapsed;
         PresetToolbar.SetActionAvailability(!GpuWritePending, gpuVfDirty && !GpuWritePending);
         TuningStateText.Text = tuningAvailable ? "可调节" : "只读";
         var unavailable = new List<string>(2);
@@ -484,27 +486,17 @@ public sealed partial class GpuWorkspaceV2 : UserControl
             return new Point(center + radius * Math.Cos(radians), center + radius * Math.Sin(radians));
         }
 
-        UsageProgressPath.Data = new PathGeometry
+        if (usageGeometry is null)
         {
-            Figures =
-            {
-                new PathFigure
-                {
-                    StartPoint = PointAt(startAngle),
-                    IsClosed = false,
-                    Segments =
-                    {
-                        new ArcSegment
-                        {
-                            Point = PointAt(startAngle + sweep),
-                            Size = new Size(radius, radius),
-                            IsLargeArc = sweep > 180d,
-                            SweepDirection = SweepDirection.Clockwise
-                        }
-                    }
-                }
-            }
-        };
+            usageArc = new ArcSegment { Size = new Size(radius, radius), SweepDirection = SweepDirection.Clockwise };
+            var figure = new PathFigure { StartPoint = PointAt(startAngle), IsClosed = false };
+            figure.Segments.Add(usageArc);
+            usageGeometry = new PathGeometry();
+            usageGeometry.Figures.Add(figure);
+        }
+        usageArc!.Point = PointAt(startAngle + sweep);
+        usageArc.IsLargeArc = sweep > 180d;
+        if (!ReferenceEquals(UsageProgressPath.Data, usageGeometry)) UsageProgressPath.Data = usageGeometry;
     }
 
     private static bool CapabilityAvailable(HomeStateSnapshot snapshot, string key) => snapshot.Capabilities.Items.Any(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase) && item.State == CapabilityState.Available);

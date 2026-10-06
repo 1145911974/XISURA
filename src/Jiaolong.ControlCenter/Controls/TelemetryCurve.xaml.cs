@@ -16,6 +16,10 @@ public sealed partial class TelemetryCurve : UserControl
     private double windowSeconds = 60;
     private bool subscribed;
     private bool reducedMotion;
+    private double lastDrawSeconds = double.NegativeInfinity;
+    private readonly RectangleGeometry viewportClip = new();
+    private readonly PathGeometry lineGeometry = new();
+    private readonly PathGeometry areaGeometry = new();
     public double? DisplayedValue { get; private set; }
     public double HeadOpacity => HeadPoint.Opacity;
     public event EventHandler? FrameRendered;
@@ -23,6 +27,9 @@ public sealed partial class TelemetryCurve : UserControl
     public TelemetryCurve()
     {
         InitializeComponent();
+        Viewport.Clip = viewportClip;
+        CurveLine.Data = lineGeometry;
+        CurveArea.Data = areaGeometry;
         Loaded += (_, _) => { Draw(); StartMotion(); };
         Unloaded += (_, _) => StopMotion();
         SizeChanged += (_, _) => Draw();
@@ -90,6 +97,7 @@ public sealed partial class TelemetryCurve : UserControl
     {
         if (!Visible()) { StopMotion(); return; }
         if (!CanAnimate) { Draw(); StopMotion(); return; }
+        if (clock.Elapsed.TotalSeconds - lastDrawSeconds < 1d / 30d) return;
         Draw();
     }
 
@@ -97,35 +105,37 @@ public sealed partial class TelemetryCurve : UserControl
     {
         if (Viewport is null || ActualWidth <= 0 || ActualHeight <= 0) return;
         double now = clock.Elapsed.TotalSeconds;
+        lastDrawSeconds = now;
         var frame = series.GetFrame(now, CanAnimate);
-        Viewport.Clip = new RectangleGeometry { Rect = new Rect(0, 0, ActualWidth, ActualHeight) };
-        var line = new PathGeometry();
-        var area = new PathGeometry();
+        var bounds = new Rect(0, 0, ActualWidth, ActualHeight);
+        if (viewportClip.Rect != bounds) viewportClip.Rect = bounds;
         PathFigure? figure = null;
         PathFigure? fill = null;
+        int figureCount = 0;
+        int curveCount = 0;
         Point previous = default;
         foreach (var sample in frame.Samples)
         {
             var point = new Point(TelemetryCurveWindow.Position(sample.Seconds, now, windowSeconds) * ActualWidth, Y(sample.Value));
             if (figure is null || sample.StartsSegment)
             {
-                CloseArea(fill, previous);
-                figure = new PathFigure { StartPoint = point };
-                fill = new PathFigure { StartPoint = new Point(point.X, ActualHeight), IsClosed = true };
-                fill.Segments.Add(new LineSegment { Point = point });
-                line.Figures.Add(figure);
-                area.Figures.Add(fill);
+                FinishFigure(figure, fill, curveCount, previous);
+                figure = GetFigure(lineGeometry, figureCount, point, false);
+                fill = GetFigure(areaGeometry, figureCount++, new Point(point.X, ActualHeight), true);
+                SetLine(fill, 0, point);
+                curveCount = 0;
             }
             else
             {
-                AddCurve(figure, previous, point);
-                AddCurve(fill!, previous, point);
+                AddCurve(figure, curveCount, previous, point);
+                AddCurve(fill!, curveCount + 1, previous, point);
+                curveCount++;
             }
             previous = point;
         }
-        CloseArea(fill, previous);
-        CurveLine.Data = line;
-        CurveArea.Data = area;
+        FinishFigure(figure, fill, curveCount, previous);
+        while (lineGeometry.Figures.Count > figureCount) lineGeometry.Figures.RemoveAt(lineGeometry.Figures.Count - 1);
+        while (areaGeometry.Figures.Count > figureCount) areaGeometry.Figures.RemoveAt(areaGeometry.Figures.Count - 1);
         HeadPoint.Opacity = frame.HeadOpacity;
         HeadHalo.Opacity = frame.HeadOpacity * .22;
         if (frame.HeadValue is double value && frame.HeadSeconds is double seconds)
@@ -145,17 +155,42 @@ public sealed partial class TelemetryCurve : UserControl
     private double Y(double value) => ActualHeight * (1 - Math.Clamp(
         (value - MinimumValue) / Math.Max(1e-6, MaximumValue - MinimumValue), 0, 1));
 
-    private void CloseArea(PathFigure? fill, Point end)
+    private void FinishFigure(PathFigure? figure, PathFigure? fill, int curves, Point end)
     {
-        if (fill is not null) fill.Segments.Add(new LineSegment { Point = new Point(end.X, ActualHeight) });
+        if (figure is null || fill is null) return;
+        SetLine(fill, curves + 1, new Point(end.X, ActualHeight));
+        TrimSegments(figure, curves);
+        TrimSegments(fill, curves + 2);
     }
 
-    private static void AddCurve(PathFigure figure, Point from, Point to)
+    private static PathFigure GetFigure(PathGeometry geometry, int index, Point start, bool closed)
+    {
+        if (index == geometry.Figures.Count) geometry.Figures.Add(new PathFigure { IsClosed = closed });
+        var figure = geometry.Figures[index];
+        figure.StartPoint = start;
+        return figure;
+    }
+
+    private static T Segment<T>(PathFigure figure, int index) where T : PathSegment, new()
+    {
+        if (index == figure.Segments.Count) figure.Segments.Add(new T());
+        else if (figure.Segments[index] is not T) figure.Segments[index] = new T();
+        return (T)figure.Segments[index];
+    }
+
+    private static void TrimSegments(PathFigure figure, int count)
+    {
+        while (figure.Segments.Count > count) figure.Segments.RemoveAt(figure.Segments.Count - 1);
+    }
+
+    private static void SetLine(PathFigure figure, int index, Point point) => Segment<LineSegment>(figure, index).Point = point;
+
+    private static void AddCurve(PathFigure figure, int index, Point from, Point to)
     {
         double midpoint = (from.X + to.X) / 2;
-        figure.Segments.Add(new BezierSegment
-        {
-            Point1 = new Point(midpoint, from.Y), Point2 = new Point(midpoint, to.Y), Point3 = to
-        });
+        var segment = Segment<BezierSegment>(figure, index);
+        segment.Point1 = new Point(midpoint, from.Y);
+        segment.Point2 = new Point(midpoint, to.Y);
+        segment.Point3 = to;
     }
 }
