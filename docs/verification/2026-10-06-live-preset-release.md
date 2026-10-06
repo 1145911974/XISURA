@@ -17,4 +17,6 @@ SHA256：53b194f964d36a78f1e192bd2018087e1c716b69dd5f5851bbb95e1ff6610fd7。
 
 构建：C: 临时新目录分别 self-contained publish 客户端/服务，再以 PayloadPublishDir、SkipPayloadPublish=true、BuildProjectReferences=false 打包；缺关键离线依赖即失败。发布不依赖旧 .publish 剩余文件。
 
-清理：自动审批以“策略阻止”拒绝清理自启动诊断及旧发布载荷生成目录，未绕过，暂留；最终 MSI、校验文件保留供下载与回滚。
+清理：自动审批以“策略阻止”拒绝清理自启动诊断、旧发布载荷及六个临时验收文件（截图、日志、脚本），未绕过，暂留；最终 MSI、校验文件保留供下载与回滚。
+
+发布：[v1.0.68](https://github.com/1145911974/XISURA/releases/tag/v1.0.68)，源码 50a1b153d18b4b56daa7f60df8c0fea5ef431500；服务器资产大小与 SHA256 均匹配最终本机 MSI。
