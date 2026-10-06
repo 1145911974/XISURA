@@ -16,6 +16,8 @@ public sealed partial class PagePresetToolbar : UserControl
     private string statusDetail = string.Empty;
     private Storyboard? transition;
     private TaskCompletionSource? transitionCompletion;
+    private Storyboard? managementTransition;
+    private const double EditingActionsWidth = 264;
 
     public PagePresetToolbar()
     {
@@ -26,10 +28,13 @@ public sealed partial class PagePresetToolbar : UserControl
             if (!IsEditingPreset) PresetUseRequested?.Invoke(this, key);
         };
         ApplyActionAvailability();
+        EditingActionsHost.SizeChanged += (_, _) => EditingActionsClip.Rect = new(0, 0, EditingActionsHost.ActualWidth, 52);
         Unloaded += (_, _) =>
         {
             ++statusVersion;
             StopTransition();
+            StopManagementTransition();
+            SettleManagementLayout(IsEditingPreset);
             statusVisible = false;
             PresetStatusHost.IsHitTestVisible = false;
             PresetStatusHost.Opacity = 0;
@@ -70,6 +75,7 @@ public sealed partial class PagePresetToolbar : UserControl
         PresetPicker.SetManagementMode(editing);
         ApplyActionAvailability();
         UpdateContext();
+        TransitionManagementLayout(editing);
         EditingModeChanged?.Invoke(this, editing);
     }
     public void SetCurrentPreset(PresetKey? key, bool modified = false)
@@ -100,6 +106,7 @@ public sealed partial class PagePresetToolbar : UserControl
             ? $"当前使用：{PresetPicker.DisplayNameFor(key)}{(currentModified ? " · 已调整" : string.Empty)}"
             : "当前电脑 · 手动设置";
         if (submittedPreset is { } submitted) current += $"　｜　已提交：{PresetPicker.DisplayNameFor(submitted)} · 部分设置未读回";
+        if (ContextText.Text == current) return;
         ContextText.Text = current;
         ToolTipService.SetToolTip(ContextText, ContextText.Text);
     }
@@ -145,21 +152,61 @@ public sealed partial class PagePresetToolbar : UserControl
     private void ApplyActionAvailability()
     {
         PresetPicker.IsEnabled = requestedSaveEnabled || requestedUseEnabled;
-        ManageButton.IsEnabled = requestedSaveEnabled || requestedUseEnabled;
-        ManagePresetMenuItem.IsEnabled = ManageButton.IsEnabled;
+        ManageButton.IsEnabled = IsEditingPreset && (requestedSaveEnabled || requestedUseEnabled);
+        ManagePresetMenuItem.IsEnabled = requestedSaveEnabled || requestedUseEnabled;
         ManagePresetMenuItem.Visibility = IsEditingPreset ? Visibility.Collapsed : Visibility.Visible;
         SaveCurrentMenuItem.Visibility = IsEditingPreset ? Visibility.Collapsed : Visibility.Visible;
         SaveCurrentMenuItem.IsEnabled = requestedSaveEnabled && CurrentSourceKey.HasValue;
-        SaveButton.Visibility = IsEditingPreset ? Visibility.Visible : Visibility.Collapsed;
-        ManageButton.Visibility = IsEditingPreset ? Visibility.Visible : Visibility.Collapsed;
+        SaveButton.IsTabStop = ManageButton.IsTabStop = IsEditingPreset;
         ToolTipService.SetToolTip(SaveButton, IsEditingPreset ? "保存编辑草稿，不改变电脑" : "将当前设置保存到来源预设");
-        ManageButton.Content = IsEditingPreset ? "返回当前电脑" : "管理预设";
+        ManageButton.Content = "返回当前电脑";
         UseButton.Text = IsEditingPreset ? "保存并应用" : "应用调整";
         UseButton.Visibility = IsEditingPreset || requestedUseEnabled ? Visibility.Visible : Visibility.Collapsed;
-        SaveButton.IsEnabled = requestedSaveEnabled && (IsEditingPreset || CurrentSourceKey.HasValue);
+        SaveButton.IsEnabled = requestedSaveEnabled && IsEditingPreset;
         SaveAsButton.IsEnabled = requestedSaveEnabled;
         UseButton.IsEnabled = requestedUseEnabled;
         PresetPicker.SetResetEnabled(IsEditingPreset && requestedSaveEnabled);
+    }
+
+    private void StopManagementTransition()
+    {
+        if (managementTransition is null) return;
+        // Preserve the displayed frame when a transition is reversed or interrupted.
+        EditingActionsHost.Width = EditingActionsHost.Width;
+        EditingActionsHost.Opacity = EditingActionsHost.Opacity;
+        managementTransition.Stop();
+        managementTransition = null;
+    }
+
+    private void SettleManagementLayout(bool editing)
+    {
+        EditingActionsHost.Width = editing ? EditingActionsWidth : 0;
+        EditingActionsHost.Opacity = editing ? 1 : 0;
+        EditingActionsHost.IsHitTestVisible = editing;
+    }
+
+    private void TransitionManagementLayout(bool editing)
+    {
+        StopManagementTransition();
+        EditingActionsHost.IsHitTestVisible = editing;
+        if (!IsLoaded || !new UISettings().AnimationsEnabled)
+        {
+            SettleManagementLayout(editing);
+            return;
+        }
+        var storyboard = new Storyboard();
+        AddAnimation(storyboard, EditingActionsHost, "Width", EditingActionsHost.Width, editing ? EditingActionsWidth : 0);
+        AddAnimation(storyboard, EditingActionsHost, "Opacity", EditingActionsHost.Opacity, editing ? 1 : 0);
+        if (storyboard.Children.Count == 0) { SettleManagementLayout(editing); return; }
+        managementTransition = storyboard;
+        storyboard.Completed += (_, _) =>
+        {
+            if (!ReferenceEquals(managementTransition, storyboard)) return;
+            SettleManagementLayout(editing);
+            storyboard.Stop();
+            managementTransition = null;
+        };
+        storyboard.Begin();
     }
     public Task SetDirtyStatusAsync(bool dirty) => dirty ? ShowStatusAsync("有未保存的更改") : HideStatusAsync();
     public Task ShowSavedStatusAsync() => ShowStatusAsync("已保存", autoHide: true);
@@ -275,6 +322,7 @@ public sealed partial class PagePresetToolbar : UserControl
             To = to,
             Duration = TimeSpan.FromMilliseconds(240),
             FillBehavior = FillBehavior.HoldEnd,
+            EnableDependentAnimation = property == "Width",
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
         Storyboard.SetTarget(animation, target);
