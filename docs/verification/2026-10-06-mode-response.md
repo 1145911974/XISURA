@@ -36,3 +36,10 @@ UI Automation 触发实际按钮；独立 WMI 方法 8 每约 25 ms 读取固件
 - `XISURA-1.0.76-x64.msi`：182463957 字节。
 - SHA-256：`53a5951ee72daed2da546b412dc08f93ac804127633600731de51c073c5ce231`。
 - 内置运行库；保留安装包用于交付与回退。
+## 发布核验
+
+- 私人仓库版本：[v1.0.76](https://github.com/1145911974/XISURA/releases/tag/v1.0.76)，已发布且非草稿。
+- 发行目标：`335c2ba7115ef6ad60a1719e42aca81ea97ae1bf`。
+- 云端 MSI 大小与 SHA-256 均与本机安装包一致，两个附件均为 uploaded。
+- 本机 GUI 保持响应，硬件服务 Running。交付目录保留 MSI 与 SHA256SUMS 供下载和回退。
+- 自动审批拒绝删除临时生成载荷 `C:\Users\Administrator\AppData\Local\Temp\xisura-payload-1.0.76-final`（blocked by policy）；未绕过删除限制。
