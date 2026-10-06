@@ -40,12 +40,12 @@ public sealed partial class PerformanceTuningRailV2 : UserControl
     public void SetValue(double? value)
     {
         currentValue = value is double actual && double.IsFinite(actual)
-            ? Math.Clamp(actual, Minimum, Maximum)
+            ? actual
             : null;
         synchronizing = true;
         InputSlider.IsEnabled = currentValue.HasValue;
         if (currentValue is double next)
-            InputSlider.Value = next;
+            InputSlider.Value = Math.Clamp(next, Minimum, Maximum);
         synchronizing = false;
         UpdateVisuals();
     }

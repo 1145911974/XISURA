@@ -9,7 +9,9 @@ public sealed partial class FanWorkspaceV2
     public bool IsFollowingPreset { get; private set; } = true;
     private int liveFanRevision;
     private bool liveFanQueued;
+    private bool fanSliderPointerHeld;
     private PresetKey? followFanTarget;
+    private PresetKey? pendingFanFollowTarget;
     private PresetKey? appliedFanKey;
     private FanCurveState? appliedFanPreset;
 
@@ -19,41 +21,34 @@ public sealed partial class FanWorkspaceV2
         try { followPreferences.Update(value => value with { FanFollowPreset = enabled }); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { PresetToolbar.SetFollowPreset(IsFollowingPreset); await PresetToolbar.ShowStatusAsync("保存跟随设置失败"); return; }
-        if (IsFollowingPreset) curveDrafts[editingKey] = CaptureDraft();
         IsFollowingPreset = enabled;
-        ++presetLoadVersion;
-        ++liveFanRevision;
-        liveFanQueued = false;
-        if (enabled)
-        {
-            FixedTarget.Visibility = FixedTargetSlider.Visibility = MaximumRpmTarget.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-            LiveFanUnknownPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-            FanCurveWorkspace.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-            await SelectPresetAsync(followFanTarget ?? editingKey, preserve: false);
-        }
-        else
-        {
-            PresetToolbar.SetConfirmedActivePreset(null);
-            if (session?.State is { } state) RestoreLiveFanState(state);
-        }
     }
 
     public async void SetFollowPresetTarget(PresetKey key)
     {
-        if (followFanTarget == key) return;
+        var slots = followPreferences.Load().FanPresetSlots;
+        key = PresetKey.Create(key.Mode, slots.TryGetValue(key.Mode.ToString(), out int slot) && slot is >= 1 and <= 3 ? slot : 2);
+        if (followFanTarget?.Mode == key.Mode) return;
         followFanTarget = key;
         if (!IsFollowingPreset || session is null) return;
-        while (applyingPreset || savingPreset) { await Task.Delay(40); if (!IsFollowingPreset || followFanTarget != key) return; }
-        await SelectPresetAsync(key);
-        if (IsFollowingPreset && followFanTarget == key && savedPresets.Contains(key) && !dirtyPresets.Contains(key))
-            await ApplyFanStateAsync();
+        if (PresetToolbar.IsEditingPreset) { pendingFanFollowTarget = key; return; }
+        while (applyingPreset || savingPreset || fanEditorLoading)
+        {
+            await Task.Delay(40);
+            if (!IsFollowingPreset || followFanTarget != key) return;
+            if (PresetToolbar.IsEditingPreset) { pendingFanFollowTarget = key; return; }
+        }
+        editingKey = key;
+        syncingPreset = true; PresetToolbar.SelectedKey = key; syncingPreset = false;
+        if (IsFollowingPreset && followFanTarget == key) await ApplyFanStateAsync();
     }
 
     private void UpdateFanActiveBadge(HomeStateSnapshot state)
     {
+        if (liveFanQueued) return;
         var expected = appliedFanPreset;
         var plan = state.Controls.ActiveFanControlPlan;
-        bool matches = IsFollowingPreset && expected is not null && state.Controls.StrongCooling != true &&
+        bool matches = expected is not null && state.Controls.StrongCooling != true &&
             (expected.Strategy == "Auto" && expected.MaximumRpm is null ? plan is null :
                 plan is not null && plan.Strategy == expected.Strategy && plan.MaximumRpm == expected.MaximumRpm &&
                 (expected.Strategy != "Fixed" || plan.FixedRpm == expected.FixedRpm) &&
@@ -95,8 +90,9 @@ public sealed partial class FanWorkspaceV2
         liveFanQueued = true;
         PresetToolbar.SetConfirmedActivePreset(null);
         await Task.Delay(220);
-        if (revision != liveFanRevision || IsFollowingPreset) return;
-        while (applyingPreset || savingPreset) { await Task.Delay(40); if (revision != liveFanRevision || IsFollowingPreset) return; }
+        while (fanSliderPointerHeld && revision == liveFanRevision) await Task.Delay(40);
+        if (revision != liveFanRevision || PresetToolbar.IsEditingPreset) { if (revision == liveFanRevision) liveFanQueued = false; return; }
+        while (applyingPreset || savingPreset) { await Task.Delay(40); if (revision != liveFanRevision || PresetToolbar.IsEditingPreset) return; }
         try { await ApplyFanStateAsync(CaptureDraft()); }
         catch (Exception) { await PresetToolbar.ShowStatusAsync("风扇实时调整未确认，请检查连接"); }
         finally

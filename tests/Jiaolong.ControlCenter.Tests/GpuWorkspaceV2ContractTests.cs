@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Xml.Linq;
 using Jiaolong.Contracts.Models;
@@ -119,16 +119,18 @@ public sealed class GpuWorkspaceV2ContractTests
     }
 
     [TestMethod]
-    public void Mux_switch_requires_explicit_restart_impact_confirmation()
+    public void Mux_switch_is_independent_of_presets_and_reports_pending_restart()
     {
         var code = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "GpuWorkspaceV2.Presets.cs");
-        StringAssert.Contains(code, "Title = \"使用 GPU 预设\"");
-        StringAssert.Contains(code, "输出模式最后提交，重启后生效；软件不会自动重启。");
-        StringAssert.Contains(code, "DefaultButton = ContentDialogButton.Close");
-        StringAssert.Contains(code, "await dialog.ShowAsync() != ContentDialogResult.Primary");
-        StringAssert.Contains(code, "new SetMuxModeCommand(Guid.NewGuid(), mux, true)");
-        Assert.IsTrue(code.IndexOf("actions.Add((\"输出模式\"", StringComparison.Ordinal) > code.LastIndexOf("actions.Add((\"V/F 曲线\"", StringComparison.Ordinal));
-        Assert.IsTrue(code.IndexOf("await dialog.ShowAsync()", StringComparison.Ordinal) < code.IndexOf("await action.Apply()", StringComparison.Ordinal));
+        string directSwitch = code[code.IndexOf("private async void OnMuxModeRequested", StringComparison.Ordinal)..code.IndexOf("private sealed record GpuWorkspacePreset", StringComparison.Ordinal)];
+        StringAssert.Contains(directSwitch, "new SetMuxModeCommand(Guid.NewGuid(), mode, true)");
+        StringAssert.Contains(directSwitch, "RequiredUserAction.Restart");
+        StringAssert.Contains(directSwitch, "当前生效：");
+        StringAssert.Contains(directSwitch, "重启电脑后生效");
+        Assert.IsFalse(directSwitch.Contains("IsFollowingPreset", StringComparison.Ordinal));
+        Assert.IsFalse(directSwitch.Contains("SaveGpuPresetAsync", StringComparison.Ordinal));
+        Assert.IsFalse(code.Contains("actions.Add((\"输出模式\"", StringComparison.Ordinal));
+        Assert.IsFalse(code.Contains("MuxMode = muxDraftMode", StringComparison.Ordinal));
         StringAssert.Contains(code, "UpdateGpuActiveBadge(activeSession.State);");
     }
 
@@ -422,7 +424,7 @@ public sealed class GpuWorkspaceV2ContractTests
 
         Assert.IsFalse(gpu.Contains("x:Key=\"GpuActionStyle\"", StringComparison.Ordinal));
         Assert.IsFalse(performance.Contains("x:Key=\"V2ActionButtonStyle\"", StringComparison.Ordinal));
-        Assert.AreEqual(2, toolbar.Split("Style=\"{StaticResource PerformanceV2ActionButtonStyle}\"").Length - 1);
+        Assert.AreEqual(3, toolbar.Split("Style=\"{StaticResource PerformanceV2ActionButtonStyle}\"").Length - 1);
         Assert.IsFalse(gpu.Contains("PerformanceV2AdvancedButtonStyle", StringComparison.Ordinal));
         StringAssert.Contains(performance, "x:Name=\"AdvancedButton\" Grid.Row=\"3\" Style=\"{StaticResource PerformanceV2AdvancedButtonStyle}\"");
         StringAssert.Contains(resources, "VisualState x:Name=\"PointerOver\"");
@@ -446,13 +448,14 @@ public sealed class GpuWorkspaceV2ContractTests
         StringAssert.Contains(toolbarCode, "ShowSavedStatusAsync");
         StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(2)");
         StringAssert.Contains(toolbarCode, "TransitionAsync(1, 0)");
-        StringAssert.Contains(toolbarCode, "PresetPicker.IsEnabled = followPreset;");
+        Assert.IsFalse(toolbarCode.Contains("PresetPicker.IsEnabled = followPreset;", StringComparison.Ordinal));
+        StringAssert.Contains(toolbarCode, "public bool IsEditingPreset");
         StringAssert.Contains(toolbarCode, "AddAnimation(storyboard, PresetPickerTranslation, \"X\"");
         StringAssert.Contains(toolbarCode, "Duration = TimeSpan.FromMilliseconds(240)");
         StringAssert.Contains(toolbarCode, "CubicEase { EasingMode = EasingMode.EaseOut }");
         StringAssert.Contains(toolbar, "x:Name=\"PresetStatusTranslation\"");
         StringAssert.Contains(toolbar, "x:Name=\"PresetPickerTranslation\" X=\"162\" />");
-        StringAssert.Contains(toolbar, "AutomationProperties.Name=\"跟随本页预设\"");
+        StringAssert.Contains(toolbar, "AutomationProperties.Name=\"随模式自动应用本页预设\"");
         StringAssert.Contains(toolbarCode, "StopTransition();");
         StringAssert.Contains(toolbarCode, "AddAnimation(storyboard, PresetPickerTranslation, \"X\"");
         Assert.IsFalse(toolbarCode.Contains("AnimateWidthAsync", StringComparison.Ordinal));

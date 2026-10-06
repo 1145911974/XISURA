@@ -1,4 +1,4 @@
-using Jiaolong.Contracts.Models;
+﻿using Jiaolong.Contracts.Models;
 using Jiaolong_ControlCenter.Services;
 
 namespace Jiaolong_ControlCenter.Prototype;
@@ -52,6 +52,7 @@ public sealed partial class PrototypeWindow
     private async Task ApplyTurboTierAsync(string tier)
     {
         if (tier is not ("Normal" or "Quiet" or "Extreme")) return;
+        if (!await PauseAdaptiveForManualControlAsync()) return;
         isModeCommandPending = true;
         HomeModeBar.IsCommandPending = true;
         trayQuickConsole?.SetModeBusy(true);

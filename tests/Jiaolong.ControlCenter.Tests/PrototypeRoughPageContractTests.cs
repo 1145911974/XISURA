@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.RegularExpressions;
 
@@ -380,8 +380,8 @@ public sealed class PrototypeRoughPageContractTests
         var workspace = ReadPerformanceV2Markup();
         var toolbar = ReadSource("src", "Jiaolong.ControlCenter", "Controls", "PagePresetToolbar.xaml");
         StringAssert.Contains(workspace, "shared:PagePresetToolbar");
-        StringAssert.Contains(toolbar, "Content=\"保存预设\"");
-        StringAssert.Contains(toolbar, "Content=\"使用预设\"");
+        StringAssert.Contains(toolbar, "Content=\"保存当前\"");
+        StringAssert.Contains(toolbar, "Content=\"保存并应用\"");
         StringAssert.Contains(workspace, "x:Name=\"TemperatureRow\"");
         StringAssert.Contains(workspace, "x:Name=\"CpuBoundary\"");
     }
@@ -493,8 +493,8 @@ public sealed class PrototypeRoughPageContractTests
         StringAssert.Contains(workspace, "Text=\"性能控制\"");
         StringAssert.Contains(workspace, "<shared:PagePresetToolbar");
         StringAssert.Contains(toolbar, "local:ModePresetPicker");
-        StringAssert.Contains(toolbar, "Content=\"保存预设\"");
-        StringAssert.Contains(toolbar, "Content=\"使用预设\"");
+        StringAssert.Contains(toolbar, "Content=\"保存当前\"");
+        StringAssert.Contains(toolbar, "Content=\"保存并应用\"");
     }
 
     [TestMethod]
@@ -634,8 +634,8 @@ public sealed class PrototypeRoughPageContractTests
         var code = ReadPerformanceV2Code();
         var toolbarCode = ReadSource("src", "Jiaolong.ControlCenter", "Controls", "PagePresetToolbar.xaml.cs");
         var workspace = ReadPerformanceV2Markup();
-        StringAssert.Contains(code, "await PresetToolbar.ShowSavedStatusAsync()");
-        StringAssert.Contains(code, "await PresetToolbar.ShowStatusAsync(\"保存失败\")");
+        StringAssert.Contains(code, "_ = PresetToolbar.ShowSavedStatusAsync()");
+        StringAssert.Contains(code, "await PresetToolbar.ShowStatusAsync(\"保存失败，原预设未确认更改\")");
         StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(2)");
         StringAssert.Contains(workspace, "SaveRequested=\"OnSavePresetClick\"");
         StringAssert.Contains(workspace, "UseRequested=\"OnUsePresetClick\"");

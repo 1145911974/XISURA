@@ -90,6 +90,7 @@ public partial class App : Application
         try
         {
             Jiaolong_ControlCenter.Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] OnLaunched started\n");
+            new Jiaolong_ControlCenter.Services.StartupRegistrationService().RepairEnabledRegistration();
             var commandLine = Environment.GetCommandLineArgs();
             // Placement is also available in installed builds; fixture pages stay debug-only.
             var acceptanceSecondaryDisplay = commandLine.Any(argument =>

@@ -12,15 +12,37 @@ public sealed partial class GpuWorkspaceV2
     private GpuWorkspacePreset? selectedGpuPreset;
     private bool gpuPresetApplying;
     private bool gpuPresetDirty, gpuPresetSaving;
+    private bool gpuEditorLoading;
     private bool GpuWritePending => gpuPresetApplying || gpuPresetSaving;
-    private MuxMode? muxDraftMode;
 
-    private void OnMuxModeRequested(object? sender, MuxMode mode)
+    private async void OnMuxModeRequested(object? sender, MuxMode mode)
     {
         if (GpuWritePending || session?.State is not { } state || !CapabilityAvailable(state, "muxMode")) return;
-        muxDraftMode = mode;
-        RouteDiagram.SetDraftMode(mode);
-        MarkPresetDirty();
+        if (state.Controls.MuxMode == mode) return;
+        gpuPresetApplying = true;
+        SetGpuPresetControlsEnabled(false);
+        try
+        {
+            var result = await session.ExecuteAsync(new SetMuxModeCommand(Guid.NewGuid(), mode, true), CancellationToken.None);
+            if (result.State != CommandState.Applied || result.Error is not null)
+            { await PresetToolbar.ShowStatusAsync("输出模式切换失败，请检查设备状态"); return; }
+            bool restart = result.RequiredAction == RequiredUserAction.Restart;
+            RouteDiagram.AnimateAcceptedRequest(mode, restart);
+            if (!restart && session.State is { } current) ApplyState(current);
+            if (restart)
+            {
+                string ModeName(MuxMode? value) => value == MuxMode.Discrete ? "独显直连" : value == MuxMode.Hybrid ? "混合输出" : "等待设备报告";
+                var dialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot, Title = "输出模式已设置",
+                    Content = $"当前生效：{ModeName(state.Controls.MuxMode)}\n已设置：{ModeName(mode)}，重启电脑后生效。",
+                    CloseButtonText = "稍后重启"
+                };
+                await dialog.ShowAsync();
+            }
+        }
+        catch (Exception) { await PresetToolbar.ShowStatusAsync("输出模式请求中断，请检查连接"); }
+        finally { gpuPresetApplying = false; SetGpuPresetControlsEnabled(true); }
     }
 
     private sealed record GpuWorkspacePreset(
@@ -32,21 +54,22 @@ public sealed partial class GpuWorkspaceV2
         public MuxMode? MuxMode { get; init; }
     }
 
-    private async void OnGpuPresetSelected(object? sender, PresetKey key) { if (!gpuFollowSelecting) await LoadGpuPresetAsync(key); }
+    private async void OnGpuPresetSelected(object? sender, PresetKey key) { if (!gpuFollowSelecting && PresetToolbar.IsEditingPreset) await LoadGpuPresetAsync(key); }
 
-    private async Task LoadGpuPresetAsync(PresetKey key)
+    private async Task LoadGpuPresetAsync(PresetKey key, bool? restoreEditor = null)
     {
-        if (!IsFollowingPreset) return;
         if (GpuWritePending) return;
-        if (gpuPresetDirty && gpuEditingKey is { } previousKey) gpuEditorDrafts[previousKey] = CaptureGpuEditor(false);
+        bool edit = restoreEditor ?? PresetToolbar.IsEditingPreset;
+        if (edit && !gpuEditorLoading && gpuPresetDirty && gpuEditingKey is { } previousKey) gpuEditorDrafts[previousKey] = CaptureGpuEditor(false);
         gpuEditingKey = key;
         int revision = ++gpuPresetLoadVersion;
+        gpuEditorLoading = true;
         selectedGpuPreset = null;
-        PresetToolbar.SetActionAvailability(true, false);
+        SetGpuPresetControlsEnabled(false);
         try
         {
             var saved = await presetStore.LoadAsync(ControlPageId.Gpu, key, CancellationToken.None);
-            if (!IsFollowingPreset || revision != gpuPresetLoadVersion || PresetToolbar.SelectedKey != key) return;
+            if (revision != gpuPresetLoadVersion || PresetToolbar.SelectedKey != key || edit && !PresetToolbar.IsEditingPreset) return;
             if (saved is null) { await PresetToolbar.ShowStatusAsync("此档位尚无 GPU 预设"); return; }
             var draft = saved.Payload.Deserialize<GpuWorkspacePreset>() ??
                 (saved.Payload.Deserialize<GpuDraft>() is { } legacy
@@ -54,11 +77,11 @@ public sealed partial class GpuWorkspaceV2
                     : null);
             if (draft is null || !ValidPreset(draft)) { await PresetToolbar.ShowStatusAsync("GPU 预设格式无效或没有有效项目"); return; }
             selectedGpuPreset = draft;
-            bool retained = gpuEditorDrafts.TryGetValue(key, out var editorDraft);
-            ApplyGpuPresetDraft(retained ? editorDraft! : draft);
-            gpuPresetDirty = retained;
+            bool retained = edit && gpuEditorDrafts.TryGetValue(key, out _);
+            if (edit) ApplyGpuPresetDraft(retained ? gpuEditorDrafts[key] : draft);
+            if (edit) gpuPresetDirty = retained;
             PresetToolbar.SetEditingState(key, dirty: retained, saved: true);
-            await PresetToolbar.ShowTransientStatusAsync("预设已载入");
+            if (edit) await PresetToolbar.ShowTransientStatusAsync("编辑内容已载入，电脑设置未改变");
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
@@ -66,7 +89,8 @@ public sealed partial class GpuWorkspaceV2
         }
         finally
         {
-            if (PresetToolbar.SelectedKey == key) PresetToolbar.SetActionAvailability(true, selectedGpuPreset is not null && !gpuPresetDirty);
+            if (revision == gpuPresetLoadVersion)
+            { gpuEditorLoading = false; SetGpuPresetControlsEnabled(true); }
         }
     }
 
@@ -75,8 +99,8 @@ public sealed partial class GpuWorkspaceV2
         gpuPresetLoading = true;
         try
         {
-            muxDraftMode = draft.MuxMode;
-            RouteDiagram.SetDraftMode(muxDraftMode);
+            CoreValueBox.Visibility = Visibility.Visible;
+            CoreLiveUnknown.Visibility = Visibility.Collapsed;
             if (draft.CoreFrequencyLimitMhz is int clock) { CoreRail.SetValue(clock); CoreValueBox.Value = clock; }
             if (draft.MemoryOffsetKhz is int memory) { MemoryRail.SetValue(memory / 1000d); MemoryValueBox.Value = memory / 1000d; }
             if (draft.CoreOffsetKhz is int core) { CoreOffsetRail.SetValue(core / 1000d); CoreOffsetValueBox.Value = core / 1000d; }
@@ -90,14 +114,15 @@ public sealed partial class GpuWorkspaceV2
             }
         }
         finally { gpuPresetLoading = false; }
-        PresetToolbar.SetActionAvailability(true, true);
+        PresetToolbar.SetActionAvailability(!gpuEditorLoading, !gpuEditorLoading);
         _ = PresetToolbar.SetDirtyStatusAsync(false);
     }
 
-    private async Task SaveGpuPresetAsync()
+    private async Task<bool> SaveGpuPresetAsync(PresetKey? target = null)
     {
-        if (!IsFollowingPreset) return;
-        if (GpuWritePending) return;
+        if (GpuWritePending || gpuEditorLoading) return false;
+        var key = target ?? (PresetToolbar.IsEditingPreset ? PresetToolbar.SelectedKey : PresetToolbar.CurrentSourceKey);
+        if (key is null) { await PresetToolbar.ShowStatusAsync("请选择另存为的位置"); return false; }
         gpuPresetSaving = true;
         SetGpuPresetControlsEnabled(false);
         try
@@ -105,47 +130,85 @@ public sealed partial class GpuWorkspaceV2
             var hardware = session?.State;
             var vf = hardware is not null && CapabilityAvailable(hardware, "gpuVfCurve") && lastGpuVf is { Nodes.Length: 127, Error: null }
                 ? gpuVfDraft ?? lastGpuVf.Nodes.Select(node => node.OffsetKhz).ToArray() : null;
-            var draft = new GpuWorkspacePreset(
+            var draft = PresetToolbar.IsEditingPreset ? new GpuWorkspacePreset(
                 clockReady && clockInitialized ? (int)Math.Round(CoreRail.Value ?? CoreValueBox.Value) : null,
                 memoryReady ? (int)Math.Round((MemoryRail.Value ?? MemoryValueBox.Value) * 1000d) : null,
                 coreOffsetReady ? (int)Math.Round(CoreOffsetValueBox.Value * 1000d) : null,
-                vf)
-            {
-                MuxMode = muxDraftMode ?? hardware?.Controls.MuxMode
-            };
-            if (!ValidPreset(draft)) { await PresetToolbar.ShowStatusAsync("没有已读回且有效的 GPU 设置可保存"); return; }
-            var key = PresetToolbar.SelectedKey;
-            await presetStore.SaveAsync(new PagePresetEnvelope(1, ControlPageId.Gpu, key,
-                PresetToolbar.SelectedDisplayName, System.Text.Json.JsonSerializer.SerializeToElement(draft), DateTimeOffset.UtcNow), CancellationToken.None);
+                vf) : new GpuWorkspacePreset(null,
+                    memoryReady ? hardware?.Controls.GpuVf?.MemoryOffsetKhz : null,
+                    coreOffsetReady ? hardware?.Controls.GpuVf?.CoreOffsetKhz : null,
+                    hardware?.Controls.GpuVf is { Nodes.Length: 127, Error: null } actual ? actual.Nodes.Select(node => node.OffsetKhz).ToArray() : null);
+            if (!ValidPreset(draft)) { await PresetToolbar.ShowStatusAsync("没有已读回且有效的 GPU 设置可保存"); return false; }
+            await presetStore.SaveAsync(new PagePresetEnvelope(1, ControlPageId.Gpu, key.Value,
+                PresetToolbar.DisplayNameFor(key.Value), System.Text.Json.JsonSerializer.SerializeToElement(draft), DateTimeOffset.UtcNow), CancellationToken.None);
             if (appliedGpuKey == key && (appliedGpuPreset is not { } applied ||
                 applied.CoreFrequencyLimitMhz != draft.CoreFrequencyLimitMhz || applied.MemoryOffsetKhz != draft.MemoryOffsetKhz ||
-                applied.CoreOffsetKhz != draft.CoreOffsetKhz || applied.MuxMode != draft.MuxMode ||
+                applied.CoreOffsetKhz != draft.CoreOffsetKhz ||
                 !(applied.VfOffsetsKhz is null ? draft.VfOffsetsKhz is null :
                     draft.VfOffsetsKhz is not null && applied.VfOffsetsKhz.SequenceEqual(draft.VfOffsetsKhz))))
             {
                 appliedGpuKey = null; appliedGpuPreset = null;
                 PresetToolbar.SetConfirmedActivePreset(null);
             }
-            selectedGpuPreset = draft;
-            gpuEditorDrafts.Remove(key);
-            gpuPresetDirty = false;
-            PresetToolbar.SetEditingState(key, false, true);
+            gpuEditorDrafts.Remove(key.Value);
+            if (!PresetToolbar.IsEditingPreset || PresetToolbar.SelectedKey == key.Value)
+            {
+                selectedGpuPreset = draft;
+                gpuPresetDirty = false;
+                PresetToolbar.SetEditingState(key.Value, false, true);
+            }
+            if (!PresetToolbar.IsEditingPreset && GpuPresetMatchesReadback(draft, hardware))
+            { appliedGpuPreset = draft; appliedGpuKey = key; PresetToolbar.SetCurrentPreset(key); }
             PresetToolbar.SetActionAvailability(true, true);
             await PresetToolbar.ShowSavedStatusAsync();
+            return true;
         }
-        catch { await PresetToolbar.ShowStatusAsync("保存 GPU 预设失败"); }
+        catch { await PresetToolbar.ShowStatusAsync("保存 GPU 预设失败"); return false; }
         finally { gpuPresetSaving = false; SetGpuPresetControlsEnabled(true); }
     }
 
-    private async void OnUseGpuPreset(object? sender, EventArgs e) => await ApplyGpuPresetAsync();
+    private async void OnUseGpuPreset(object? sender, EventArgs e)
+    {
+        if (PresetToolbar.IsEditingPreset)
+        {
+            if (!await SaveGpuPresetAsync()) return;
+            if (await ApplyGpuPresetAsync(automatic: true)) PresetToolbar.ExitPresetManagement();
+        }
+        else await ApplyGpuPresetAsync(CaptureGpuEditor(true), automatic: true);
+    }
 
-    private async Task ApplyGpuPresetAsync(GpuWorkspacePreset? livePreset = null, bool automatic = false)
+    private async void OnGpuPresetUseRequested(object? sender, PresetKey key)
+    {
+        if (GpuWritePending) return;
+        if (PresetToolbar.IsEditingPreset) { await LoadGpuPresetAsync(key); return; }
+        ++liveGpuRevision; liveGpuQueued = false;
+        await LoadGpuPresetAsync(key, restoreEditor: false);
+        if (selectedGpuPreset is not null && PresetToolbar.SelectedKey == key) await ApplyGpuPresetAsync(automatic: true);
+    }
+
+    private async void OnGpuEditingModeChanged(object? sender, bool editing)
+    {
+        ++liveGpuRevision; liveGpuQueued = false; ++gpuPresetLoadVersion;
+        if (editing) await LoadGpuPresetAsync(PresetToolbar.SelectedKey);
+        else
+        {
+            if (!gpuEditorLoading && gpuPresetDirty && gpuEditingKey is { } key) gpuEditorDrafts[key] = CaptureGpuEditor(false);
+            gpuEditorLoading = false;
+            gpuPresetDirty = false;
+            RestoreLiveGpuState();
+            SetGpuPresetControlsEnabled(true);
+            if (pendingGpuFollowTarget is { } pending)
+            { pendingGpuFollowTarget = null; followGpuTarget = null; SetFollowPresetTarget(pending); }
+        }
+    }
+
+    private async void OnGpuSaveAsRequested(object? sender, PresetKey key) => await SaveGpuPresetAsync(key);
+
+    private async Task<bool> ApplyGpuPresetAsync(GpuWorkspacePreset? livePreset = null, bool automatic = false)
     {
         var activeSession = session;
         var preset = livePreset ?? selectedGpuPreset;
-        if (GpuWritePending || preset is null || activeSession?.State is not { } state) return;
-        if (livePreset is null && !IsFollowingPreset) return;
-        if (livePreset is null && gpuPresetDirty) { await PresetToolbar.ShowStatusAsync("请先保存修改，再使用预设"); return; }
+        if (GpuWritePending || gpuEditorLoading || preset is null || activeSession?.State is not { } state) return false;
         var key = PresetToolbar.SelectedKey;
         var currentVf = state.Controls.GpuVf;
         bool invalid = !ValidPreset(preset) ||
@@ -157,7 +220,7 @@ public sealed partial class GpuWorkspaceV2
                 currentVf.CoreMaximumOffsetKhz is int coreMax && (coreValue < coreMin || coreValue > coreMax)) ||
             (preset.VfOffsetsKhz is { } vfValues && currentVf is not null &&
                 vfValues.Any(value => value < currentVf.MinimumOffsetKhz || value > currentVf.MaximumOffsetKhz));
-        if (invalid) { await PresetToolbar.ShowStatusAsync("预设超出当前驱动范围，未发送任何项目"); return; }
+        if (invalid) { await PresetToolbar.ShowStatusAsync("预设超出当前驱动范围，未发送任何项目"); return false; }
         var actions = new List<(string Name, Func<Task<CommandResult>> Apply)>();
         var skipped = new List<string>();
 
@@ -190,23 +253,7 @@ public sealed partial class GpuWorkspaceV2
                 return activeSession.ExecuteAsync(new SetGpuVfCurveCommand(Guid.NewGuid(), latest.Nodes.Select(node => node.OffsetKhz).ToArray(), offsets, true), CancellationToken.None);
             }));
         }
-        if (preset.MuxMode is MuxMode mux && state.Controls.MuxMode != mux)
-        {
-            if (!CapabilityAvailable(state, "muxMode")) skipped.Add("输出模式：能力不可用");
-            else actions.Add(("输出模式", async () =>
-            {
-                var result = await activeSession.ExecuteAsync(new SetMuxModeCommand(Guid.NewGuid(), mux, true), CancellationToken.None);
-                if (result.State == CommandState.Applied && result.Error is null)
-                {
-                    muxDraftMode = null;
-                    RouteDiagram.SetDraftMode(null);
-                    RouteDiagram.SetMode(mux);
-                    RouteDiagram.AnimateAcceptedRequest(mux, result.RequiredAction == RequiredUserAction.Restart);
-                }
-                return result;
-            }));
-        }
-        if (actions.Count == 0) { await PresetToolbar.ShowStatusAsync("没有可应用的已验证 GPU 能力" + (skipped.Count == 0 ? "" : "；未应用：" + string.Join("、", skipped))); return; }
+        if (actions.Count == 0) { await PresetToolbar.ShowStatusAsync("没有可应用的已验证 GPU 能力" + (skipped.Count == 0 ? "" : "；未应用：" + string.Join("、", skipped))); return false; }
 
         gpuPresetApplying = true;
         SetGpuPresetControlsEnabled(false);
@@ -216,17 +263,17 @@ public sealed partial class GpuWorkspaceV2
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot, Title = "使用 GPU 预设",
-                Content = $"将按顺序提交 {actions.Count} 项；未应用项：{(skipped.Count == 0 ? "无" : string.Join("、", skipped))}。每步成功后不会自动回滚，后续失败时已应用项保留。功耗和限频未读回时无法恢复未知旧值。{(preset.MuxMode is not null && preset.MuxMode != state.Controls.MuxMode ? "输出模式最后提交，重启后生效；软件不会自动重启。" : "")}",
+                Content = $"将按顺序提交 {actions.Count} 项；未应用项：{(skipped.Count == 0 ? "无" : string.Join("、", skipped))}。每步成功后不会自动回滚，后续失败时已应用项保留。功耗和限频未读回时无法恢复未知旧值。",
                 PrimaryButtonText = "确认应用", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
             };
-            if (!automatic && await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (!automatic && await dialog.ShowAsync() != ContentDialogResult.Primary) return false;
             foreach (var action in actions)
             {
                 var result = await action.Apply();
                 if (result.State != CommandState.Applied || result.Error is not null)
                 {
                     await PresetToolbar.ShowStatusAsync($"已应用 {applied}/{actions.Count} 项；{action.Name}失败，后续未应用。未应用项：{string.Join("、", skipped)}；已应用项保留");
-                    return;
+                    return false;
                 }
                 applied++;
                 switch (action.Name)
@@ -239,23 +286,35 @@ public sealed partial class GpuWorkspaceV2
             }
             appliedGpuPreset = livePreset is null && skipped.Count == 0 ? preset : null;
             appliedGpuKey = appliedGpuPreset is null ? null : key;
+            if (livePreset is null && skipped.Count == 0)
+            {
+                try { followPreferences.Update(value => value with { GpuPresetSlots = new(value.GpuPresetSlots) { [key.Mode.ToString()] = key.Slot } }); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await PresetToolbar.ShowStatusAsync("配置已提交，但记忆档位保存失败"); }
+            }
             UpdateGpuActiveBadge(activeSession.State);
+            if (appliedGpuPreset is not null && !GpuPresetMatchesReadback(appliedGpuPreset, activeSession.State))
+            {
+                PresetToolbar.SetCurrentPreset(null);
+                PresetToolbar.SetSubmittedPreset(key);
+            }
             await PresetToolbar.ShowStatusAsync($"已提交 {applied} 项；未应用项：{(skipped.Count == 0 ? "无" : string.Join("、", skipped))}。驱动状态将随后刷新");
+            return skipped.Count == 0;
         }
-        catch { await PresetToolbar.ShowStatusAsync($"已应用 {applied}/{actions.Count} 项；请求中断，已应用项保留"); }
+        catch { await PresetToolbar.ShowStatusAsync($"已应用 {applied}/{actions.Count} 项；请求中断，已应用项保留"); return false; }
         finally
         {
             gpuPresetApplying = false;
-            if (activeSession.State is { } latest) ApplyState(latest);
+            if (!PresetToolbar.IsEditingPreset && activeSession.State is { } latest) ApplyState(latest);
             SetGpuPresetControlsEnabled(true);
         }
     }
 
     private void SetGpuPresetControlsEnabled(bool enabled)
     {
+        enabled = enabled && !gpuEditorLoading;
         PresetToolbar.IsEnabled = enabled;
         RouteDiagram.SetAvailable(enabled && session?.State is { } muxState && CapabilityAvailable(muxState, "muxMode"));
-        PresetToolbar.SetActionAvailability(enabled, enabled && selectedGpuPreset is not null && !gpuPresetDirty);
+        PresetToolbar.SetActionAvailability(enabled, enabled && (PresetToolbar.IsEditingPreset ? selectedGpuPreset is not null || gpuPresetDirty : gpuVfDirty));
         CoreRail.IsEnabled = CoreValueBox.IsEnabled = enabled && clockReady && !clockPending;
 
         MemoryRail.IsEnabled = MemoryValueBox.IsEnabled = enabled && memoryReady && !memoryPending;
@@ -272,9 +331,8 @@ public sealed partial class GpuWorkspaceV2
         bool memoryValid = draft.MemoryOffsetKhz is not int memory || memory is >= -200_000 and <= 200_000 && memory % 1000 == 0;
         bool coreValid = draft.CoreOffsetKhz is not int core || core is >= -200_000 and <= 200_000 && core % 1000 == 0;
         return (draft.CoreFrequencyLimitMhz is null or > 0) && memoryValid && coreValid &&
-            (draft.MuxMode is null || Enum.IsDefined(draft.MuxMode.Value)) &&
             (draft.VfOffsetsKhz is null || draft.VfOffsetsKhz is { Length: 127 } vf && vf[0] == 0 && vf.All(value => value is >= -200_000 and <= 200_000)) &&
             (draft.CoreFrequencyLimitMhz is not null || draft.MemoryOffsetKhz is not null || draft.CoreOffsetKhz is not null ||
-             draft.VfOffsetsKhz is not null || draft.MuxMode is not null);
+             draft.VfOffsetsKhz is not null);
     }
 }

@@ -1,4 +1,4 @@
-using Jiaolong_ControlCenter.Services;
+﻿using Jiaolong_ControlCenter.Services;
 using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Errors;
 using Jiaolong.Contracts.Models;
@@ -116,14 +116,7 @@ public sealed partial class PrototypeWindow : Window
             userPreferences = preferences.Load();
             trayQuickConsole?.ApplyQuickMenuLayout(userPreferences.ResolveTrayQuickMenuLayout());
         };
-        PerformanceWorkspaceV2Preview.FollowPresetChanged += (_, enabled) =>
-        {
-            if (!enabled)
-            {
-                PublishConfirmedMode(confirmedControlMode, null, animate: false);
-                if (adaptiveModeEnabled) OnAdaptiveModeChanged(false);
-            }
-        };
+        PerformanceWorkspaceV2Preview.PrepareManualControlAsync = PauseAdaptiveForManualControlAsync;
         PerformanceWorkspaceV2Preview.PresetSaved += InvalidateSavedPerformancePreset;
         PerformanceWorkspaceV2Preview.SetConfirmedActivePreset(null);
         PerformanceWorkspaceV2Preview.PresetApplied += key =>
@@ -1197,7 +1190,7 @@ public sealed partial class PrototypeWindow : Window
         storyboard.Children.Add(opacityAnimation);
     }
 
-    private void OnModeRequested(PrototypePerformanceMode mode)
+    private async void OnModeRequested(PrototypePerformanceMode mode)
     {
         if (allowClose) return;
         queuedTurboTier = null;
@@ -1207,6 +1200,8 @@ public sealed partial class PrototypeWindow : Window
             return;
         }
         queuedModeRequest = null;
+        int revision = ++manualModeRevision;
+        if (!await PauseAdaptiveForManualControlAsync() || revision != manualModeRevision) return;
         if (mode == PrototypePerformanceMode.Custom)
         {
             OnCustomProfileRequested(customProfile);
@@ -1493,11 +1488,7 @@ public sealed partial class PrototypeWindow : Window
 
     private async Task<bool> ApplyPerformancePresetAsync(PresetKey key)
     {
-        if (!PerformanceWorkspaceV2Preview.IsFollowingPreset)
-        {
-            await ShowCustomProfileStatusAsync("性能页处于实时控制，请先开启跟随预设", WindowSurface.XamlRoot);
-            return false;
-        }
+        if (!await PauseAdaptiveForManualControlAsync()) return false;
         if (key.Mode == ControlModeId.Turbo && turboBranch?.ActiveTier is not null)
         {
             await ShowCustomProfileStatusAsync("静音/极限狂飙使用内置策略；切回普通狂飙后可应用预设", WindowSurface.XamlRoot);
@@ -1584,6 +1575,52 @@ public sealed partial class PrototypeWindow : Window
         }
         queuedTurboTier = null;
         modeCommandTask = ApplyTurboTierAsync(tier);
+    }
+
+    private int manualModeRevision;
+    private Task<bool>? manualPauseTask;
+    private Task<bool> PauseAdaptiveForManualControlAsync()
+    {
+        if (manualPauseTask is { IsCompleted: false } pending) return pending;
+        return manualPauseTask = PauseAdaptiveAsync();
+    }
+
+    private async Task<bool> PauseAdaptiveAsync()
+    {
+        while (adaptiveActivationPending || strategyActivationPending)
+        {
+            if (allowClose) return false;
+            await Task.Delay(40);
+        }
+        if (!adaptiveModeEnabled) return true;
+        adaptiveActivationPending = true;
+        Hero.ApplyAdaptiveModeState(false, available: true, pending: true);
+        trayQuickConsole?.ApplyAdaptiveState(false, available: true, pending: true);
+        try
+        {
+            homeSession.SupersedeAutomaticRestore();
+            if (!await PageWorkspace.SetAutomationEnabledConfirmedAsync(false))
+            {
+                OnRestoreWarning("自适应未能暂停，手动调整未提交；请检查连接");
+                return false;
+            }
+            userPreferences = preferences.Load();
+            adaptiveModeEnabled = false;
+            return true;
+        }
+        catch (Exception error)
+        {
+            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Pause adaptive for manual control: {error}\n");
+            OnRestoreWarning("自适应暂停结果未知，手动调整未提交");
+            return false;
+        }
+        finally
+        {
+            adaptiveActivationPending = false;
+            bool available = homeSession.Status == HomeSessionStatus.Connected;
+            Hero.ApplyAdaptiveModeState(adaptiveModeEnabled, available);
+            trayQuickConsole?.ApplyAdaptiveState(adaptiveModeEnabled, available);
+        }
     }
 
     private async void OnAdaptiveModeChanged(bool enabled)

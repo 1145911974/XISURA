@@ -8,6 +8,14 @@ namespace Jiaolong.Installer.Tests;
 public sealed class MsiTableTests
 {
     [TestMethod]
+    public void Msi_bundles_winui_and_dotnet_runtime_for_offline_startup()
+    {
+        using var msi = MsiFixture.OpenCandidate();
+        foreach (var file in new[] { "Microsoft.UI.Xaml.dll", "Microsoft.WindowsAppRuntime.dll", "DWriteCore.dll", "coreclr.dll", "hostfxr.dll", "vcruntime140.dll" })
+            Assert.IsTrue(msi.TableContainsValue("File", file), $"Offline runtime file missing: {file}");
+    }
+
+    [TestMethod]
     public void Msi_is_per_machine_x64_and_contains_no_oem_binary_or_firewall_row()
     {
         using var msi = MsiFixture.OpenCandidate();

@@ -1,4 +1,4 @@
-using System.Xml.Linq;
+﻿using System.Xml.Linq;
 using Jiaolong_ControlCenter.ViewModels;
 
 namespace Jiaolong.ControlCenter.Tests;
@@ -109,8 +109,8 @@ public sealed class PerformanceWorkspaceV2ContractTests
         string toolbar = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "Jiaolong.ControlCenter", "Controls", "PagePresetToolbar.xaml"));
 
-        StringAssert.Contains(toolbar, "Content=\"保存预设\"");
-        StringAssert.Contains(toolbar, "Content=\"使用预设\"");
+        StringAssert.Contains(toolbar, "Content=\"保存当前\"");
+        StringAssert.Contains(toolbar, "Content=\"保存并应用\"");
         StringAssert.Contains(toolbar, "<local:ModePresetPicker");
         StringAssert.Contains(workspace, "SelectedKeyChanged=\"OnPresetKeyChanged\"");
         Assert.IsFalse(toolbar.Contains("MenuFlyout", StringComparison.Ordinal));

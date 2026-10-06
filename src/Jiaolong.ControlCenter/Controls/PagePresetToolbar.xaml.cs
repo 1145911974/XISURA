@@ -10,7 +10,7 @@ public sealed partial class PagePresetToolbar : UserControl
 {
     private bool followPreset = true;
     private bool requestedSaveEnabled = true;
-    private bool requestedUseEnabled = true;
+    private bool requestedUseEnabled;
     private int statusVersion;
     private bool statusVisible;
     private string statusDetail = string.Empty;
@@ -20,6 +20,12 @@ public sealed partial class PagePresetToolbar : UserControl
     public PagePresetToolbar()
     {
         InitializeComponent();
+        PresetPicker.SetManagementMode(false);
+        PresetPicker.PresetInvoked += (_, key) =>
+        {
+            if (!IsEditingPreset) PresetUseRequested?.Invoke(this, key);
+        };
+        ApplyActionAvailability();
         Unloaded += (_, _) =>
         {
             ++statusVersion;
@@ -35,11 +41,68 @@ public sealed partial class PagePresetToolbar : UserControl
     internal Microsoft.UI.Xaml.Media.TranslateTransform ModeSelectorTranslation => PresetPickerTranslation;
     public PresetKey SelectedKey { get => PresetPicker.SelectedKey; set => PresetPicker.SelectedKey = value; }
     public string SelectedDisplayName => PresetPicker.SelectedDisplayName;
+    public string DisplayNameFor(PresetKey key) => PresetPicker.DisplayNameFor(key);
     public string StatusDetail => statusDetail;
     public event EventHandler<PresetKey>? SelectedKeyChanged;
     public event EventHandler? SaveRequested;
     public event EventHandler? UseRequested;
     public event EventHandler<bool>? FollowPresetChanged;
+    public event EventHandler<bool>? EditingModeChanged;
+    public event EventHandler<PresetKey>? PresetUseRequested;
+    public event EventHandler<PresetKey>? SaveAsRequested;
+    public bool IsEditingPreset { get; private set; }
+    public PresetKey? CurrentSourceKey { get; private set; }
+    private bool currentModified;
+    private PresetKey? submittedPreset;
+
+    public void EnterPresetManagement() => SetManagementMode(true);
+    public void ExitPresetManagement() => SetManagementMode(false);
+    private void OnManageClick(object sender, RoutedEventArgs e)
+    {
+        SetManagementMode(!IsEditingPreset);
+        if (IsEditingPreset) ShowPicker();
+    }
+    private void SetManagementMode(bool editing)
+    {
+        if (IsEditingPreset == editing) return;
+        IsEditingPreset = editing;
+        PresetPicker.HidePicker();
+        PresetPicker.SetManagementMode(editing);
+        ApplyActionAvailability();
+        UpdateContext();
+        EditingModeChanged?.Invoke(this, editing);
+    }
+    public void SetCurrentPreset(PresetKey? key, bool modified = false)
+    {
+        CurrentSourceKey = key;
+        currentModified = modified;
+        PresetPicker.SetConfirmedActivePreset(modified ? null : key);
+        if (key.HasValue && !modified) submittedPreset = null;
+        UpdateContext();
+        ApplyActionAvailability();
+    }
+    public void SetCurrentSettingsModified()
+    {
+        currentModified = true;
+        submittedPreset = null;
+        PresetPicker.SetConfirmedActivePreset(null);
+        UpdateContext();
+    }
+    public void SetSubmittedPreset(PresetKey key)
+    {
+        submittedPreset = key;
+        UpdateContext();
+    }
+    private void UpdateContext()
+    {
+        if (ContextText is null) return;
+        string current = CurrentSourceKey is { } key
+            ? $"当前使用：{PresetPicker.DisplayNameFor(key)}{(currentModified ? " · 已调整" : string.Empty)}"
+            : "当前电脑 · 手动设置";
+        if (submittedPreset is { } submitted) current += $"　｜　已提交：{PresetPicker.DisplayNameFor(submitted)} · 部分设置未读回";
+        ContextText.Text = IsEditingPreset ? $"正在编辑：{SelectedDisplayName}　｜　{current}" : current;
+        ToolTipService.SetToolTip(ContextText, ContextText.Text);
+    }
 
     public void ConfigureFollowPreset(bool enabled)
     {
@@ -60,12 +123,17 @@ public sealed partial class PagePresetToolbar : UserControl
         FollowPresetChanged?.Invoke(this, followPreset);
     }
 
-    public void SetEditingState(PresetKey key, bool dirty, bool saved) => PresetPicker.SetEditingState(key, dirty, saved);
-    public void SetActivePreset(PresetKey key) => PresetPicker.SetActivePreset(key);
-    public void SetConfirmedActivePreset(PresetKey? key) => PresetPicker.SetConfirmedActivePreset(key);
+    public void SetEditingState(PresetKey key, bool dirty, bool saved) { PresetPicker.SetEditingState(key, dirty, saved); UpdateContext(); }
+    public void SetActivePreset(PresetKey key) { PresetPicker.SetActivePreset(key); SetCurrentPreset(key); }
+    public void SetConfirmedActivePreset(PresetKey? key)
+    {
+        PresetPicker.SetConfirmedActivePreset(key);
+        if (key.HasValue) SetCurrentPreset(key);
+        else if (CurrentSourceKey.HasValue) { currentModified = true; UpdateContext(); }
+    }
     public void EnablePresetReset(EventHandler<PresetKey> handler) => PresetPicker.EnableReset(handler);
     public void SetSlotSummary(int slot, string summary) => PresetPicker.SetSlotSummary(slot, summary);
-    public void ShowPicker() { if (followPreset) PresetPicker.ShowPicker(); }
+    public void ShowPicker() => PresetPicker.ShowPicker();
     public void SetSlotSummary(string summary) => PresetPicker.SetSlotSummary(summary);
     public void SetActionAvailability(bool saveEnabled, bool useEnabled)
     {
@@ -76,20 +144,41 @@ public sealed partial class PagePresetToolbar : UserControl
 
     private void ApplyActionAvailability()
     {
-        PresetPicker.IsEnabled = followPreset;
-        if (!followPreset) PresetPicker.HidePicker();
-        SaveButton.IsEnabled = followPreset && requestedSaveEnabled;
-        UseButton.IsEnabled = followPreset && requestedUseEnabled;
-        PresetPicker.SetResetEnabled(followPreset && requestedSaveEnabled);
+        PresetPicker.IsEnabled = requestedSaveEnabled || requestedUseEnabled;
+        ManageButton.IsEnabled = requestedSaveEnabled || requestedUseEnabled;
+        SaveButton.Content = IsEditingPreset ? "保存预设" : "保存当前";
+        ToolTipService.SetToolTip(SaveButton, IsEditingPreset ? "保存编辑草稿，不改变电脑" : "将当前设置保存到来源预设");
+        ManageButton.Content = IsEditingPreset ? "返回当前电脑" : "管理预设";
+        UseButton.Content = IsEditingPreset ? "保存并应用" : "应用调整";
+        UseButton.Visibility = IsEditingPreset || requestedUseEnabled ? Visibility.Visible : Visibility.Collapsed;
+        SaveButton.IsEnabled = requestedSaveEnabled && (IsEditingPreset || CurrentSourceKey.HasValue);
+        SaveAsButton.IsEnabled = requestedSaveEnabled;
+        UseButton.IsEnabled = requestedUseEnabled;
+        PresetPicker.SetResetEnabled(IsEditingPreset && requestedSaveEnabled);
     }
     public Task SetDirtyStatusAsync(bool dirty) => dirty ? ShowStatusAsync("有未保存的更改") : HideStatusAsync();
     public Task ShowSavedStatusAsync() => ShowStatusAsync("已保存", autoHide: true);
     public Task ShowStatusAsync(string text) => ShowStatusAsync(text, autoHide: !text.StartsWith("正在", StringComparison.Ordinal));
     public Task ShowTransientStatusAsync(string text) => ShowStatusAsync(text, autoHide: true);
 
-    private void OnSelectedKeyChanged(object? sender, PresetKey key) => SelectedKeyChanged?.Invoke(this, key);
-    private void OnSaveClick(object sender, RoutedEventArgs e) { if (followPreset && requestedSaveEnabled) SaveRequested?.Invoke(this, EventArgs.Empty); }
-    private void OnUseClick(object sender, RoutedEventArgs e) { if (followPreset && requestedUseEnabled) UseRequested?.Invoke(this, EventArgs.Empty); }
+    private void OnSelectedKeyChanged(object? sender, PresetKey key) { UpdateContext(); SelectedKeyChanged?.Invoke(this, key); }
+    private void OnSaveClick(object sender, RoutedEventArgs e) { if (requestedSaveEnabled) SaveRequested?.Invoke(this, EventArgs.Empty); }
+    private void OnUseClick(object sender, RoutedEventArgs e) { if (requestedUseEnabled) UseRequested?.Invoke(this, EventArgs.Empty); }
+    private async void OnSaveAsClick(object sender, RoutedEventArgs e)
+    {
+        if (!requestedSaveEnabled) return;
+        var picker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var key in PresetKey.All)
+            picker.Items.Add(new ComboBoxItem { Content = PresetPicker.DisplayNameFor(key), Tag = key });
+        picker.SelectedIndex = PresetKey.All.ToList().IndexOf(SelectedKey);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot, Title = "另存为预设", PrimaryButtonText = "保存", CloseButtonText = "取消",
+            Content = new StackPanel { Spacing = 12, Children = { new TextBlock { Text = "选择保存位置。已有配置会被替换，电脑当前设置保持不变。", TextWrapping = TextWrapping.Wrap }, picker } }
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && picker.SelectedItem is ComboBoxItem { Tag: PresetKey chosenKey })
+            SaveAsRequested?.Invoke(this, chosenKey);
+    }
 
     private async Task ShowStatusAsync(string text, bool autoHide)
     {

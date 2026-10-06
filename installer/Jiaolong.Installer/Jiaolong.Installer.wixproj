@@ -16,8 +16,16 @@
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\..\src\Jiaolong.ControlCenter\Jiaolong.ControlCenter.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <Target Name="PublishJiaolongPayloads" BeforeTargets="CoreCompile">
+  <Target Name="PublishJiaolongPayloads" Condition="'$(SkipPayloadPublish)' != 'true'">
     <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.Service\Jiaolong.Service.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
     <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.ControlCenter\Jiaolong.ControlCenter.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -p:WindowsPackageType=None -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
+  </Target>
+
+  <Target Name="ValidateOfflinePayload" BeforeTargets="CoreCompile" DependsOnTargets="PublishJiaolongPayloads">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Copy-VCRuntime.ps1&quot; -Destination &quot;$(PayloadPublishDir)&quot;" />
+    <ItemGroup>
+      <RequiredOfflineRuntime Include="$(PayloadPublishDir)\Jiaolong.ControlCenter.exe;$(PayloadPublishDir)\Jiaolong.Service.exe;$(PayloadPublishDir)\Microsoft.UI.Xaml.dll;$(PayloadPublishDir)\Microsoft.WindowsAppRuntime.dll;$(PayloadPublishDir)\DWriteCore.dll;$(PayloadPublishDir)\coreclr.dll;$(PayloadPublishDir)\hostfxr.dll;$(PayloadPublishDir)\vcruntime140.dll" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(RequiredOfflineRuntime.Identity)')" Text="The offline installer payload is incomplete: %(RequiredOfflineRuntime.Identity). Publish both applications as self-contained into PayloadPublishDir before packaging." />
   </Target>
 </Project>

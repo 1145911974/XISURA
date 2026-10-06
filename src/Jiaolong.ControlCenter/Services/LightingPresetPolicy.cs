@@ -7,10 +7,12 @@ public static class LightingPresetPolicy
     public static PresetKey? ResolveTarget(HomeControlState controls, IReadOnlyDictionary<string, int> slots,
         PresetKey? confirmedCustom, PresetKey? confirmedPerformance = null)
     {
-        if (confirmedPerformance is { } confirmed && PresetKey.All.Contains(confirmed)) return confirmed;
-        if (controls.AdaptiveAutomation is { Enabled: true, Running: true, CurrentTarget: { } automatic })
-            return PresetKey.All.Contains(automatic) ? automatic : null;
-        ControlModeId? mode = controls.PerformanceMode switch
+        // CPU/adaptive targets identify the mode; each page remembers its own slot.
+        ControlModeId? mode = controls.AdaptiveAutomation is { Enabled: true, Running: true, CurrentTarget: { } automatic }
+            ? PresetKey.All.Contains(automatic) ? automatic.Mode : null
+            : confirmedPerformance is { } confirmed && PresetKey.All.Contains(confirmed)
+                ? confirmed.Mode
+                : controls.PerformanceMode switch
         {
             PerformanceMode.Quiet => ControlModeId.Office,
             PerformanceMode.Balanced => ControlModeId.Gaming,
@@ -20,7 +22,7 @@ public static class LightingPresetPolicy
             _ => null
         };
         if (mode is null) return null;
-        int slot = slots.TryGetValue(mode.Value.ToString(), out int selected) && selected is >= 1 and <= 3 ? selected : 1;
+        int slot = slots.TryGetValue(mode.Value.ToString(), out int selected) && selected is >= 1 and <= 3 ? selected : 2;
         return PresetKey.Create(mode.Value, slot);
     }
     public static bool SameEffect(KeyboardLightingPlan expected, KeyboardLightingPlan? actual)

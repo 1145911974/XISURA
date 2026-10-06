@@ -49,6 +49,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private bool importingPreset;
     private bool savingPreset;
     private bool applyingPreset;
+    private bool fanEditorLoading;
     private HomeControlSession? session;
     private bool maximumRpmAvailable;
     private bool automaticCeilingActive;
@@ -61,7 +62,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     public void ApplyControlState(HomeStateSnapshot state)
     {
         UpdateFanActiveBadge(state);
-        if (!IsFollowingPreset && !applyingPreset && !liveFanQueued) RestoreLiveFanState(state);
+        if (!PresetToolbar.IsEditingPreset && !applyingPreset && !liveFanQueued) RestoreLiveFanState(state);
         maximumRpmAvailable = state.Controls.FanAutomaticCeilingAvailable;
         automaticCeilingActive = state.Controls.FanAutomaticCeilingActive;
         if (StrategyHelp is not null)
@@ -96,13 +97,13 @@ public sealed partial class FanWorkspaceV2 : UserControl
     }
     private void MarkDraftChanged()
     {
-        if (!IsFollowingPreset && !importingPreset) UpdateLiveFanPresentation();
-        if (importingPreset || !IsLoaded || IsFollowingPreset && !FanCurveWorkspace.IsEnabled) return;
-        if (!IsFollowingPreset) { QueueLiveFanChange(); return; }
+        if (importingPreset || fanEditorLoading || !IsLoaded) return;
+        if (!PresetToolbar.IsEditingPreset) UpdateLiveFanPresentation();
+        if (!PresetToolbar.IsEditingPreset) { PresetToolbar.SetCurrentSettingsModified(); QueueLiveFanChange(); return; }
         draftRevision++;
         dirtyPresets.Add(editingKey);
         PresetToolbar.SetEditingState(editingKey, true, false);
-        PresetToolbar.SetActionAvailability(!savingPreset && !applyingPreset, false);
+        PresetToolbar.SetActionAvailability(!savingPreset && !applyingPreset, true);
         _ = PresetToolbar.SetDirtyStatusAsync(true);
     }
 
@@ -123,7 +124,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
             "动画速度不代表叶轮物理速度，不能据此判断安全转速。");
         StrategyHelp.Help = new Jiaolong_ControlCenter.Controls.ParameterHelpContent(
             "EC 自动交由主板调速；固定目标保持指定 RPM；温度曲线随温度改变目标。提高目标通常增强散热并增加噪声，降低可能让温度上升。",
-            "EC 自动目标上限状态等待服务报告。修改先保存为草稿，点击使用预设后才下发。",
+            "日常页面调整当前电脑；管理预设时仅编辑，保存并应用才下发。EC 自动目标上限状态以服务报告为准。",
             "日常优先 EC 自动，或使用当前模式的推荐曲线；固定目标及 EC 上限软件范围 1800–5800 RPM。",
             "保留 EC 自动；降低噪声时逐步调整并观察温度，不把低转速直接当作安全值。",
             "5800 RPM 仅为目标输入上限；CPU 达 95°C 或 GPU 达 87°C 会立即交还 EC，保护优先。强冷采用风扇支持的最高目标。",
@@ -134,19 +135,28 @@ public sealed partial class FanWorkspaceV2 : UserControl
         PresetToolbar.SetActionAvailability(true, false);
         PresetToolbar.SaveRequested += OnSavePreset;
         PresetToolbar.UseRequested += OnUsePreset;
+        PresetToolbar.EditingModeChanged += OnFanEditingModeChanged;
+        PresetToolbar.PresetUseRequested += OnFanPresetUseRequested;
+        PresetToolbar.SaveAsRequested += OnFanSaveAsRequested;
+        FixedTargetSlider.AddHandler(PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => fanSliderPointerHeld = true), true);
+        FixedTargetSlider.AddHandler(PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => fanSliderPointerHeld = false), true);
+        FixedTargetSlider.AddHandler(PointerCaptureLostEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => fanSliderPointerHeld = false), true);
         FanCurveWorkspace.DraftChanged += (_, _) => MarkDraftChanged();
-        PresetToolbar.SelectedKeyChanged += async (_, key) => { if (!syncingPreset) await SelectPresetAsync(key); };
-        Loaded += async (_, _) => { if (!curveDrafts.ContainsKey(editingKey)) await SelectPresetAsync(editingKey, false); };
+        PresetToolbar.SelectedKeyChanged += async (_, key) => { if (!syncingPreset && PresetToolbar.IsEditingPreset) await SelectPresetAsync(key); };
+        Loaded += (_, _) => { if (!PresetToolbar.IsEditingPreset && session?.State is { } current) RestoreLiveFanState(current); };
         Unloaded += (_, _) => StopMotion();
         RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => UpdateMotionState());
     }
 
     private async Task SelectPresetAsync(PresetKey key, bool preserve = true)
     {
-        if (!IsFollowingPreset) return;
-        if (preserve) curveDrafts[editingKey] = CaptureDraft();
+        if (!PresetToolbar.IsEditingPreset) return;
+        if (preserve && !fanEditorLoading) curveDrafts[editingKey] = CaptureDraft();
         draftRevision++;
         int version = ++presetLoadVersion;
+        fanEditorLoading = true;
+        IsEnabled = false;
+        PresetToolbar.SetActionAvailability(false, false);
         editingKey = key;
         syncingPreset = true;
         PresetToolbar.SelectedKey = key;
@@ -159,8 +169,10 @@ public sealed partial class FanWorkspaceV2 : UserControl
         if (curveDrafts.TryGetValue(key, out var draft))
         {
             RestoreDraft(draft);
+            fanEditorLoading = false;
+            IsEnabled = true;
             FanCurveWorkspace.IsEnabled = true;
-            PresetToolbar.SetActionAvailability(true, savedPresets.Contains(key) && !dirtyPresets.Contains(key));
+            PresetToolbar.SetActionAvailability(true, true);
             return;
         }
         var defaults = new FanCurveDraft(profile);
@@ -170,7 +182,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         try
         {
             var saved = await presetStore.LoadAsync(ControlPageId.Fan, key, CancellationToken.None);
-            if (version != presetLoadVersion) return;
+            if (version != presetLoadVersion || !PresetToolbar.IsEditingPreset || PresetToolbar.SelectedKey != key) return;
             if (saved is not null)
             {
                 var state = saved.Payload.Deserialize<FanCurveState>();
@@ -190,8 +202,10 @@ public sealed partial class FanWorkspaceV2 : UserControl
         {
             if (version == presetLoadVersion)
             {
+                fanEditorLoading = false;
+                IsEnabled = true;
                 FanCurveWorkspace.IsEnabled = true;
-                PresetToolbar.SetActionAvailability(true, savedPresets.Contains(key) && !dirtyPresets.Contains(key));
+                PresetToolbar.SetActionAvailability(true, true);
                 curveDrafts[key] = CaptureDraft();
             }
         }
@@ -202,14 +216,30 @@ public sealed partial class FanWorkspaceV2 : UserControl
             ? $"{warning.Series} {warning.StartC}–{warning.EndC}°C：固定目标 {state.FixedRpm / 100 * 100} RPM，本档建议约 {(1800 + warning.RecommendedPercent * 40 + 99) / 100 * 100} RPM"
             : $"{warning.Series} {warning.StartC}–{warning.EndC}°C：目标最低 {warning.MinimumPercent}%，本档建议约 {warning.RecommendedPercent}%";
 
-    private async void OnSavePreset(object? sender, EventArgs e)
+    private async void OnSavePreset(object? sender, EventArgs e) => await SaveFanPresetAsync();
+
+    private async Task<bool> SaveFanPresetAsync(PresetKey? target = null)
     {
-        if (!IsFollowingPreset || savingPreset || applyingPreset || !FanCurveWorkspace.IsEnabled) return;
+        if (savingPreset || applyingPreset || fanEditorLoading) return false;
+        if (!PresetToolbar.IsEditingPreset && (liveFanQueued || session?.State is null))
+        { await PresetToolbar.ShowStatusAsync("请等待当前风扇设置读回后再保存"); return false; }
+        var saveKey = target ?? (PresetToolbar.IsEditingPreset ? editingKey : PresetToolbar.CurrentSourceKey);
+        if (saveKey is null) { await PresetToolbar.ShowStatusAsync("请选择另存为的位置"); return false; }
         savingPreset = true;
-        var key = editingKey;
-        var state = CaptureDraft();
+        var key = saveKey.Value;
+        int profile = key.Mode == ControlModeId.Office ? 0 : key.Mode == ControlModeId.Turbo ? 2 : 1;
+        var state = CaptureDraft() with { Profile = profile };
+        if (!PresetToolbar.IsEditingPreset)
+        {
+            var plan = session!.State!.Controls.ActiveFanControlPlan;
+            var defaults = new FanCurveDraft(profile);
+            var cpu = plan?.Points.Select(p => new CurvePoint(p.TemperatureC, p.Percent)).ToArray() ?? defaults.Cpu.ToArray();
+            var gpu = plan?.GpuPoints?.Select(p => new CurvePoint(p.TemperatureC, p.Percent)).ToArray() ?? cpu;
+            state = new FanCurveState(profile, plan?.GpuPoints is null, cpu, gpu, cpu, plan?.Strategy ?? "Auto", plan?.FixedRpm ?? 3000)
+                { MaximumRpm = plan?.MaximumRpm };
+        }
         int revision = draftRevision;
-        if (!state.IsValid()) { savingPreset = false; await PresetToolbar.ShowStatusAsync("预设数值无效"); return; }
+        if (!state.IsValid()) { savingPreset = false; await PresetToolbar.ShowStatusAsync("预设数值无效"); return false; }
         PresetToolbar.SetActionAvailability(false, false);
         try
         {
@@ -230,10 +260,10 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     CloseButtonText = "继续修改",
                     DefaultButton = ContentDialogButton.Close
                 };
-                if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+                if (await dialog.ShowAsync() != ContentDialogResult.Primary) return false;
             }
             await presetStore.SaveAsync(new PagePresetEnvelope(1, ControlPageId.Fan, key,
-                PresetToolbar.SelectedDisplayName, JsonSerializer.SerializeToElement(state), DateTimeOffset.UtcNow), CancellationToken.None);
+                PresetToolbar.DisplayNameFor(key), JsonSerializer.SerializeToElement(state), DateTimeOffset.UtcNow), CancellationToken.None);
             if (appliedFanKey == key && (appliedFanPreset is not { } applied ||
                 applied.Profile != state.Profile || applied.IsShared != state.IsShared || applied.Strategy != state.Strategy ||
                 applied.FixedRpm != state.FixedRpm || applied.MaximumRpm != state.MaximumRpm ||
@@ -244,38 +274,73 @@ public sealed partial class FanWorkspaceV2 : UserControl
             }
             curveDrafts[key] = state;
             savedPresets.Add(key);
+            if (!PresetToolbar.IsEditingPreset && session?.State is { } current)
+            { appliedFanPreset = state; appliedFanKey = key; UpdateFanActiveBadge(current); }
             if (editingKey == key && revision == draftRevision)
             {
                 dirtyPresets.Remove(key);
                 PresetToolbar.SetEditingState(key, false, true);
                 await PresetToolbar.ShowSavedStatusAsync();
             }
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             await PresetToolbar.ShowStatusAsync("保存失败，请重试");
+            return false;
         }
         finally
         {
             savingPreset = false;
-            PresetToolbar.SetActionAvailability(true, savedPresets.Contains(editingKey) && !dirtyPresets.Contains(editingKey));
+            PresetToolbar.SetActionAvailability(true, PresetToolbar.IsEditingPreset);
         }
     }
 
-    private async void OnUsePreset(object? sender, EventArgs e) => await ApplyFanStateAsync();
-
-    private async Task ApplyFanStateAsync(FanCurveState? liveState = null)
+    private async void OnUsePreset(object? sender, EventArgs e)
     {
-        if (applyingPreset || savingPreset || session is null || liveState is null && !FanCurveWorkspace.IsEnabled) return;
-        if (liveState is null && (!IsFollowingPreset || !savedPresets.Contains(editingKey) || dirtyPresets.Contains(editingKey)))
+        if (PresetToolbar.IsEditingPreset)
         {
-            await PresetToolbar.ShowStatusAsync("请先保存当前预设");
-            return;
+            if (!await SaveFanPresetAsync()) return;
+            if (await ApplyFanStateAsync()) PresetToolbar.ExitPresetManagement();
         }
+        else await ApplyFanStateAsync(CaptureDraft());
+    }
+
+    private async void OnFanPresetUseRequested(object? sender, PresetKey key)
+    {
+        if (savingPreset || applyingPreset || fanEditorLoading) return;
+        if (PresetToolbar.IsEditingPreset) { await SelectPresetAsync(key); return; }
+        ++liveFanRevision; liveFanQueued = false;
+        editingKey = key;
+        await ApplyFanStateAsync();
+        if (session?.State is { } current) RestoreLiveFanState(current);
+    }
+
+    private async void OnFanEditingModeChanged(object? sender, bool editing)
+    {
+        ++liveFanRevision; liveFanQueued = false; ++presetLoadVersion;
+        if (editing) await SelectPresetAsync(PresetToolbar.SelectedKey, preserve: false);
+        else
+        {
+            if (!fanEditorLoading && dirtyPresets.Contains(editingKey)) curveDrafts[editingKey] = CaptureDraft();
+            fanEditorLoading = false;
+            IsEnabled = true;
+            if (session?.State is { } current) RestoreLiveFanState(current);
+            PresetToolbar.SetActionAvailability(true, false);
+            if (pendingFanFollowTarget is { } pending)
+            { pendingFanFollowTarget = null; followFanTarget = null; SetFollowPresetTarget(pending); }
+        }
+    }
+
+    private async void OnFanSaveAsRequested(object? sender, PresetKey key) => await SaveFanPresetAsync(key);
+
+    private async Task<bool> ApplyFanStateAsync(FanCurveState? liveState = null)
+    {
+        if (applyingPreset || savingPreset || fanEditorLoading || session is null) return false;
         if (session.State?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) != true)
         {
             await PresetToolbar.ShowStatusAsync("风扇驱动或设备链路不可用");
-            return;
+            return false;
         }
         var key = editingKey;
         applyingPreset = true;
@@ -286,11 +351,11 @@ public sealed partial class FanWorkspaceV2 : UserControl
             var saved = liveState is null ? await presetStore.LoadAsync(ControlPageId.Fan, key, CancellationToken.None) : null;
             var state = liveState ?? (saved?.SchemaVersion == 1 ? saved.Payload.Deserialize<FanCurveState>() : null);
             int profile = key.Mode == ControlModeId.Office ? 0 : key.Mode == ControlModeId.Turbo ? 2 : 1;
-            if (state?.IsValid() != true || state.Profile != profile)
+            if (state?.IsValid() != true || liveState is null && state.Profile != profile)
             {
                 savedPresets.Remove(key);
                 await PresetToolbar.ShowStatusAsync("已保存预设无效，请重新保存");
-                return;
+                return false;
             }
             var warnings = FanCurveSafety.Assess(state);
             string intervals = string.Join("\n", warnings.Select(w => FormatWarning(state, w)));
@@ -319,13 +384,13 @@ public sealed partial class FanWorkspaceV2 : UserControl
             if (warnings.Count > 0 && await dialog.ShowAsync() != ContentDialogResult.Primary)
             {
                 await PresetToolbar.ShowStatusAsync("已取消；没有提交命令");
-                return;
+                return false;
             }
             bool automaticCeilingRequested = state.Strategy == "Auto" && state.MaximumRpm is not null;
             if (automaticCeilingRequested && session.State?.Controls.FanAutomaticCeilingAvailable != true)
             {
                 await PresetToolbar.ShowStatusAsync("当前服务不支持 EC 自动目标上限，请先更新服务；未提交风扇控制");
-                return;
+                return false;
             }
 
             HardwareCommand command = state.Strategy == "Auto" && !automaticCeilingRequested
@@ -349,22 +414,30 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     : $"应用失败：{result.Error?.Code}");
             appliedFanPreset = succeeded && liveState is null ? state : null;
             appliedFanKey = appliedFanPreset is null ? null : key;
+            if (succeeded && liveState is null)
+            {
+                try { followPreferences.Update(value => value with { FanPresetSlots = new(value.FanPresetSlots) { [key.Mode.ToString()] = key.Slot } }); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await PresetToolbar.ShowStatusAsync("配置已应用，但记忆档位保存失败"); }
+            }
             if (session.State is { } confirmed) UpdateFanActiveBadge(confirmed);
             else PresetToolbar.SetConfirmedActivePreset(null);
+            return succeeded;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             await PresetToolbar.ShowStatusAsync("读取或应用预设失败，请检查服务连接");
+            return false;
         }
         catch (Exception)
         {
             await PresetToolbar.ShowStatusAsync("服务通信失败，未确认风扇生效");
+            return false;
         }
         finally
         {
             applyingPreset = false;
             IsEnabled = true;
-            PresetToolbar.SetActionAvailability(true, savedPresets.Contains(editingKey) && !dirtyPresets.Contains(editingKey));
+            PresetToolbar.SetActionAvailability(true, PresetToolbar.IsEditingPreset);
         }
     }
 
@@ -389,12 +462,13 @@ public sealed partial class FanWorkspaceV2 : UserControl
 
     private void OnStrategyChanged(object sender, RoutedEventArgs e)
     {
+        if (!IsLoaded) return;
         bool enabled = (sender as FrameworkElement)?.Tag?.ToString() == "Fixed";
         if (FixedTarget is not null) FixedTarget.IsEnabled = enabled;
         if (FixedTargetSlider is not null) FixedTargetSlider.IsEnabled = enabled;
         UpdateStrategyPanels();
         UpdateMaximumRpmAvailability();
-        if (!IsFollowingPreset && !importingPreset) UpdateLiveFanPresentation();
+        if (!PresetToolbar.IsEditingPreset && !importingPreset) UpdateLiveFanPresentation();
         if (FanCurveWorkspace is not null) MarkDraftChanged();
     }
     private void UpdateStrategyPanels()

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Jiaolong.Contracts.Commands;
 using System.Diagnostics;
 using Jiaolong.Contracts.Models;
@@ -35,7 +35,6 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     private double previewTimeOffset;
     private HomeControlSession? session;
     private bool lightingAvailable, applying;
-    private bool hardwarePreviewAvailable;
     private bool nativeCycleAvailable;
     private bool? hardwareLogoEnabled;
     private bool logoAvailable = true;
@@ -62,22 +61,22 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     public void ApplyState(HomeStateSnapshot snapshot)
     {
         appliedLightingPlan = snapshot.Controls.KeyboardLighting;
-        if (!followPreset && pendingHardwarePreview is null && !followSettingPending && !applying && LightingDraft.FromPlan(appliedLightingPlan) is { } actual)
-        { independentDraft = draft = actual; Render(); }
-        hardwarePreviewAvailable = snapshot.Controls.KeyboardLightingPreviewAvailable;
+        if (LightingDraft.FromPlan(appliedLightingPlan) is { } actual)
+        {
+            independentDraft = actual;
+            if (!PresetToolbar.IsEditingPreset && pendingHardwarePreview is null && !colorDragging && !lightingSliderDragging && !colorFocused && !followSettingPending && !applying && !lightingFollower.IsApplying && draft != actual)
+            { draft = actual; Render(); }
+        }
         nativeCycleAvailable = snapshot.Controls.KeyboardLightingNativeCycleAvailable;
         CycleButton.IsEnabled = nativeCycleAvailable;
         if (snapshot.Controls.PerformanceMode != PerformanceMode.Custom) confirmedCustomLighting = null;
-        if (followPreset && !snapshot.Controls.KeyboardLightingPreviewActive && !hardwarePreviewOwned && !lightingFollower.IsApplying &&
-            lastFollowedTarget == LightingPresetPolicy.ResolveTarget(snapshot.Controls, lightingSlots, confirmedCustomLighting, confirmedPerformanceLighting) &&
-            lastFollowedPlan is { } expected && !LightingPresetPolicy.SameEffect(expected, appliedLightingPlan)) InvalidateLightingFollow();
         appliedLightingSeconds = snapshot.Controls.KeyboardLightingElapsedSeconds;
         appliedLightingClock.Restart();
         HardwareStatusText.Text = followPreset && followStatus is not null ? followStatus : DescribeHardwareStatus(appliedLightingPlan, appliedLightingSeconds);
         if (snapshot.Controls.KeyboardLightingPreviewActive)
             HardwareStatusText.Text = "正在设备上预览 · 离开页面后恢复正在使用的灯效";
-        PresetToolbar.SetConfirmedActivePreset(followPreset && lastFollowedTarget is { } active && lastFollowedPlan is { } plan &&
-            LightingPresetPolicy.SameEffect(plan, appliedLightingPlan) ? active : null);
+        if (lastFollowedTarget is { } active && lastFollowedPlan is { } plan)
+            PresetToolbar.SetCurrentPreset(active, !LightingPresetPolicy.SameEffect(plan, appliedLightingPlan));
         lightingAvailable = snapshot.Capabilities.Items.Any(item => item.Key == "keyboardLighting" && item.State == CapabilityState.Available);
         UpdateActionAvailability();
         if (snapshot.Controls.KeyboardLightingError is { } error && error != lastEffectError)
@@ -85,8 +84,12 @@ public sealed partial class LightingWorkspaceV2 : UserControl
         lastEffectError = snapshot.Controls.KeyboardLightingError;
         _ = FollowCurrentPresetAsync();
     }
-    private void UpdateActionAvailability() => PresetToolbar.SetActionAvailability(followPreset && !loading && !saving && !applying,
-        followPreset && !loading && !saving && !applying && lightingAvailable && session is not null && saved.Contains(editing) && !dirty.Contains(editing));
+    private void UpdateActionAvailability()
+    {
+        bool ready = !loading && !saving && !applying && !followSettingPending;
+        PresetToolbar.SetActionAvailability(ready, ready && PresetToolbar.IsEditingPreset && lightingAvailable && session is not null);
+        EditorHost.IsEnabled = ready && (PresetToolbar.IsEditingPreset || lightingAvailable && independentDraft is not null);
+    }
     internal static string DescribeHardwareStatus(KeyboardLightingPlan? plan, double? elapsedSeconds)
     {
         if (plan is null) return "设备状态：暂无法读取";
@@ -100,44 +103,82 @@ public sealed partial class LightingWorkspaceV2 : UserControl
             ? $"{source}：循环 · 设备自动变色 · 亮度 {level} · A 面标志 {logo}"
             : $"{source}：{effect} · {color} · 亮度 {level} · A 面标志 {logo}";
     }
-    private double PreviewSeconds() => appliedLightingSeconds is double seconds && appliedLightingPlan == draft.ToPlan()
+    private double PreviewSeconds() => appliedLightingSeconds is double seconds && LightingPresetPolicy.SameEffect(draft.ToPlan(), appliedLightingPlan)
         ? seconds + appliedLightingClock.Elapsed.TotalSeconds
         : previewClock.Elapsed.TotalSeconds + previewTimeOffset;
 
     private async void OnUsePreset(object? sender, EventArgs e)
     {
-        if (!followPreset || applying || saving || loading || !lightingAvailable || session is null) return;
-        CommitHex();
-        if (!saved.Contains(editing) || dirty.Contains(editing)) { await PresetToolbar.ShowStatusAsync("请先保存当前预设"); return; }
-        var key = editing;
-        int applyRevision = revision;
+        if (applying || saving || loading || !lightingAvailable || session is null) return;
+        if (PresetToolbar.IsEditingPreset)
+        {
+            CommitHex();
+            if (!await SaveDraftAsync(editing, draft)) return;
+        }
+        await UsePresetAsync(editing);
+    }
+
+    private async Task UsePresetAsync(PresetKey key)
+    {
+        if (applying || saving || loading || followSettingPending || !lightingAvailable || session is null) return;
+        await RestoreHardwarePreviewAsync();
         applying = true;
-        EditorHost.IsEnabled = false;
-        PresetToolbar.IsEnabled = false;
+        EditorHost.IsEnabled = PresetToolbar.IsEnabled = false;
         UpdateActionAvailability();
         try
         {
+            // Daily selection always reads the saved plan, never another preset's dirty draft.
             var stored = await presets.LoadAsync(ControlPageId.Lighting, key, CancellationToken.None);
-            var snapshot = stored?.SchemaVersion == 1 ? stored.Payload.Deserialize<LightingDraft>() : null;
+            var snapshot = stored is null ? LightingDraft.Default : stored.SchemaVersion == 1 ? stored.Payload.Deserialize<LightingDraft>() : null;
             if (snapshot?.IsValid() != true)
             {
-                saved.Remove(key);
                 await PresetToolbar.ShowStatusAsync("已保存预设无效，请重新保存");
                 return;
             }
-            var result = await ApplySavedLightingAsync(snapshot.ToPlan() with { LogoEnabled = null });
+            var plan = snapshot.ToPlan() with { LogoEnabled = null };
+            var result = await ApplySavedLightingAsync(plan);
             if (result.State == CommandState.Applied && result.Error is null)
+            {
+                lastFollowedTarget = key; lastFollowedPlan = plan;
+                followStatus = null;
+                independentDraft = LightingDraft.FromPlan(plan);
+                lightingSlots[key.Mode.ToString()] = key.Slot;
+                preferences.Update(current => current with { LightingPresetSlots = new(lightingSlots), IndependentLighting = plan });
+                lastAutomaticTarget = session?.State is { } currentState
+                    ? LightingPresetPolicy.ResolveTarget(currentState.Controls, lightingSlots, confirmedCustomLighting, confirmedPerformanceLighting) : null;
                 PresetToolbar.SetActivePreset(key);
-            if (key == editing && revision == applyRevision)
-                await PresetToolbar.ShowStatusAsync(result.State == CommandState.Applied && result.Error is null
-                    ? "灯光已应用" : result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.ConflictDetected
-                        ? "二创控制台正在运行，请先退出后重试" : "应用失败，未确认灯光生效");
+                PresetToolbar.SetCurrentPreset(key);
+                if (!PresetToolbar.IsEditingPreset) { draft = independentDraft!; Render(); }
+                await PresetToolbar.ShowStatusAsync("灯光已应用");
+            }
+            else await PresetToolbar.ShowStatusAsync(result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.ConflictDetected
+                ? "二创控制台正在运行，请先退出后重试" : "应用失败，未确认灯光生效");
         }
-        catch (Exception)
+        catch (Exception error)
         {
-            if (key == editing) await PresetToolbar.ShowStatusAsync("服务通信失败，请检查连接");
+            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Lighting preset use: {error}\n");
+            await PresetToolbar.ShowStatusAsync("灯光应用或当前设置记录未完成，请检查连接和存储");
         }
-        finally { applying = false; EditorHost.IsEnabled = !loading; PresetToolbar.IsEnabled = true; UpdateActionAvailability(); }
+        finally { applying = false; PresetToolbar.IsEnabled = true; UpdateActionAvailability(); }
+    }
+
+    private async void OnEditingModeChanged(object? sender, bool managing)
+    {
+        if (managing)
+        {
+            await RestoreHardwarePreviewAsync();
+            independentDraft = LightingDraft.FromPlan(appliedLightingPlan) ?? independentDraft;
+            await SelectPresetAsync(editing, false);
+        }
+        else
+        {
+            ++loadVersion; loading = false;
+            drafts[editing] = draft;
+            if (independentDraft is { } current) { draft = current; Render(); }
+            UpdateActionAvailability();
+            await PresetToolbar.SetDirtyStatusAsync(false);
+            _ = FollowCurrentPresetAsync();
+        }
     }
     public void SetPageActive(bool active)
     {
@@ -163,15 +204,18 @@ public sealed partial class LightingWorkspaceV2 : UserControl
         FollowPresetButton.RenderTransform = PresetToolbar.ModeSelectorTranslation;
         lightingFollower = new AdaptivePresetExecutor(ApplyFollowedPresetAsync);
         InitializeLightingControl();
-        InitializeHardwarePreview();
-        BrightnessSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnBrightnessPointerReleased), true);
-        BrightnessSlider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(OnBrightnessPointerReleased), true);
+        foreach (var slider in new[] { BrightnessSlider, SpeedSlider })
+        {
+            slider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnLightingSliderPressed), true);
+            slider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnBrightnessPointerReleased), true);
+            slider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(OnBrightnessPointerReleased), true);
+        }
         EffectHelp.Help = new ParameterHelpContent(
             "常亮保持所选颜色；渐变连续换色，标准速度约六秒一轮；循环使用设备自动变色，色序与节拍由设备控制。",
             "循环模式的颜色和速度由设备控制，不提供独立调节。",
-            "开启跟随预设，灯光随当前整机模式及槽位使用已保存配置；日常可选常亮减少视觉干扰。",
-            "保持当前灯效或关闭亮度；关闭跟随后，独立设置立即生效并保持。",
-            "灯效只有可选模式，没有数值极限；循环色序与节拍不可调，未保存预设仅临时预览，离页恢复原灯效。",
+            "开启随模式应用，切换整机模式时使用对应灯光预设；日常页面直接调节当前电脑。",
+            "关闭随模式应用可保持手动灯效；预设管理中编辑不改变设备。",
+            "灯效没有数值极限；循环色序与节拍不可调；管理中的机身图仅用于预览。",
             "A 面标志独立同步；缺少有效预设保持当前灯效，其他控制台运行时不写入。");
         previewTimer.Tick += (_, _) =>
         {
@@ -184,15 +228,29 @@ public sealed partial class LightingWorkspaceV2 : UserControl
             "2 档中亮度是默认参考；昏暗环境可用 1 档，按可见性调整。",
             "0 档关闭或 1 档低亮度，减少耗电和视觉干扰；关闭不清除所选颜色。",
             "3 档是设备可选最高亮度，没有连续亮度或逐键亮度设置。",
-            "独立模式调节立即生效；预设编辑只临时预览，须保存并使用才保留。");
+            "日常调节直接生效；管理中的编辑须保存，保存并应用才改变电脑。");
         PresetToolbar.SelectedKey = editing;
-        PresetToolbar.SetSlotSummary("键盘灯效 · 颜色 · 亮度 · A 面标志");
+        PresetToolbar.SetSlotSummary("键盘灯效 · 颜色 · 亮度");
         UpdateActionAvailability();
-        PresetToolbar.SelectedKeyChanged += async (_, key) => await SelectPresetAsync(key);
+        PresetToolbar.SelectedKeyChanged += async (_, key) => { if (PresetToolbar.IsEditingPreset) await SelectPresetAsync(key); };
+        PresetToolbar.PresetUseRequested += async (_, key) => await UsePresetAsync(key);
+        PresetToolbar.EditingModeChanged += OnEditingModeChanged;
+        PresetToolbar.SaveAsRequested += async (_, key) =>
+        {
+            CommitHex();
+            if (PresetToolbar.IsEditingPreset)
+            {
+                await SaveDraftAsync(key, draft);
+                return;
+            }
+            await RestoreHardwarePreviewAsync();
+            if (independentDraft is { } current) await SaveDraftAsync(key, current);
+            else await PresetToolbar.ShowStatusAsync("当前灯光尚未读回，无法另存");
+        };
         PresetToolbar.SaveRequested += OnSave;
         PresetToolbar.UseRequested += OnUsePreset;
         ColorWheel.ColorChanged += (_, color) => ChangeColor(color);
-        ColorWheel.InteractionChanged += (_, active) => { colorDragging = active; UpdatePreviewMotion(); };
+        ColorWheel.InteractionChanged += (_, active) => { colorDragging = active; UpdatePreviewMotion(); if (!active && !PresetToolbar.IsEditingPreset) ScheduleHardwarePreview(); };
         ColorEditor.GotFocus += (_, _) => { colorFocused = IsColorTextFocused(); UpdatePreviewMotion(); };
         ColorEditor.LostFocus += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
@@ -216,7 +274,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
             reduceMotion = settings.ReduceMotion;
             syncing = false;
             if (XamlRoot is not null) { XamlRoot.Changed -= OnRootChanged; XamlRoot.Changed += OnRootChanged; }
-            if (!drafts.ContainsKey(editing)) await SelectPresetAsync(editing, false);
+            if (PresetToolbar.IsEditingPreset && !drafts.ContainsKey(editing)) await SelectPresetAsync(editing, false);
             UpdatePreviewMotion();
         };
         Unloaded += (_, _) => { previewTimer.Stop(); previewClock.Stop(); _ = RestoreHardwarePreviewAsync(); if (XamlRoot is not null) XamlRoot.Changed -= OnRootChanged; };
@@ -259,7 +317,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     private void Changed()
     {
         if (syncing || loading) return;
-        if (!followPreset)
+        if (!PresetToolbar.IsEditingPreset)
         {
             independentDraft = draft; revision++;
             ScheduleHardwarePreview();
@@ -293,11 +351,15 @@ public sealed partial class LightingWorkspaceV2 : UserControl
         UpdatePreviewMotion();
         Changed();
     }
+    private bool lightingSliderDragging;
+    private void OnLightingSliderPressed(object sender, PointerRoutedEventArgs e) => lightingSliderDragging = true;
     private void OnBrightnessPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        lightingSliderDragging = false;
         bool previous = syncing; syncing = true;
         BrightnessSlider.Value = draft.Brightness;
         syncing = previous;
+        if (!PresetToolbar.IsEditingPreset) ScheduleHardwarePreview();
     }
     private void OnSpeedChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
@@ -311,7 +373,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     }
     private void OnLogoChanged(object sender, RoutedEventArgs e)
     {
-        if (syncing || loading) return;
+        if (syncing) return;
         LidLogoRequested?.Invoke(LogoToggle.IsOn);
     }
     private void OnRgbChanged(object? sender, double value)
@@ -330,8 +392,9 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     private void OnResetClick(object sender, RoutedEventArgs e) { draft = LightingDraft.Default; Render(); Changed(); }
     private async Task SelectPresetAsync(PresetKey key, bool preserve = true)
     {
-        if (preserve && !loading) { CommitHex(); if (followPreset) drafts[editing] = draft; }
-        if (followPreset) await RestoreHardwarePreviewAsync();
+        if (!PresetToolbar.IsEditingPreset) return;
+        if (preserve && !loading) { CommitHex(); drafts[editing] = draft; }
+        CancelPendingHardwarePreview();
         int version = ++loadVersion; revision++; editing = key;
         loading = true; EditorHost.IsEnabled = false; PresetToolbar.SetActionAvailability(false, false);
         string? error = null;
@@ -350,9 +413,8 @@ public sealed partial class LightingWorkspaceV2 : UserControl
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { error = "预设读取失败，显示默认值"; }
-        if (version != loadVersion) return;
+        if (version != loadVersion || !PresetToolbar.IsEditingPreset) return;
         drafts[key] = next;
-        if (!followPreset) next = independentDraft ?? LightingDraft.FromPlan(appliedLightingPlan) ?? next;
         draft = next; Render(); loading = false; EditorHost.IsEnabled = true;
         UpdateActionAvailability();
         PresetToolbar.SetEditingState(key, dirty.Contains(key), saved.Contains(key));
@@ -361,25 +423,52 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     }
     private async void OnSave(object? sender, EventArgs e)
     {
-        if (!followPreset || loading || saving || applying) return;
-        CommitHex();
-        var key = editing; var snapshot = draft; int savedRevision = revision;
+        if (loading || saving || applying) return;
+        if (PresetToolbar.IsEditingPreset)
+        {
+            CommitHex();
+            await SaveDraftAsync(editing, draft);
+        }
+        else if (PresetToolbar.CurrentSourceKey is { } source)
+        {
+            CommitHex();
+            await RestoreHardwarePreviewAsync();
+            if (independentDraft is { } current && await SaveDraftAsync(source, current))
+            {
+                lastFollowedTarget = source; lastFollowedPlan = current.ToPlan() with { LogoEnabled = null };
+                PresetToolbar.SetCurrentPreset(source);
+            }
+        }
+    }
+
+    private async Task<bool> SaveDraftAsync(PresetKey key, LightingDraft snapshot)
+    {
+        if (loading || saving || applying || !snapshot.IsValid()) return false;
+        int savedRevision = revision;
         saving = true; UpdateActionAvailability();
         try
         {
-            await presets.SaveAsync(new PagePresetEnvelope(1, ControlPageId.Lighting, key, PresetToolbar.SelectedDisplayName, JsonSerializer.SerializeToElement(snapshot), DateTimeOffset.UtcNow), CancellationToken.None);
+            var stored = await presets.LoadAsync(ControlPageId.Lighting, key, CancellationToken.None);
+            string name = stored?.DisplayName ?? PresetToolbar.DisplayNameFor(key);
+            await presets.SaveAsync(new PagePresetEnvelope(1, ControlPageId.Lighting, key, name, JsonSerializer.SerializeToElement(snapshot), DateTimeOffset.UtcNow), CancellationToken.None);
             saved.Add(key);
-            if (key == lastFollowedTarget && !LightingPresetPolicy.SameEffect(snapshot.ToPlan(), lastFollowedPlan))
-            { lastFollowedTarget = null; PresetToolbar.SetConfirmedActivePreset(null); }
-            if (!followPreset) drafts[key] = snapshot;
-            if (drafts.GetValueOrDefault(key) == snapshot) dirty.Remove(key);
-            if (key == editing && savedRevision == revision)
+            if (drafts.GetValueOrDefault(key) == snapshot || key == editing && savedRevision == revision && PresetToolbar.IsEditingPreset)
             {
-                dirty.Remove(key); PresetToolbar.SetEditingState(key, false, true); await PresetToolbar.ShowSavedStatusAsync();
+                drafts[key] = snapshot; dirty.Remove(key);
+                PresetToolbar.SetEditingState(key, false, true);
             }
+            if (key == lastFollowedTarget && lastFollowedPlan is { } currentPlan)
+            {
+                lastFollowedPlan = snapshot.ToPlan() with { LogoEnabled = null };
+                PresetToolbar.SetCurrentPreset(key, !LightingPresetPolicy.SameEffect(lastFollowedPlan, appliedLightingPlan));
+            }
+            await PresetToolbar.ShowSavedStatusAsync();
+            return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { await PresetToolbar.ShowStatusAsync("保存失败，请重试"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            await PresetToolbar.ShowStatusAsync("保存失败，请重试"); return false;
+        }
         finally { saving = false; UpdateActionAvailability(); }
-
     }
 }

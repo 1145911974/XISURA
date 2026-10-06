@@ -25,11 +25,22 @@ public sealed partial class PerformanceParameterRowV2 : UserControl
     public PerformanceParameterRowV2()
     {
         InitializeComponent();
+        ValueBox.KeyDown += (_, args) =>
+        {
+            if (args.Key == Windows.System.VirtualKey.Enter)
+            {
+                inputCommitted = true;
+                OnValueBoxLostFocus(ValueBox, args);
+            }
+        };
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
 
     public string Title { get; set; } = string.Empty;
+    private bool inputCommitted = true;
+    private bool inputEdited;
+    public bool IsInputPending => ValueBox.FocusState != FocusState.Unfocused && !inputCommitted;
     public string Description { get; set; } = string.Empty;
     public object? IconContent { get; set; }
     public double Minimum { get; set; }
@@ -264,6 +275,8 @@ public sealed partial class PerformanceParameterRowV2 : UserControl
         if (synchronizing || ValueBox.FocusState == FocusState.Unfocused || !TryParseInput(ValueBox.Text, out double value))
             return;
 
+        inputCommitted = false;
+        inputEdited = true;
         StopValueAnimation();
         value = Math.Clamp(PerformanceDisplayValue.ToRaw(value, DisplayScale), Minimum, Maximum);
         synchronizing = true;
@@ -274,6 +287,9 @@ public sealed partial class PerformanceParameterRowV2 : UserControl
 
     private void OnValueBoxLostFocus(object sender, RoutedEventArgs args)
     {
+        if (!inputEdited) return;
+        inputEdited = false;
+        inputCommitted = true;
         double? value = TryParseInput(ValueBox.Text, out double parsed)
             ? Math.Clamp(PerformanceDisplayValue.ToRaw(parsed, DisplayScale), Minimum, Maximum)
             : Rail.Value;

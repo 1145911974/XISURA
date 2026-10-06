@@ -130,7 +130,10 @@ public sealed partial class PrototypeWindow
         confirmedAutomaticApply = homeSession.State?.Controls.AdaptiveAutomation?.LastApplyUtc;
         confirmedCpuSignature = CpuSignature(homeSession.State?.Controls.CpuTuning);
         appliedMode.Confirm(state.Mode);
-        PublishConfirmedMode(key.Mode, key, animate);
+        bool presetConfirmed = PerformanceWorkspaceV2Preview.SubmittedPresetMatchesReadback(key) ||
+            savedPerformanceDrafts.TryGetValue(key, out var draft) && PerformanceWorkspaceV2Preview.PresetMatchesReadback(draft);
+        PublishConfirmedMode(key.Mode, presetConfirmed ? key : null, animate);
+        if (!presetConfirmed) PerformanceWorkspaceV2Preview.SetSubmittedPreset(key);
         RequestModeVisuals(state.Mode, animate);
         try
         {

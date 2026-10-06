@@ -5,6 +5,11 @@
       <Files Include="$(var.PayloadPublishDir)\**">
         <Exclude Files="$(var.PayloadPublishDir)\Jiaolong.Service.exe" />
         <Exclude Files="$(var.PayloadPublishDir)\Jiaolong.ControlCenter.exe" />
+        <!-- These optional SDK translations use LANGIDs rejected by Windows Installer ICE03.
+             Keep the application's zh-CN resources and English fallback; do not bypass MSI validation. -->
+        <Exclude Files="$(var.PayloadPublishDir)\mi-NZ\**" />
+        <Exclude Files="$(var.PayloadPublishDir)\ug-CN\**" />
+        <Exclude Files="$(var.PayloadPublishDir)\gd-gb\**" />
       </Files>
       <Component Id="ControlCenterComponent" Guid="12DF8357-7138-4771-AD64-CCBE517B00D9">
         <File Id="ControlCenterExecutable" Source="$(var.PayloadPublishDir)\Jiaolong.ControlCenter.exe" KeyPath="yes">

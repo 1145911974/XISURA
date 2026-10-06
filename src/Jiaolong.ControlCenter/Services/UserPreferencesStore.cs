@@ -24,6 +24,8 @@ public sealed record UserPreferences(bool MinimizeToTrayOnClose, string Theme, b
     public Jiaolong.Contracts.Models.KeyboardLightingPlan? IndependentLighting { get; init; }
     public Dictionary<string, int> LightingPresetSlots { get; init; } = [];
     public Dictionary<string, int> PerformancePresetSlots { get; init; } = [];
+    public Dictionary<string, int> GpuPresetSlots { get; init; } = [];
+    public Dictionary<string, int> FanPresetSlots { get; init; } = [];
     public bool AdaptiveModeEnabled { get; init; }
     public Dictionary<string, string> PresetNames { get; init; } = [];
     public AdaptiveStrategyId ActiveAdaptiveStrategy { get; init; } = AdaptiveStrategyId.BalancedAdaptive;

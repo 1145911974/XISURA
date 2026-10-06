@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 
@@ -117,8 +117,8 @@ public sealed class ControlPageDesignContractTests
 
     private static void AssertSaveAndUseActions(string source, string pageName)
     {
-        Assert.IsTrue(source.Contains("Content=\"保存预设\"", StringComparison.Ordinal), $"{pageName}缺少独立保存预设动作。");
-        Assert.IsTrue(source.Contains("Content=\"使用预设\"", StringComparison.Ordinal), $"{pageName}缺少独立使用预设动作。");
+        Assert.IsTrue(source.Contains("Content=\"保存当前\"", StringComparison.Ordinal), $"{pageName}缺少独立保存预设动作。");
+        Assert.IsTrue(source.Contains("Content=\"保存并应用\"", StringComparison.Ordinal), $"{pageName}缺少独立使用预设动作。");
     }
 
     private static string NextPage(string page)

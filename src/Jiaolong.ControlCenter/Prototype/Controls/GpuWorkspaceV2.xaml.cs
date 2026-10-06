@@ -53,6 +53,15 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         VoltageFrequencyCurve.RestoreDefaultsRequested += OnGpuVfRestoreDefaultsRequested;
         PresetToolbar.SelectedKeyChanged += OnGpuPresetSelected;
         PresetToolbar.UseRequested += OnUseGpuPreset;
+        PresetToolbar.PresetUseRequested += OnGpuPresetUseRequested;
+        PresetToolbar.EditingModeChanged += OnGpuEditingModeChanged;
+        PresetToolbar.SaveAsRequested += OnGpuSaveAsRequested;
+        foreach (var rail in new UIElement[] { CoreRail, MemoryRail, CoreOffsetRail })
+        {
+            rail.AddHandler(PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => gpuRailPointerHeld = true), true);
+            rail.AddHandler(PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => gpuRailPointerHeld = false), true);
+            rail.AddHandler(PointerCaptureLostEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => gpuRailPointerHeld = false), true);
+        }
         PresetToolbar.SelectedKey = PresetKey.Create(ControlModeId.Turbo, 2);
         CoreRail.SetValue(2280);
         MemoryRail.SetValue(0);
@@ -97,7 +106,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
     public void AttachSession(HomeControlSession controlSession)
     {
         session = controlSession;
-        _ = LoadGpuPresetAsync(PresetToolbar.SelectedKey);
+        if (controlSession.State is { } state) ApplyState(state);
     }
 
     public void ShowAdvancedPreview()
@@ -106,12 +115,18 @@ public sealed partial class GpuWorkspaceV2 : UserControl
             VoltageFrequencyCurve.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0.02 }));
     }
 
-    private void MarkPresetDirty()
+    private void MarkPresetDirty(bool submitLive = true)
     {
-        if (gpuPresetLoading) return;
-        if (!IsFollowingPreset) { QueueLiveGpuChange(); return; }
+        if (gpuPresetLoading || gpuEditorLoading) return;
+        if (!PresetToolbar.IsEditingPreset)
+        {
+            PresetToolbar.SetCurrentSettingsModified();
+            if (submitLive) QueueLiveGpuChange();
+            else PresetToolbar.SetActionAvailability(!GpuWritePending, gpuVfDirty && !GpuWritePending);
+            return;
+        }
         gpuPresetDirty = true;
-        PresetToolbar.SetActionAvailability(!GpuWritePending, false);
+        PresetToolbar.SetActionAvailability(!GpuWritePending, !GpuWritePending);
         _ = PresetToolbar.SetDirtyStatusAsync(true);
     }
 
@@ -241,12 +256,13 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         if (muxAvailable && snapshot.Controls.MuxMode is MuxMode mode)
             RouteDiagram.SetMode(mode);
         else RouteDiagram.SetUnknownMode();
+        if (PresetToolbar.IsEditingPreset || gpuEditorLoading) return;
         // Each group sets its own availability; a blanket reset restarts disabled-state motion on every poll.
         ApplyClockLimitState(snapshot.Controls.GpuClockLimit, tuningAvailable);
-        CoreValueBox.Visibility = IsFollowingPreset ? Visibility.Visible : Visibility.Collapsed;
-        CoreLiveUnknown.Visibility = IsFollowingPreset ? Visibility.Collapsed : Visibility.Visible;
-        if (!IsFollowingPreset && !liveGpuQueued && !GpuWritePending) CoreRail.SetValue(null);
-        PresetToolbar.SetActionAvailability(!GpuWritePending, selectedGpuPreset is not null && !gpuPresetDirty && !GpuWritePending);
+        CoreValueBox.Visibility = clockDirty || snapshot.Controls.GpuClockLimit?.SubmittedMhz is not null ? Visibility.Visible : Visibility.Collapsed;
+        CoreLiveUnknown.Visibility = CoreValueBox.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (!clockDirty && snapshot.Controls.GpuClockLimit?.SubmittedMhz is null && !liveGpuQueued && !GpuWritePending) CoreRail.SetValue(null);
+        PresetToolbar.SetActionAvailability(!GpuWritePending, gpuVfDirty && !GpuWritePending);
         TuningStateText.Text = tuningAvailable ? "可调节" : "只读";
         var unavailable = new List<string>(2);
         if (!muxAvailable) unavailable.Add("MUX");
@@ -285,8 +301,10 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         gpuVfDraft = nodes.Select(node => (int)Math.Round(node.OffsetMhz * 1000d)).ToArray();
         gpuVfDirty = lastGpuVf is { Nodes.Length: 127 } &&
             !gpuVfDraft.SequenceEqual(lastGpuVf.Nodes.Select(node => node.OffsetKhz));
-        VoltageFrequencyCurve.SetStatus(gpuVfDirty ? "曲线已编辑，尚未写入硬件" : "与硬件读回曲线一致");
-        MarkPresetDirty();
+        VoltageFrequencyCurve.SetStatus(gpuVfDirty
+            ? PresetToolbar.IsEditingPreset ? "正在编辑预设曲线，保存并应用后生效" : "当前曲线待应用，请点击应用调整"
+            : "与硬件读回曲线一致");
+        MarkPresetDirty(submitLive: false);
     }
 
     private async void OnGpuVfRestoreDefaultsRequested(object? sender, EventArgs e)
@@ -300,7 +318,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
             VoltageFrequencyCurve.SetStatus("驱动恢复能力或读回不可用");
             return;
         }
-        if (IsFollowingPreset)
+        if (PresetToolbar.IsEditingPreset)
         {
             gpuVfDraft = new int[127];
             gpuVfDirty = true;
@@ -328,7 +346,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
                 gpuVfDirty = coreOffsetDirty = false;
                 gpuVfDraft = null;
                 lastGpuVf = null;
-                if (IsFollowingPreset) MarkPresetDirty();
+                if (PresetToolbar.IsEditingPreset) MarkPresetDirty();
                 else { appliedGpuPreset = null; appliedGpuKey = null; PresetToolbar.SetConfirmedActivePreset(null); }
             }
         }

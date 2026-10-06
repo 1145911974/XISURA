@@ -16,6 +16,7 @@ public sealed partial class ModePresetPicker : UserControl
     private readonly UserPreferencesStore preferences = new();
     private Dictionary<string, string> names = [];
     private readonly List<Button> resetButtons = [];
+    private readonly List<Button> renameButtons = [];
     private event EventHandler<PresetKey>? ResetRequested;
     private bool closingWithAnimation;
     private bool allowClose;
@@ -46,6 +47,17 @@ public sealed partial class ModePresetPicker : UserControl
     public bool IsDropDownOpen { get; private set; }
     public static readonly DependencyProperty SelectedKeyProperty = DependencyProperty.Register(nameof(SelectedKey), typeof(PresetKey), typeof(ModePresetPicker), new PropertyMetadata(PresetKey.Create(ControlModeId.Office, 1), OnSelectedKeyChanged));
     public event EventHandler<PresetKey>? SelectedKeyChanged;
+    public event EventHandler<PresetKey>? PresetInvoked;
+    private bool editingPreset;
+    public string DisplayNameFor(PresetKey key) => $"{ModeLabels[key.Mode]} · {PresetNameCatalog.GetName(names, key)}";
+    public void SetManagementMode(bool editing)
+    {
+        editingPreset = editing;
+        UpdateSelection(SelectedKey);
+        foreach (var button in renameButtons) button.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var button in resetButtons) button.Visibility = editing && ResetRequested is not null ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSlotStates();
+    }
     public void SetSlotSummary(string summary)
     {
         for (int slot = 1; slot <= 3; slot++) SetSlotSummary(slot, summary);
@@ -53,7 +65,7 @@ public sealed partial class ModePresetPicker : UserControl
     public void EnableReset(EventHandler<PresetKey> handler)
     {
         ResetRequested += handler;
-        foreach (var button in resetButtons) button.Visibility = Visibility.Visible;
+        foreach (var button in resetButtons) button.Visibility = editingPreset ? Visibility.Visible : Visibility.Collapsed;
     }
     public void SetResetEnabled(bool enabled)
     {
@@ -105,6 +117,7 @@ public sealed partial class ModePresetPicker : UserControl
         {
             SelectFromUser(PresetKey.Create(SelectedKey.Mode, slot));
             PresetFlyout.Hide();
+            PresetInvoked?.Invoke(this, SelectedKey);
         }
     }
 
@@ -116,7 +129,7 @@ public sealed partial class ModePresetPicker : UserControl
 
     private void UpdateSelection(PresetKey key)
     {
-        SelectionText.Text = SelectedDisplayName;
+        SelectionText.Text = editingPreset ? SelectedDisplayName : "使用预设";
         SelectionIcon.Glyph = key.Mode switch
         {
             ControlModeId.Office => "\uE7F4",
@@ -124,8 +137,9 @@ public sealed partial class ModePresetPicker : UserControl
             ControlModeId.Turbo => "\uE945",
             _ => "\uE8A5"
         };
-        ToolTipService.SetToolTip(PickerButton, SelectedDisplayName);
-        AutomationProperties.SetName(PickerButton, $"当前{SelectedDisplayName}，展开选择模式与预设");
+        if (!editingPreset) SelectionIcon.Glyph = "\uE8A5";
+        ToolTipService.SetToolTip(PickerButton, editingPreset ? $"正在编辑：{SelectedDisplayName}" : "选择已保存的预设并直接应用；管理预设可单独编辑");
+        AutomationProperties.SetName(PickerButton, editingPreset ? $"正在编辑{SelectedDisplayName}，展开选择模式与预设" : "使用预设，展开选择模式与预设");
         UpdateSlotLabels();
         UpdateButtons(ModeList, key.Mode.ToString());
         UpdateButtons(SlotList, key.Slot.ToString());
@@ -196,6 +210,7 @@ public sealed partial class ModePresetPicker : UserControl
             };
             AutomationProperties.SetName(icon, $"重命名预设 {button.Tag}");
             icon.Click += OnRenameIconClick;
+            renameButtons.Add(icon);
             var titleRow = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -288,7 +303,7 @@ public sealed partial class ModePresetPicker : UserControl
 
     private void UpdateSlotState(int slot, FrameworkElement marker, FrameworkElement editingBadge, FrameworkElement usingBadge)
     {
-        bool editing = SelectedKey.Slot == slot;
+        bool editing = editingPreset && SelectedKey.Slot == slot;
         bool active = confirmedActiveKey == PresetKey.Create(SelectedKey.Mode, slot);
         marker.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
         editingBadge.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
