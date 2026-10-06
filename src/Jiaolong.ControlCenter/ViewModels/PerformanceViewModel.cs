@@ -50,6 +50,25 @@ public sealed record AdvancedCpuTuningDraft
 {
     public CpuCurveOptimizerMode? CurveOptimizerMode { get; init; }
 
+    public static AdvancedCpuTuningDraft FromCurveReadback(CpuTuningState? state, CpuCurveOptimizerMode? preferredMode)
+    {
+        if (state is not { CurveOptimizerVerification: "hardwareReadback", PerCoreCurveOptimizer: { Count: 8 } cores } ||
+            Enumerable.Range(0, 8).Any(core => !cores.TryGetValue(core, out int value) || value is < -30 or > 0))
+            return new() { CurveOptimizerMode = preferredMode ?? CpuCurveOptimizerMode.Bios };
+        int first = cores[0];
+        bool uniform = cores.Values.All(value => value == first);
+        var mode = preferredMode ?? (uniform
+            ? first == 0 ? CpuCurveOptimizerMode.Bios : CpuCurveOptimizerMode.AllCore
+            : CpuCurveOptimizerMode.PerCore);
+        if (mode == CpuCurveOptimizerMode.AllCore && !uniform) mode = CpuCurveOptimizerMode.PerCore;
+        return new()
+        {
+            CurveOptimizerMode = mode,
+            CurveOptimizerAll = uniform ? first : null,
+            PerCoreCurveOptimizer = new Dictionary<int, int>(cores)
+        };
+    }
+
     public CpuCurveOptimizerMode ResolveCurveOptimizerMode(int? legacyAllCore = null)
     {
         if (CurveOptimizerMode is { } mode)

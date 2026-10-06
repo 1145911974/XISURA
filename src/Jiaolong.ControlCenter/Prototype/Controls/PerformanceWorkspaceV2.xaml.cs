@@ -39,7 +39,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     }
     public void SelectModeForManagement(ControlModeId mode)
     {
-        if (applyInProgress || liveEditPending || presetEditorLoading) return;
+        if (applyInProgress || liveEditApplying || liveEditPending || presetEditorLoading) return;
         PresetToolbar.EnterPresetManagement();
         PresetToolbar.SelectedKey = PresetKey.Create(mode, selectedPreset.Slot);
     }
@@ -66,6 +66,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private readonly Dictionary<PresetKey, PerformanceDraft> editorDrafts = [];
     private readonly DispatcherTimer liveEditTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private bool liveEditPending;
+    private bool liveEditApplying;
+    private CpuCurveOptimizerMode? liveCurveMode;
+    private bool liveCurveReadbackKnown;
     private long presetLoadRevision;
     private bool presetEditorLoading;
     private bool advancedOpen;
@@ -170,7 +173,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private async void OnPresetUseRequested(object? sender, PresetKey key)
     {
-        if (applyInProgress || liveEditPending || PresetToolbar.IsEditingPreset) return;
+        if (applyInProgress || liveEditApplying || liveEditPending || PresetToolbar.IsEditingPreset) return;
         bool applied = await (presetActivator?.Invoke(key) ?? ApplyStoredPresetAsync(key, XamlRoot));
         if (applied)
         {
@@ -186,7 +189,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (!liveEditPending || PresetToolbar.IsEditingPreset) return;
         if ((GetAsyncKeyState(1) & 0x8000) != 0 || TemperatureRow.IsInputPending || SustainedPowerRow.IsInputPending || BurstPowerRow.IsInputPending || FrequencyRow.IsInputPending || CurveOptimizerRow.IsInputPending)
         { liveEditTimer.Start(); return; }
-        if (applyInProgress)
+        if (applyInProgress || liveEditApplying)
             return;
         liveEditPending = false;
         if (currentState?.TemperatureLimitC is null || currentState.SplWatts is null || currentState.SpptWatts is null ||
@@ -200,6 +203,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private async Task ApplyLiveEditAsync(PerformanceDraft draft)
     {
+        liveEditApplying = true;
+        SetInteractionAvailability(false);
         try
         {
             if (PrepareManualControlAsync is { } prepare && !await prepare()) return;
@@ -212,12 +217,14 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
         finally
         {
+            liveEditApplying = false;
             if (!PresetToolbar.IsEditingPreset && !liveEditPending)
             {
                 currentState = session?.State?.Controls.CpuTuning ?? currentState;
                 ApplyHardwareState(currentState, useRecommendations: false, preservePresetState: true);
             }
             if (!PresetToolbar.IsEditingPreset && liveEditPending) liveEditTimer.Start();
+            SetInteractionAvailability(currentState is not null);
         }
     }
 
@@ -233,7 +240,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
         else
         {
-                PresetToolbar.SetCurrentSettingsModified();
+            PresetToolbar.SetCurrentSettingsModified();
             liveEditPending = true;
             liveEditTimer.Stop();
             liveEditTimer.Start();
@@ -279,7 +286,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     public void ShowPresetPreview()
     {
-        if (applyInProgress || liveEditPending || presetEditorLoading) return;
+        if (applyInProgress || liveEditApplying || liveEditPending || presetEditorLoading) return;
         ShowAdvanced(false);
         PresetToolbar.EnterPresetManagement();
         PresetToolbar.ShowPicker();
@@ -320,7 +327,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         SetConnectionState(available, currentState is not null);
         ControlSourceText.Text = PresetToolbar.IsEditingPreset ? "正在编辑预设 · 尚未应用" : currentState is not null ? "硬件回读" : available ? "等待读回" : "未连接";
 
-        if (!PresetToolbar.IsEditingPreset && !applyInProgress && !liveEditPending)
+        if (!PresetToolbar.IsEditingPreset && !applyInProgress && !liveEditApplying && !liveEditPending)
             ApplyHardwareState(available ? currentState : null, useRecommendations: false, preservePresetState: true);
 
         RefreshBoundaryFromEditor();
@@ -359,7 +366,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         acFrequencyMhz = state?.AcFrequency() is int ac && ac is >= 1500 and <= 5400 ? ac : null;
         dcFrequencyMhz = state?.DcFrequency() is int dc && dc is >= 1500 and <= 5400 ? dc : null;
         FrequencyRow.SetValue(editingAc ? acFrequencyMhz : dcFrequencyMhz);
-        AdvancedWorkspace.ApplyDraft(null);
+        var curveReadback = AdvancedCpuTuningDraft.FromCurveReadback(state, liveCurveMode);
+        liveCurveReadbackKnown = curveReadback.PerCoreCurveOptimizer is not null;
+        AdvancedWorkspace.ApplyDraft(curveReadback);
         AdvancedWorkspace.SetPboHardware(state?.PboScalar);
         BoostToggle.IsOn = state?.BoostEnabled == true;
         UpdateCoreTopology(state?.EnabledCoreCount);
@@ -465,28 +474,28 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private void SetInteractionAvailability(bool available)
     {
-        PresetToolbar.IsEnabled = !applyInProgress && !presetEditorLoading;
-        CurveModeSelector.IsEnabled = curveOptimizerCapabilityAvailable && !applyInProgress && !presetEditorLoading;
-        CurveOptimizerRow.SetEditorEnabled(curveOptimizerCapabilityAvailable && !applyInProgress && !presetEditorLoading &&
+        PresetToolbar.IsEnabled = !applyInProgress && !liveEditApplying && !presetEditorLoading;
+        CurveModeSelector.IsEnabled = curveOptimizerCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading;
+        CurveOptimizerRow.SetEditorEnabled(curveOptimizerCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading &&
             AdvancedWorkspace.CurveMode == CpuCurveOptimizerMode.AllCore);
         bool temperatureWritable = cpuTuningCapabilityAvailable && acPowerConnected is true &&
-            !applyInProgress && !presetEditorLoading && session?.Status == HomeSessionStatus.Connected;
+            !applyInProgress && !liveEditApplying && !presetEditorLoading && session?.Status == HomeSessionStatus.Connected;
         TemperatureRow.SetEditorEnabled(temperatureWritable);
         bool powerWritable = cpuTuningCapabilityAvailable && acPowerConnected is true &&
-            !applyInProgress && !presetEditorLoading && session?.Status == HomeSessionStatus.Connected;
+            !applyInProgress && !liveEditApplying && !presetEditorLoading && session?.Status == HomeSessionStatus.Connected;
         SustainedPowerRow.SetEditorEnabled(powerWritable);
         BurstPowerRow.SetEditorEnabled(powerWritable);
         bool frequencyAvailable = available && acFrequencyMhz is not null && dcFrequencyMhz is not null;
-        FrequencyRow.SetEditorEnabled(frequencyAvailable && !applyInProgress && !presetEditorLoading);
-        FrequencyAcButton.IsEnabled = frequencyAvailable && !applyInProgress && !presetEditorLoading;
-        FrequencyDcButton.IsEnabled = frequencyAvailable && !applyInProgress && !presetEditorLoading;
-        BoostToggle.IsEnabled = available && !applyInProgress && !presetEditorLoading && currentState?.BoostEnabled is not null;
-        PowerPlanSelector.IsEnabled = powerSchemes.Count > 0 && !applyInProgress && !presetEditorLoading;
-        AdvancedWorkspace.SetAvailability(available && currentState is not null && !applyInProgress && !presetEditorLoading,
-            advancedCapabilityAvailable && !applyInProgress && !presetEditorLoading, pboCapabilityAvailable && !applyInProgress && !presetEditorLoading);
+        FrequencyRow.SetEditorEnabled(frequencyAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading);
+        FrequencyAcButton.IsEnabled = frequencyAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading;
+        FrequencyDcButton.IsEnabled = frequencyAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading;
+        BoostToggle.IsEnabled = available && !applyInProgress && !liveEditApplying && !presetEditorLoading && currentState?.BoostEnabled is not null;
+        PowerPlanSelector.IsEnabled = powerSchemes.Count > 0 && !applyInProgress && !liveEditApplying && !presetEditorLoading;
+        AdvancedWorkspace.SetAvailability(available && currentState is not null && !applyInProgress && !liveEditApplying && !presetEditorLoading,
+            advancedCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading, pboCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading);
         PresetToolbar.SetActionAvailability(
-            saveEnabled: !applyInProgress && !presetEditorLoading && !liveEditPending && (!PresetToolbar.IsEditingPreset || TryCreateDraft() is not null),
-            useEnabled: PresetToolbar.IsEditingPreset && available && TryCreateDraft() is not null && !applyInProgress && !presetEditorLoading);
+            saveEnabled: !applyInProgress && !liveEditApplying && !presetEditorLoading && !liveEditPending && (!PresetToolbar.IsEditingPreset || TryCreateDraft() is not null),
+            useEnabled: PresetToolbar.IsEditingPreset && available && TryCreateDraft() is not null && !applyInProgress && !liveEditApplying && !presetEditorLoading);
     }
 
     private void SetConnectionState(bool capabilityAvailable, bool hasState)
@@ -599,7 +608,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private async Task<bool> SavePresetToAsync(PresetKey key)
     {
-        if (applyInProgress || liveEditPending || presetEditorLoading) return false;
+        if (applyInProgress || liveEditApplying || liveEditPending || presetEditorLoading) return false;
         PerformanceDraft? draft = TryCreateDraft();
         if (draft is null) { await PresetToolbar.ShowStatusAsync("当前值不可用，未保存"); return false; }
         if (!PresetToolbar.IsEditingPreset && (draft.TemperatureLimitC is < 45 or > 100 || draft.SplWatts is < 45 or > 75 || draft.SpptWatts is < 45 or > 75))
@@ -757,7 +766,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             await PresetToolbar.ShowStatusAsync(commandPlan.Skipped.Count == 0
                 ? "预设值已与当前可读值一致；没有提交命令"
                 : $"没有可发送项；未提交：{string.Join("、", commandPlan.Skipped)}");
-            return commandPlan.Skipped.Count == 0;
+            return ConfirmAppliedCurveMode(draft, commandPlan.Skipped.Count);
         }
 
         string acknowledgements = string.Join("、", commandPlan.Steps
@@ -804,7 +813,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             if (commandPlan.Steps.Count == 0)
             {
                 await PresetToolbar.ShowStatusAsync("性能参数已与当前可读值一致");
-                return commandPlan.Skipped.Count == 0;
+                return ConfirmAppliedCurveMode(draft, commandPlan.Skipped.Count);
             }
 
             // Status animation must not delay the hardware transaction or its confirmed mode.
@@ -841,7 +850,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                 (acknowledgements.Length == 0 ? "。可读回字段已核对。" : $"；{acknowledgements}仅服务确认接受，未读回实际设置。") +
                 (commandPlan.Skipped.Count == 0 ? "" : " 预设仍标记为未完整应用。");
             _ = PresetToolbar.ShowStatusAsync(feedback);
-            return commandPlan.Skipped.Count == 0;
+            return ConfirmAppliedCurveMode(draft, commandPlan.Skipped.Count);
         }
         catch
         {
@@ -855,6 +864,14 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             SetInteractionAvailability(currentState is not null);
             if (!PresetToolbar.IsEditingPreset && liveEditPending) liveEditTimer.Start();
         }
+    }
+
+    private bool ConfirmAppliedCurveMode(PerformanceDraft draft, int skipped)
+    {
+        if (skipped != 0) return false;
+        liveCurveMode = draft.AdvancedCpuTuning?.ResolveCurveOptimizerMode(draft.NegativeCurveOptimizer)
+            ?? (draft.NegativeCurveOptimizer.HasValue ? CpuCurveOptimizerMode.AllCore : CpuCurveOptimizerMode.Bios);
+        return true;
     }
 
     private PerformancePresetCommandPlan CreateLiveEditCommandPlan(PerformanceDraft draft, CpuTuningState state)
@@ -1053,6 +1070,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     {
         if (!synchronizing && CurveModeSelector.SelectedIndex is >= 0 and <= 2)
         {
+            if (!PresetToolbar.IsEditingPreset) liveCurveMode = (CpuCurveOptimizerMode)CurveModeSelector.SelectedIndex;
             AdvancedWorkspace.SelectCurveMode((CpuCurveOptimizerMode)CurveModeSelector.SelectedIndex);
             if (CurveModeSelector.SelectedIndex == 2) _ = ShowAdvancedAnimatedAsync(true);
         }
@@ -1191,12 +1209,12 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         bool allCore = AdvancedWorkspace.CurveMode == CpuCurveOptimizerMode.AllCore;
         double curve = AdvancedWorkspace.AllCoreCurveValue;
         CurveModeSelector.SelectedIndex = (int)AdvancedWorkspace.CurveMode;
-        CurveOptimizerRow.SetValue(curve);
+        CurveOptimizerRow.SetValue(PresetToolbar.IsEditingPreset || liveEditPending || liveEditApplying || liveCurveReadbackKnown ? curve : null);
         CurveOptimizerRow.SetDescription(allCore
             ? "全核负偏移"
             : AdvancedWorkspace.CurveMode == CpuCurveOptimizerMode.PerCore ? "逐核偏移" : "沿用 BIOS");
-        CurveOptimizerRow.SetEditorEnabled(allCore && curveOptimizerCapabilityAvailable && !applyInProgress);
-        CurveModeSelector.IsEnabled = curveOptimizerCapabilityAvailable && !applyInProgress;
+        CurveOptimizerRow.SetEditorEnabled(allCore && curveOptimizerCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading);
+        CurveModeSelector.IsEnabled = curveOptimizerCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading;
         synchronizing = wasSynchronizing;
         CpuBoundary.ApplyLimits(
             currentState?.TemperatureLimitC,

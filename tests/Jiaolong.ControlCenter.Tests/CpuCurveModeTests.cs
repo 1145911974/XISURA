@@ -35,6 +35,38 @@ public sealed class CpuCurveModeTests
         Assert.IsNull(plan.NegativeCurveOptimizer);
         Assert.AreEqual(-12, plan.Advanced!.CurveOptimizerAll);
         Assert.IsNull(plan.Advanced.PerCoreCurveOptimizer);
+        var mapper = typeof(AdvancedCpuTuningDraft).GetMethod("FromCurveReadback");
+        Assert.IsNotNull(mapper, "Live curve refresh must reconstruct the verified hardware values");
+        var values = Enumerable.Range(0, 8).ToDictionary(core => core, _ => -12);
+        var state = new CpuTuningState(85, 45, 65, 4200, true, 8, null, -12, "hardwareReadback")
+            { PerCoreCurveOptimizer = values };
+        AdvancedCpuTuningDraft Read(CpuTuningState? input, CpuCurveOptimizerMode? mode) =>
+            (AdvancedCpuTuningDraft)mapper.Invoke(null, [input, mode])!;
+        var actual = Read(state, CpuCurveOptimizerMode.AllCore);
+        Assert.AreEqual(CpuCurveOptimizerMode.AllCore, actual.CurveOptimizerMode);
+        Assert.AreEqual(-12, actual.CurveOptimizerAll);
+        Assert.AreEqual(-12, actual.PerCoreCurveOptimizer![7]);
+        Assert.AreEqual(CpuCurveOptimizerMode.AllCore, Read(state, null).CurveOptimizerMode);
+        Assert.AreEqual(CpuCurveOptimizerMode.Bios, Read(state, CpuCurveOptimizerMode.Bios).CurveOptimizerMode);
+        var zero = state with { PerCoreCurveOptimizer = values.ToDictionary(pair => pair.Key, _ => 0) };
+        Assert.AreEqual(CpuCurveOptimizerMode.AllCore, Read(zero, CpuCurveOptimizerMode.AllCore).CurveOptimizerMode);
+        Assert.AreEqual(0, Read(zero, CpuCurveOptimizerMode.AllCore).CurveOptimizerAll);
+        Assert.AreEqual(CpuCurveOptimizerMode.Bios, Read(zero, null).CurveOptimizerMode);
+        Assert.AreEqual(CpuCurveOptimizerMode.PerCore, Read(state, CpuCurveOptimizerMode.PerCore).CurveOptimizerMode);
+        var mixed = state with { PerCoreCurveOptimizer = values.ToDictionary(pair => pair.Key, pair => pair.Key == 7 ? -5 : pair.Value) };
+        Assert.AreEqual(CpuCurveOptimizerMode.PerCore, Read(mixed, CpuCurveOptimizerMode.AllCore).CurveOptimizerMode);
+        Assert.AreEqual(-5, Read(mixed, null).PerCoreCurveOptimizer![7]);
+        foreach (var unknown in new[] { null, state with { CurveOptimizerVerification = "cached" },
+            state with { PerCoreCurveOptimizer = new Dictionary<int, int> { [0] = -12 } },
+            state with { PerCoreCurveOptimizer = values.ToDictionary(pair => pair.Key, _ => -31) } })
+        {
+            var waiting = Read(unknown, CpuCurveOptimizerMode.AllCore);
+            Assert.AreEqual(CpuCurveOptimizerMode.AllCore, waiting.CurveOptimizerMode);
+            Assert.IsNull(waiting.CurveOptimizerAll);
+            Assert.IsNull(waiting.PerCoreCurveOptimizer);
+        }
+        values[7] = -3;
+        Assert.AreEqual(-12, actual.PerCoreCurveOptimizer[7], "Hardware arrays must not mutate the editor snapshot");
     }
 
     [TestMethod]
