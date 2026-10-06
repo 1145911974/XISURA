@@ -13,3 +13,5 @@ MSI：XISURA-1.0.69-x64.msi，184127532 bytes。
 SHA256：071b5bd38e5dbbb4725b5b272c927d44314bacebc9d1d2dd61c4071036ee6938。
 
 临时目录/验收文件因此前自动审批“策略阻止”未清理；安装包与校验文件保留供交付/回滚。
+
+发布：https://github.com/1145911974/XISURA/releases/tag/v1.0.69；isDraft=false，MSI/校验文件远端大小及 SHA256 与本地匹配。
