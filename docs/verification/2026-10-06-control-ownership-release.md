@@ -15,3 +15,7 @@
 
 MSI：XISURA-1.0.70-x64.msi，182451552 bytes。
 SHA256：e84e66a3fd84a49bcbebd627c6850a07f8111e72c71cd3181302a17262d34e5e。
+
+发布：https://github.com/1145911974/XISURA/releases/tag/v1.0.70；isDraft=false。远端 MSI/校验文件大小与 SHA256 均匹配本地。
+
+清理本轮临时构建载荷、截图、日志的命令被执行环境以 “blocked by policy” 拒绝；没有重试或绕过。源文件、安装包与校验文件保留，临时产物仍在 C:。
