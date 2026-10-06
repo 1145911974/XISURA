@@ -13,6 +13,41 @@ namespace Jiaolong.Service.Tests;
 public sealed class HomeServiceRuntimeTests
 {
     [TestMethod]
+    public async Task Successful_followed_control_refreshes_state_without_repeating_device_diagnosis()
+    {
+        var provider = new FakeProvider(AvailableState("quickSetting:fnLock"));
+        var runtime = new HomeServiceRuntime(provider);
+        var result = await runtime.ExecuteAsync(new SetQuickSettingCommand(Guid.NewGuid(), QuickSettingKind.FnLock, true), CancellationToken.None);
+        Assert.AreEqual(CommandState.Applied, result.State);
+        Assert.AreEqual(1, provider.DiagnoseCount);
+        Assert.AreEqual(1, provider.ReadControlsCount);
+    }
+
+    [TestMethod]
+    public async Task Verified_mode_reply_does_not_wait_for_monitor_refresh()
+    {
+        var sensorRead = new TaskCompletionSource<HardwareSnapshot>();
+        var provider = new FakeProvider(AvailableState("performanceMode"))
+        {
+            VerifiedMode = PerformanceMode.Balanced,
+            PendingTelemetry = sensorRead.Task
+        };
+        var runtime = new HomeServiceRuntime(provider);
+        var operation = runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), CancellationToken.None);
+        try
+        {
+            Assert.IsTrue(operation.IsCompletedSuccessfully, "A verified mode must not wait for unrelated sensors.");
+            Assert.AreEqual(PerformanceMode.Balanced, (await runtime.GetStateAsync(CancellationToken.None)).Controls.PerformanceMode);
+            Assert.AreEqual(0, provider.ReadTelemetryCount);
+        }
+        finally
+        {
+            sensorRead.TrySetResult(new(DateTimeOffset.UtcNow, "normal", 50, 40, 20, 10));
+            await operation;
+        }
+    }
+
+    [TestMethod]
     public async Task Invalid_command_metadata_returns_an_error_without_touching_hardware()
     {
         var provider = new FakeProvider(AvailableState("performanceMode"));
@@ -411,6 +446,8 @@ public sealed class HomeServiceRuntimeTests
         public bool ReinitializeSucceeds { get; init; } = true;
         public HomeControlState LiveControls { get; set; } = state.Controls;
         public HardwareSnapshot? LiveTelemetry { get; set; }
+        public PerformanceMode? VerifiedMode { get; init; }
+        public Task<HardwareSnapshot>? PendingTelemetry { get; init; }
 
         public Task<HomeHardwareState> DiagnoseAsync(CancellationToken cancellationToken)
         {
@@ -432,6 +469,7 @@ public sealed class HomeServiceRuntimeTests
         public Task<HardwareSnapshot> ReadTelemetryAsync(CancellationToken cancellationToken)
         {
             ReadTelemetryCount++;
+            if (PendingTelemetry is not null) return PendingTelemetry;
             return Task.FromResult(LiveTelemetry ?? State.Telemetry ?? new HardwareSnapshot(DateTimeOffset.UtcNow, "unknown", null, null, null, null));
         }
 
@@ -445,7 +483,8 @@ public sealed class HomeServiceRuntimeTests
         {
             ExecuteCount++;
             LastCommand = command;
-            return Task.FromResult(new CommandResult(command.OperationId, ResultState, State.Telemetry, RequiredUserAction.None, null, false));
+            return Task.FromResult(new CommandResult(command.OperationId, ResultState, State.Telemetry, RequiredUserAction.None, null, false)
+                { VerifiedPerformanceMode = VerifiedMode });
         }
     }
 }

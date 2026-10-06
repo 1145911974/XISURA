@@ -923,7 +923,7 @@ public sealed partial class PrototypeWindow : Window
         trayQuickConsole?.ApplyState(snapshot);
         RefreshTrayFanState(snapshot);
 
-        if (!customActivationPending && !isModeCommandPending && snapshot.Controls.PerformanceMode is PerformanceMode hardwareMode)
+        if (queuedModeRequest is null && !customActivationPending && !isModeCommandPending && snapshot.Controls.PerformanceMode is PerformanceMode hardwareMode)
         {
             var actualMode = PrototypeModeCommandCoordinator.Map(HasConfirmedPerformanceIdentity(snapshot)
                 ? AdaptiveTargetMap.PerformanceModeFor(confirmedPerformancePreset!.Value) : hardwareMode);
@@ -1195,28 +1195,42 @@ public sealed partial class PrototypeWindow : Window
     private async void OnModeRequested(PrototypePerformanceMode mode)
     {
         if (allowClose) return;
+        int revision = ++manualModeRevision;
+        pendingModePresetCancellation?.Cancel();
+        var controlMode = mode switch
+        {
+            PrototypePerformanceMode.Office => ControlModeId.Office,
+            PrototypePerformanceMode.Turbo => ControlModeId.Turbo,
+            PrototypePerformanceMode.Custom => customProfile switch
+            {
+                "Profile2" => ControlModeId.Custom2,
+                "Profile3" => ControlModeId.Custom3,
+                _ => ControlModeId.Custom1
+            },
+            _ => ControlModeId.Gaming
+        };
         queuedTurboTier = null;
         if (customActivationPending || isModeCommandPending)
         {
             queuedModeRequest = mode;
+            PreviewModeVisuals(controlMode);
             return;
         }
         queuedModeRequest = null;
-        int revision = ++manualModeRevision;
         if (mode == PrototypePerformanceMode.Custom)
         {
             OnCustomProfileRequested(customProfile);
             return;
         }
-        var controlMode = mode switch
-        {
-            PrototypePerformanceMode.Office => ControlModeId.Office,
-            PrototypePerformanceMode.Turbo => ControlModeId.Turbo,
-            _ => ControlModeId.Gaming
-        };
         var key = RememberedPerformancePreset(controlMode);
         if (!appliedMode.ShouldApply(mode) &&
-            !(key.HasValue && PerformanceWorkspaceV2Preview.IsFollowingPreset)) return;
+            !(key.HasValue && PerformanceWorkspaceV2Preview.IsFollowingPreset))
+        {
+            PublishConfirmedMode(controlMode, confirmedPerformancePreset, animate: true);
+            RestoreConfirmedModeVisuals();
+            return;
+        }
+        PreviewModeVisuals(controlMode);
         if (!await PauseAdaptiveForManualControlAsync() || revision != manualModeRevision) return;
         if (!key.HasValue)
         {
@@ -1226,7 +1240,7 @@ public sealed partial class PrototypeWindow : Window
         }
         if (key.HasValue && PerformanceWorkspaceV2Preview.IsFollowingPreset && !isModeCommandPending)
         {
-            modeCommandTask = ApplyOfficialModeWithPresetAsync(mode, controlMode, key.Value);
+            modeCommandTask = ApplyOfficialModeWithPresetAsync(mode, controlMode, key.Value, revision);
             return;
         }
         if (!appliedMode.ShouldApply(mode) && !isModeCommandPending) return;
@@ -1236,8 +1250,10 @@ public sealed partial class PrototypeWindow : Window
     }
 
     private async Task ApplyOfficialModeWithPresetAsync(
-        PrototypePerformanceMode mode, ControlModeId controlMode, PresetKey preset)
+        PrototypePerformanceMode mode, ControlModeId controlMode, PresetKey preset, int revision)
     {
+        using var presetPreparation = new CancellationTokenSource();
+        pendingModePresetCancellation = presetPreparation;
         isModeCommandPending = true;
         HomeModeBar.IsCommandPending = true;
         trayQuickConsole?.SetModeBusy(true);
@@ -1247,9 +1263,21 @@ public sealed partial class PrototypeWindow : Window
         try
         {
             await ExitTurboBranchAsync(lifetimeCancellation.Token);
+            if (revision != manualModeRevision) return;
             // A mode-button click first has the same hardware meaning as the keyboard mode key.
             // The optional preset is a separate transaction whose rollback starts at this mode.
             var outcome = await modeCommands.ApplyAsync(mode, lifetimeCancellation.Token);
+            if (revision != manualModeRevision)
+            {
+                // Keep the actual acknowledgement for the next request, without replacing its preview.
+                if (outcome.Applied && homeSession.State?.Controls.PerformanceMode == outcome.ContractMode)
+                {
+                    state.Mode = PrototypeModeCommandCoordinator.Map(outcome.ContractMode);
+                    appliedMode.Confirm(state.Mode);
+                }
+                modeReconciliation.Reject(request);
+                return;
+            }
             if (!outcome.Applied || homeSession.State is not { } confirmed ||
                 confirmed.Controls.PerformanceMode != outcome.ContractMode)
             {
@@ -1265,7 +1293,9 @@ public sealed partial class PrototypeWindow : Window
             PublishConfirmedMode(controlMode, null, animate: true);
             RequestModeVisuals(mode, animate: true);
 
-            if (!await ApplyPerformancePresetAsync(preset))
+            if (!await ApplyPerformancePresetAsync(preset, isCurrentRequest: () => revision == manualModeRevision,
+                queueCancellationToken: presetPreparation.Token) &&
+                revision == manualModeRevision)
             {
                 // Never reapply the old mode or claim an unverified preset after its failure.
                 var observed = homeSession.State?.Controls.PerformanceMode;
@@ -1288,6 +1318,7 @@ public sealed partial class PrototypeWindow : Window
         }
         finally
         {
+            if (ReferenceEquals(pendingModePresetCancellation, presetPreparation)) pendingModePresetCancellation = null;
             isModeCommandPending = false;
             HomeModeBar.IsCommandPending = false;
             trayQuickConsole?.SetModeBusy(false);
@@ -1342,6 +1373,16 @@ public sealed partial class PrototypeWindow : Window
                 }
 
                 var outcome = await modeCommands.ApplyAsync(request.Mode, lifetimeCancellation.Token);
+                if (queuedModeRequest is not null || queuedTurboTier is not null)
+                {
+                    if (outcome.Applied && homeSession.State?.Controls.PerformanceMode == outcome.ContractMode)
+                    {
+                        state.Mode = PrototypeModeCommandCoordinator.Map(outcome.ContractMode);
+                        appliedMode.Confirm(state.Mode);
+                    }
+                    modeReconciliation.Reject(request);
+                    return;
+                }
                 if (!outcome.Applied)
                 {
                     if (!modeReconciliation.IsCurrent(request)) continue;
@@ -1393,6 +1434,22 @@ public sealed partial class PrototypeWindow : Window
 
     private void RestoreConfirmedModeVisuals()
     {
+        if (queuedModeRequest is { } queued)
+        {
+            PreviewModeVisuals(queued switch
+            {
+                PrototypePerformanceMode.Office => ControlModeId.Office,
+                PrototypePerformanceMode.Turbo => ControlModeId.Turbo,
+                PrototypePerformanceMode.Custom => customProfile switch
+                {
+                    "Profile2" => ControlModeId.Custom2,
+                    "Profile3" => ControlModeId.Custom3,
+                    _ => ControlModeId.Custom1
+                },
+                _ => ControlModeId.Gaming
+            });
+            return;
+        }
         RequestModeVisuals(state.Mode, animate: true);
         Hero.SetBrandingState(userPreferences.LogoStyle, confirmedControlMode, animate: true);
         trayQuickConsole?.PreviewSelection(null);
@@ -1488,7 +1545,8 @@ public sealed partial class PrototypeWindow : Window
         customActivationTask = ApplyPerformancePresetAsync(key.Value);
     }
 
-    private async Task<bool> ApplyPerformancePresetAsync(PresetKey key)
+    private async Task<bool> ApplyPerformancePresetAsync(PresetKey key, Func<bool>? isCurrentRequest = null,
+        CancellationToken queueCancellationToken = default)
     {
         if (key.Mode == ControlModeId.Turbo && turboBranch?.ActiveTier is not null)
         {
@@ -1497,6 +1555,7 @@ public sealed partial class PrototypeWindow : Window
         }
         PresetKey.Create(key.Mode, key.Slot);
         if (!await PauseAdaptiveForManualControlAsync()) return false;
+        if (isCurrentRequest?.Invoke() == false) return false;
         var targetMode = AdaptiveTargetMap.PerformanceModeFor(key);
         homeSession.SupersedeAutomaticRestore();
         customActivationPending = true;
@@ -1515,7 +1574,9 @@ public sealed partial class PrototypeWindow : Window
                 return false;
             }
             // The service applies and verifies the complete CPU preset as one transaction.
-            bool applied = await PerformanceWorkspaceV2Preview.ApplyStoredPresetAsync(key, root);
+            bool applied = await PerformanceWorkspaceV2Preview.ApplyStoredPresetAsync(key, root, isCurrentRequest: isCurrentRequest,
+                queueCancellationToken: queueCancellationToken);
+            if (isCurrentRequest?.Invoke() == false) return false;
             if (!applied)
             {
                 if (trayQuickConsole?.AppWindow.IsVisible == true)
@@ -1545,8 +1606,8 @@ public sealed partial class PrototypeWindow : Window
         finally
         {
             customActivationPending = false;
-            HomeModeBar.IsCommandPending = false;
-            trayQuickConsole?.SetModeBusy(false);
+            HomeModeBar.IsCommandPending = isModeCommandPending;
+            trayQuickConsole?.SetModeBusy(isModeCommandPending);
             if (homeSession.State is { } current) ApplyHomeState(current);
             RestoreConfirmedModeVisuals();
             ResumeQueuedModeRequest();
@@ -1567,6 +1628,8 @@ public sealed partial class PrototypeWindow : Window
     private void OnTurboTierRequested(string tier)
     {
         if (allowClose || tier is not ("Normal" or "Quiet" or "Extreme")) return;
+        ++manualModeRevision;
+        pendingModePresetCancellation?.Cancel();
         queuedModeRequest = null;
         if (customActivationPending || isModeCommandPending)
         {
@@ -1579,6 +1642,7 @@ public sealed partial class PrototypeWindow : Window
     }
 
     private int manualModeRevision;
+    private CancellationTokenSource? pendingModePresetCancellation;
     private Task<bool>? manualPauseTask;
     private Task<bool> PauseAdaptiveForManualControlAsync()
     {

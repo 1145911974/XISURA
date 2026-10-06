@@ -29,6 +29,7 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
     private Channel<HardwareSnapshot> telemetryChannel = CreateTelemetryChannel();
 
     public ControlCenterClient(string? pipeName = null) => this.pipeName = string.IsNullOrWhiteSpace(pipeName) ? PipeName : pipeName;
+    internal ControlCenterClient CreatePeer() => new(pipeName);
 
     public async Task ConnectAsync(CancellationToken cancellationToken)
     {

@@ -13,6 +13,93 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class HomeControlSessionTests
 {
     [TestMethod]
+    public async Task Mode_peer_bypasses_blocked_monitor_poll_and_keeps_newer_readback()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        string pipeName = "Jiaolong-priority-mode-" + Guid.NewGuid().ToString("N");
+        await using var normal = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 2, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        await using var priority = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 2, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        var pollEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var staleReplySent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task WriteAsync(NamedPipeServerStream stream, MessageEnvelope envelope)
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJsonContext.Default.MessageEnvelope);
+            await stream.WriteAsync(BitConverter.GetBytes(bytes.Length), deadline.Token);
+            await stream.WriteAsync(bytes, deadline.Token);
+            await stream.FlushAsync(deadline.Token);
+        }
+        async Task ServeAsync(NamedPipeServerStream stream, bool modeConnection)
+        {
+            int polls = 0;
+            try
+            {
+                await stream.WaitForConnectionAsync(deadline.Token);
+                while (!deadline.IsCancellationRequested)
+                {
+                    var prefix = new byte[4];
+                    await stream.ReadExactlyAsync(prefix, deadline.Token);
+                    var bytes = new byte[BinaryPrimitives.ReadInt32LittleEndian(prefix)];
+                    await stream.ReadExactlyAsync(bytes, deadline.Token);
+                    var message = JsonSerializer.Deserialize(bytes, ProtocolJsonContext.Default.MessageEnvelope)!;
+                    if (message is HelloEnvelope hello)
+                    {
+                        await WriteAsync(stream, new HelloAckEnvelope(new(1, 0), Guid.NewGuid(), DateTimeOffset.UtcNow, hello.MessageId, "test"));
+                        continue;
+                    }
+                    if (message is not RequestEnvelope request) continue;
+                    JsonElement payload;
+                    if (request.Operation == "executeCommand" && modeConnection)
+                    {
+                        payload = JsonSerializer.SerializeToElement(new CommandResult(request.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
+                            { VerifiedPerformanceMode = PerformanceMode.Turbo }, ProtocolJsonContext.Default.CommandResult);
+                    }
+                    else if (request.Operation == "getDeviceState")
+                    {
+                        polls++;
+                        if (polls == 2) { pollEntered.TrySetResult(); await releasePoll.Task.WaitAsync(deadline.Token); }
+                        payload = JsonSerializer.SerializeToElement(CreateState(polls <= 2 ? PerformanceMode.Quiet : PerformanceMode.Turbo), ProtocolJsonContext.Default.HomeStateSnapshot);
+                    }
+                    else payload = JsonSerializer.SerializeToElement(true);
+                    await WriteAsync(stream, new ResponseEnvelope(new(1, 0), Guid.NewGuid(), DateTimeOffset.UtcNow, request.MessageId, request.OperationId, ResponseStatus.Success, payload, null));
+                    if (polls == 2 && request.Operation == "getDeviceState") staleReplySent.TrySetResult();
+                }
+            }
+            catch (Exception error) when (error is OperationCanceledException or EndOfStreamException or IOException) { }
+        }
+        var normalServer = ServeAsync(normal, false);
+        var modeServer = ServeAsync(priority, true);
+        var paths = new RecordingPathProvider();
+        await using var session = new HomeControlSession(new ControlCenterClient(pipeName), new RecordingRadioController(), new AppliedConfigurationRestore(paths));
+        try
+        {
+            await session.StartAsync(deadline.Token);
+            session.SupersedeAutomaticRestore();
+            await pollEntered.Task.WaitAsync(deadline.Token);
+            var result = await session.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Turbo), deadline.Token).WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.AreEqual(CommandState.Applied, result.State);
+            Assert.AreEqual(PerformanceMode.Turbo, session.State!.Controls.PerformanceMode);
+            Assert.IsFalse(releasePoll.Task.IsCompleted);
+            using var preparation = new CancellationTokenSource();
+            var queuedPreset = session.ExecuteAsync(new SetCpuTuningBatchCommand(Guid.NewGuid(),
+                [new CpuTuningPlan(85, null, null, null, null, null, null, null)], true), deadline.Token, preparation.Token);
+            preparation.Cancel();
+            await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => queuedPreset);
+            Assert.AreEqual(HomeSessionStatus.Connected, session.Status);
+            releasePoll.TrySetResult();
+            await staleReplySent.Task.WaitAsync(deadline.Token);
+            await Task.Delay(100, deadline.Token);
+            Assert.AreEqual(PerformanceMode.Turbo, session.State.Controls.PerformanceMode);
+        }
+        finally
+        {
+            releasePoll.TrySetResult();
+            deadline.Cancel();
+            await Task.WhenAll(normalServer, modeServer);
+        }
+    }
+
+    [TestMethod]
     public async Task Failed_control_read_recovers_after_startup_restore_is_superseded()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));

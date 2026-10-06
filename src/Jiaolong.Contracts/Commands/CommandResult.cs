@@ -28,7 +28,11 @@ public sealed record CommandResult(
     HardwareSnapshot? VerifiedState,
     RequiredUserAction RequiredAction,
     ServiceError? Error,
-    bool IsReplay);
+    bool IsReplay)
+{
+    // Present only when the firmware mode was read back after the write; older services omit it.
+    public PerformanceMode? VerifiedPerformanceMode { get; init; }
+}
 
 public static class CommandValidation
 {

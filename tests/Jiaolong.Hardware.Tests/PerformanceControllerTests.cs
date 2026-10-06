@@ -10,6 +10,27 @@ namespace Jiaolong.Hardware.Tests;
 public sealed class PerformanceControllerTests
 {
     [TestMethod]
+    public async Task Batch_skips_confirmed_equal_values_but_rechecks_after_native_mode_reset()
+    {
+        var unchanged = new CpuTuningFixture(CpuTuningField.SplWatts);
+        var plan = new CpuTuningPlan(null, null, null, 4500, true, null, null, null);
+        var result = await unchanged.Controller.ApplyCpuTuningBatchAsync([plan], true, CancellationToken.None);
+        Assert.AreEqual(CommandState.Applied, result.State);
+        Assert.AreEqual(0, unchanged.WriteCount);
+        Assert.IsTrue(result.HardwareReadBackConfirmed);
+
+        var reset = new CpuTuningFixture(CpuTuningField.SplWatts);
+        result = await reset.Controller.ApplyCpuTuningBatchAsync([plan], true, CancellationToken.None,
+            prepareNativeMode: _ => { reset.SimulateNativeCpuReset(); return Task.CompletedTask; },
+            restoreNativeMode: _ => Task.CompletedTask,
+            verifyNativeMode: _ => Task.FromResult(true));
+        Assert.AreEqual(CommandState.Applied, result.State);
+        Assert.AreEqual(2, reset.WriteCount);
+        Assert.AreEqual(new WindowsPowerFrequencyValue(4500, 4500), reset.CurrentValues[CpuTuningField.MaxFrequencyMhz]);
+        Assert.AreEqual(true, reset.CurrentValues[CpuTuningField.BoostEnabled]);
+    }
+
+    [TestMethod]
     public async Task Each_cpu_field_snapshots_and_rolls_back_without_touching_other_fields()
     {
         foreach (var field in CpuTuningFixture.IndependentlyWritableFields)

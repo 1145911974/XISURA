@@ -215,6 +215,12 @@ public sealed class PerformanceController(
             foreach (var (field, value) in requested)
             {
                 failureStage = field.ToString();
+                // Firmware mode selection may reset values: compare fresh readback, not the rollback snapshot.
+                if (cpuTransport.IsReadBackRequired(field) &&
+                    cpuTransport.IsReadBackMatch(field, value,
+                        prepareNativeMode is not null || attempted.Count > 0
+                            ? await cpuTransport.ReadFieldAsync(field, cancellationToken) : snapshots[field]))
+                    continue;
                 attempted.Add(field);
                 await cpuTransport.WriteFieldAsync(field, value, cancellationToken);
                 if (!cpuTransport.IsReadBackRequired(field))

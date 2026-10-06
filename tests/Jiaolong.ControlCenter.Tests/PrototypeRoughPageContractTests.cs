@@ -8,6 +8,21 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class PrototypeRoughPageContractTests
 {
     [TestMethod]
+    public void Latest_mode_click_previews_immediately_and_supersedes_unstarted_presets()
+    {
+        var code = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.xaml.cs");
+        var workspace = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "PerformanceWorkspaceV2.xaml.cs");
+        var request = code[code.IndexOf("private async void OnModeRequested", StringComparison.Ordinal)..];
+        var queued = request[request.IndexOf("queuedModeRequest = mode;", StringComparison.Ordinal)..request.IndexOf("queuedModeRequest = null;", StringComparison.Ordinal)];
+        StringAssert.Contains(queued, "PreviewModeVisuals(controlMode);");
+        Assert.IsTrue(request.IndexOf("PreviewModeVisuals(controlMode);", StringComparison.Ordinal) <
+            request.IndexOf("await PauseAdaptiveForManualControlAsync()", StringComparison.Ordinal));
+        StringAssert.Contains(code, "if (revision != manualModeRevision) return;");
+        StringAssert.Contains(code, "isCurrentRequest: () => revision == manualModeRevision");
+        StringAssert.Contains(workspace, "if (isCurrentRequest?.Invoke() == false) return false;");
+    }
+
+    [TestMethod]
     public void Prototype_shell_routes_every_non_home_page_through_the_rough_workspace()
     {
         var shell = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.xaml");

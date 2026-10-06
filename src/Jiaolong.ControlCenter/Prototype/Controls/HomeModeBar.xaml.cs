@@ -109,6 +109,9 @@ public sealed partial class HomeModeBar : UserControl
     {
         currentMotion = motion;
         var mode = theme.Mode;
+        foreach (var button in modeIcons.Keys)
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button,
+                button.Tag?.ToString() == mode.ToString() ? "Selected" : "Unselected");
         var plan = indicatorTransitions.BeginMode(mode, motion, animate);
         TransitionCardSurfaces(theme, !plan.Snap, cardDuration);
         ApplyPersistedChildSelections(plan);

@@ -23,7 +23,7 @@ public interface IHomeHardwareProvider
     Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken);
 }
 
-public sealed class HomeServiceRuntime(IHomeHardwareProvider provider)
+public sealed class HomeServiceRuntime(IHomeHardwareProvider provider, Jiaolong.Diagnostics.IDiagnosticEventWriter? diagnostics = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly SemaphoreSlim fanGate = new(1, 1);
@@ -125,10 +125,14 @@ public sealed class HomeServiceRuntime(IHomeHardwareProvider provider)
             if (!CanExecute(command, current)) return Rejected(command, ErrorFor(current));
         }
 
+        var commandClock = System.Diagnostics.Stopwatch.StartNew();
         var result = await provider.ExecuteAsync(command, cancellationToken);
+        long applyMs = commandClock.ElapsedMilliseconds;
         if (result.Error is null || !result.Error.IsRetryable)
         {
             await RefreshCommandStateAsync(command, result, cancellationToken);
+            if (command is SetPerformanceModeCommand or SetCpuTuningBatchCommand)
+                _ = RecordModeTimingAsync(command, result, applyMs, commandClock.ElapsedMilliseconds - applyMs);
             return result;
         }
 
@@ -139,11 +143,37 @@ public sealed class HomeServiceRuntime(IHomeHardwareProvider provider)
         return result;
     }
 
+    private async Task RecordModeTimingAsync(HardwareCommand command, CommandResult result, long applyMs, long refreshMs)
+    {
+        if (diagnostics is null) return;
+        try
+        {
+            await diagnostics.WriteAsync(new Jiaolong.Diagnostics.DiagnosticEvent
+            {
+                TimestampUtc = DateTimeOffset.UtcNow,
+                EventName = result.Error is null ? Jiaolong.Diagnostics.DiagnosticEventNames.CommandApplied : Jiaolong.Diagnostics.DiagnosticEventNames.CommandRejected,
+                OperationId = command.OperationId,
+                Operation = command.GetType().Name,
+                DurationMs = (int)Math.Min(int.MaxValue, applyMs + refreshMs),
+                Fields = new Dictionary<string, string> { ["applyMs"] = applyMs.ToString(), ["refreshMs"] = refreshMs.ToString() }
+            }, CancellationToken.None);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
     private async Task RefreshCommandStateAsync(HardwareCommand command, CommandResult result, CancellationToken cancellationToken)
     {
         // Context heartbeats do not change hardware; probing drivers here stalls every scheduling tick.
         if (command is SetAdaptiveAutomationConfigurationCommand or UpdateAdaptiveAutomationContextCommand) return;
-        if (result.State == CommandState.Applied && result.Error is null && command is (SetPerformanceModeCommand or SetCpuTuningCommand or SetCpuTuningBatchCommand))
+        if (command is SetPerformanceModeCommand mode && result is { State: CommandState.Applied, Error: null } &&
+            result.VerifiedPerformanceMode == mode.Mode)
+        {
+            var current = await GetStateAsync(cancellationToken);
+            Volatile.Write(ref state, current with { Controls = current.Controls with { PerformanceMode = mode.Mode } });
+            return;
+        }
+        // A successful setting write does not require re-probing device identity and dependencies.
+        if (result.State == CommandState.Applied && result.Error is null)
         {
             await GetHomeStateAsync(cancellationToken);
             return;

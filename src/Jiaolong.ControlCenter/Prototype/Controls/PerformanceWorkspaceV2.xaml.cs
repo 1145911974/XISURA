@@ -657,7 +657,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     public async Task<bool> ApplyStoredPresetAsync(
         PresetKey key,
         XamlRoot confirmationRoot,
-        Func<Task<bool>>? beforeApply = null)
+        Func<Task<bool>>? beforeApply = null,
+        Func<bool>? isCurrentRequest = null,
+        CancellationToken queueCancellationToken = default)
     {
         PresetKey.Create(key.Mode, key.Slot);
         if (applyInProgress)
@@ -697,7 +699,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             return false;
         }
 
-        bool applied = await ApplySavedDraftAsync(draft, confirmationRoot, beforeApply, requireComplete: true, presetKey: key);
+        if (isCurrentRequest?.Invoke() == false) return false;
+        bool applied = await ApplySavedDraftAsync(draft, confirmationRoot, beforeApply, requireComplete: true, presetKey: key,
+            isCurrentRequest: isCurrentRequest, queueCancellationToken: queueCancellationToken);
         if (applied)
         {
             lastSubmittedPresetKey = key;
@@ -714,7 +718,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         XamlRoot confirmationRoot,
         Func<Task<bool>>? beforeApply = null,
         bool requireComplete = false,
-        PresetKey? presetKey = null)
+        PresetKey? presetKey = null,
+        Func<bool>? isCurrentRequest = null,
+        CancellationToken queueCancellationToken = default)
     {
         if (applyInProgress || session is null || currentState is null ||
             !PerformanceCommandFactory.HasPresetTargets(draft))
@@ -817,12 +823,13 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             }
 
             // Status animation must not delay the hardware transaction or its confirmed mode.
+            if (isCurrentRequest?.Invoke() == false) return false;
             _ = PresetToolbar.ShowStatusAsync("正在应用完整预设");
             inFlight = "完整性能预设";
             var batch = new SetCpuTuningBatchCommand(Guid.NewGuid(), commandPlan.Steps
                 .Select(step => ((SetCpuTuningCommand)step.Command).Plan).ToArray(), true)
             { NativeMode = nativeMode };
-            CommandResult result = await session.ExecuteAsync(batch, CancellationToken.None);
+            CommandResult result = await session.ExecuteAsync(batch, CancellationToken.None, queueCancellationToken);
             if (result.State != CommandState.Applied || result.Error is not null)
             {
                 AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Performance preset batch: {JsonSerializer.Serialize(result)}\n");
@@ -851,6 +858,11 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                 (commandPlan.Skipped.Count == 0 ? "" : " 预设仍标记为未完整应用。");
             _ = PresetToolbar.ShowStatusAsync(feedback);
             return ConfirmAppliedCurveMode(draft, commandPlan.Skipped.Count);
+        }
+        catch (OperationCanceledException) when (queueCancellationToken.IsCancellationRequested)
+        {
+            _ = PresetToolbar.SetDirtyStatusAsync(false);
+            return false; // Superseded before submission; an in-flight transaction is never cancelled here.
         }
         catch
         {

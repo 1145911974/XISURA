@@ -267,6 +267,7 @@ public sealed class PerformanceWorkspaceV2ContractTests
         StringAssert.Contains(toolbarCode, "ShowSavedStatusAsync");
         StringAssert.Contains(toolbarCode, "HideStatusAsync");
         StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(2)");
+        StringAssert.Contains(toolbarCode, "_ = HideStatusAfterDelayAsync(version);");
         StringAssert.Contains(toolbarCode, "statusVersion");
         StringAssert.Contains(toolbarCode, "TransitionAsync");
         StringAssert.Contains(toolbarCode, "Storyboard");

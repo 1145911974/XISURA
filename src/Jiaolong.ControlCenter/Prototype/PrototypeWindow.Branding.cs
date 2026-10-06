@@ -91,7 +91,7 @@ public sealed partial class PrototypeWindow
     {
         PublishSystemIcons();
         if (snapshot.Controls.PerformanceMode is not { } hardwareMode || customActivationPending || isModeCommandPending ||
-            modeReconciliation.Current is not null) return;
+            queuedModeRequest is not null || modeReconciliation.Current is not null) return;
         var automation = snapshot.Controls.AdaptiveAutomation;
         if (automation is { Enabled: true, Running: true, LastError: null, CurrentTarget: { } target, LastApplyUtc: { } appliedAt } &&
             (confirmedAutomaticApply is null || appliedAt > confirmedAutomaticApply) && AdaptiveTargetMap.HardwareModeFor(target) == hardwareMode)

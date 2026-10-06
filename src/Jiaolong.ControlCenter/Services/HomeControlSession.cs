@@ -23,6 +23,9 @@ public sealed class HomeControlSession : IAsyncDisposable
     public static readonly TimeSpan ControlStateRefreshInterval = TimeSpan.FromMilliseconds(100);
 
     private readonly ControlCenterClient client;
+    private readonly ControlCenterClient modeClient;
+    private readonly SemaphoreSlim modeCommandGate = new(1, 1);
+    private long modeReadbackVersion;
     private readonly IInteractiveRadioController radioController;
     private readonly AppliedConfigurationRestore automaticRestore;
     private readonly UserPreferencesStore preferences = new();
@@ -47,6 +50,7 @@ public sealed class HomeControlSession : IAsyncDisposable
         AppliedConfigurationRestore? automaticRestore = null)
     {
         this.client = client ?? new ControlCenterClient();
+        modeClient = this.client.CreatePeer();
         this.radioController = radioController ?? new WindowsInteractiveRadioController();
         this.automaticRestore = automaticRestore ?? new AppliedConfigurationRestore();
     }
@@ -92,7 +96,11 @@ public sealed class HomeControlSession : IAsyncDisposable
         finally { controlStateGate.Release(); }
     }
 
-    public async Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken)
+    public Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken) =>
+        ExecuteAsync(command, cancellationToken, CancellationToken.None);
+
+    public async Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken,
+        CancellationToken queueCancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         if (command is not (SetAdaptiveAutomationConfigurationCommand or UpdateAdaptiveAutomationContextCommand))
@@ -102,13 +110,20 @@ public sealed class HomeControlSession : IAsyncDisposable
 
         if (Status == HomeSessionStatus.Disconnected)
             await ConnectAndRefreshAsync(cancellationToken, notifyFailure: true);
+        if (command is SetPerformanceModeCommand mode)
+            return await ExecuteModeAsync(mode, cancellationToken);
 
         try
         {
-            await controlStateGate.WaitAsync(cancellationToken);
+            var commandClock = System.Diagnostics.Stopwatch.StartNew();
+            using var queueCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, queueCancellationToken);
+            await controlStateGate.WaitAsync(queueCancellation.Token);
+            long queueMs = commandClock.ElapsedMilliseconds;
             try
             {
+                queueCancellationToken.ThrowIfCancellationRequested();
                 var result = await client.SendCommandAsync(command, cancellationToken);
+                long replyMs = commandClock.ElapsedMilliseconds;
                 try
                 {
                     // A late UI cancellation must not lose an already-successful hardware application.
@@ -128,6 +143,8 @@ public sealed class HomeControlSession : IAsyncDisposable
                     await RefreshStateAsync(cancellationToken);
                 }
 
+                if (command is SetPerformanceModeCommand or SetCpuTuningBatchCommand)
+                    AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Mode command timing: {command.GetType().Name}; queueMs={queueMs}; serviceMs={replyMs - queueMs}; refreshMs={commandClock.ElapsedMilliseconds - replyMs}; state={result.State}\n");
                 return result;
             }
             finally
@@ -135,7 +152,7 @@ public sealed class HomeControlSession : IAsyncDisposable
                 controlStateGate.Release();
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || queueCancellationToken.IsCancellationRequested)
         {
             throw;
         }
@@ -151,6 +168,45 @@ public sealed class HomeControlSession : IAsyncDisposable
                 ServiceError.Create(ErrorCode.ServiceUnavailable, command.OperationId, true),
                 false);
         }
+    }
+
+    private async Task<CommandResult> ExecuteModeAsync(SetPerformanceModeCommand command, CancellationToken token)
+    {
+        await modeCommandGate.WaitAsync(token);
+        try
+        {
+            // A separate connection keeps a slow monitoring response out of the mode request's path.
+            await modeClient.ConnectAsync(token);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var result = await modeClient.SendCommandAsync(command, token);
+            long replyMs = clock.ElapsedMilliseconds;
+            if (result is { State: CommandState.Applied, Error: null } && result.VerifiedPerformanceMode == command.Mode)
+            {
+                HomeStateSnapshot? confirmed;
+                lock (gate)
+                {
+                    confirmed = homeState is null ? null : homeState with
+                    { Controls = homeState.Controls with { PerformanceMode = command.Mode } };
+                    homeState = confirmed;
+                    Interlocked.Increment(ref modeReadbackVersion);
+                }
+                if (confirmed is not null) StateChanged?.Invoke(confirmed);
+            }
+            else await RefreshStateAsync(token); // Compatibility with services lacking mode readback.
+            try { await automaticRestore.RecordAppliedAsync(command, result, CancellationToken.None); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { RestoreWarning?.Invoke("模式已返回，但自动恢复快照保存失败；请检查存储后重试"); }
+            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Mode command timing: {command.Mode}; serviceMs={replyMs}; totalMs={clock.ElapsedMilliseconds}; state={result.State}\n");
+            return result;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch
+        {
+            Notify("模式切换未确认，请检查硬件服务连接");
+            return new(command.OperationId, CommandState.Rejected, null, RequiredUserAction.None,
+                ServiceError.Create(ErrorCode.ServiceUnavailable, command.OperationId, true), false);
+        }
+        finally { modeCommandGate.Release(); }
     }
 
     public async ValueTask DisposeAsync()
@@ -171,6 +227,8 @@ public sealed class HomeControlSession : IAsyncDisposable
         }
 
         await client.DisposeAsync();
+        await modeClient.DisposeAsync();
+        modeCommandGate.Dispose();
         controlStateGate.Dispose();
         lifetime.Dispose();
     }
@@ -305,10 +363,18 @@ public sealed class HomeControlSession : IAsyncDisposable
 
     private async Task RefreshStateAsync(CancellationToken cancellationToken)
     {
+        long readbackVersion = Interlocked.Read(ref modeReadbackVersion);
         var updated = await client.GetHomeStateAsync(cancellationToken);
-        var previous = State;
+        HomeStateSnapshot? previous;
+        lock (gate)
+        {
+            previous = homeState;
+            // A poll started before a newer firmware acknowledgement cannot undo that acknowledgement.
+            if (readbackVersion != modeReadbackVersion && homeState?.Controls.PerformanceMode is { } latest)
+                updated = updated with { Controls = updated.Controls with { PerformanceMode = latest } };
+            homeState = updated;
+        }
         var previousStatus = Status;
-        State = updated;
         Status = updated.Capabilities.SupportState switch
         {
             DeviceSupportState.Ready => HomeSessionStatus.Connected,

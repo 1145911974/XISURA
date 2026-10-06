@@ -16,6 +16,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
 {
     private const double BytesPerGb = 1024d * 1024 * 1024;
     private readonly object gate = new();
+    private readonly object commandGate = new();
     private readonly Computer computer = new()
     {
         IsCpuEnabled = true,
@@ -36,6 +37,9 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
     private readonly ManifestResolver resolver = new();
     private readonly IHomeRadioStateReader radioController;
     private readonly ILogger<WindowsHomeHardwareProvider>? logger;
+    private readonly object sensorGate = new();
+    private Task? sensorSamplingTask;
+    private SensorSnapshot sensorSnapshot = new([], null, null, DateTimeOffset.MinValue);
     private HardwareIdentity identity = UnknownIdentity;
     private WmiProviderEvidence? telemetryProvider;
     private WmiProviderEvidence? observedMiProvider;
@@ -57,7 +61,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
     private bool gpuMemoryRecoveryRequired;
     private bool gpuCoreRecoveryRequired;
     private bool opened;
-    private bool disposed;
+    private volatile bool disposed;
 
     public WindowsHomeHardwareProvider(IHomeRadioStateReader? radioController = null, ILogger<WindowsHomeHardwareProvider>? logger = null)
     {
@@ -301,10 +305,18 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
     public Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (gate)
+        lock (commandGate)
         {
-            ThrowIfDisposed();
-            return Task.FromResult(ExecuteLocked(command, cancellationToken));
+            if (command is SetPerformanceModeCommand)
+            {
+                ThrowIfDisposed();
+                return Task.FromResult(ExecuteLocked(command, cancellationToken));
+            }
+            lock (gate)
+            {
+                ThrowIfDisposed();
+                return Task.FromResult(ExecuteLocked(command, cancellationToken));
+            }
         }
     }
 
@@ -374,7 +386,8 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         {
             return new CommandResult(command.OperationId, CommandState.Applied,
                 command is SetPerformanceModeCommand ? null : ReadTelemetryLocked(cancellationToken),
-                RequiredUserAction.None, null, false);
+                RequiredUserAction.None, null, false)
+            { VerifiedPerformanceMode = command is SetPerformanceModeCommand ? MiPerformanceModeCodec.Decode(after) : null };
         }
 
         var rollback = miInterface.WriteOnceAsync(binding!, new[] { before }, cancellationToken).GetAwaiter().GetResult();
@@ -755,6 +768,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
 
     public void Dispose()
     {
+        lock (commandGate)
         lock (gate)
         {
             if (disposed) return;
@@ -767,8 +781,11 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             fanTimer = null;
             lightingTimer?.Dispose();
             lightingTimer = null;
-            if (opened) computer.Close();
-            opened = false;
+            lock (sensorGate)
+            {
+                if (opened) computer.Close();
+                opened = false;
+            }
             DisposeCpuTuning();
             packagePowerReader.Dispose();
         }
@@ -885,11 +902,40 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         }
     }
 
-    private static void Collect(IHardware hardware, ICollection<(IHardware Hardware, ISensor Sensor)> sensors)
+    private sealed record SensorReading(IHardware Hardware, SensorType SensorType, string Name, float? Value);
+    private sealed record SensorSnapshot(SensorReading[] Sensors, double? CpuUsagePercent, double? CpuFrequencyMhz, DateTimeOffset CapturedAtUtc);
+
+    private static void Collect(IHardware hardware, ICollection<SensorReading> sensors)
     {
         hardware.Update();
-        foreach (var sensor in hardware.Sensors) sensors.Add((hardware, sensor));
+        foreach (var sensor in hardware.Sensors) sensors.Add(new(hardware, sensor.SensorType, sensor.Name, sensor.Value));
         foreach (var child in hardware.SubHardware) Collect(child, sensors);
+    }
+
+    private SensorSnapshot ReadSensorSnapshotLocked()
+    {
+        // Sensor drivers can take seconds. Their single sampler must never own the control gate.
+        if ((sensorSamplingTask is null || sensorSamplingTask.IsCompleted) &&
+            DateTimeOffset.UtcNow - Volatile.Read(ref sensorSnapshot).CapturedAtUtc >= TimeSpan.FromMilliseconds(500))
+            sensorSamplingTask = Task.Run(() =>
+            {
+                lock (sensorGate)
+                {
+                    if (disposed) return;
+                    try
+                    {
+                        if (!opened) { computer.Open(); opened = true; }
+                        var sensors = new List<SensorReading>();
+                        foreach (var hardware in computer.Hardware) Collect(hardware, sensors);
+                        var cpu = sensors.Where(sensor => sensor.Hardware.HardwareType == HardwareType.Cpu).ToArray();
+                        Volatile.Write(ref sensorSnapshot, new(sensors.ToArray(),
+                            Preferred(cpu, SensorType.Load, "CPU Total", "Total") ?? ReadCpuUsagePercent(),
+                            Average(cpu, SensorType.Clock, "Core") ?? ReadCpuFrequencyMhz(), DateTimeOffset.UtcNow));
+                    }
+                    catch (Exception error) { logger?.LogDebug(error, "Sensor sampling unavailable"); }
+                }
+            });
+        return Volatile.Read(ref sensorSnapshot);
     }
 
     private static bool IsGpu(HardwareType type) => type is HardwareType.GpuAmd or HardwareType.GpuIntel or HardwareType.GpuNvidia;
@@ -909,22 +955,16 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         try
         {
             var packagePower = (curveOptimizer ?? packagePowerReader).ReadPackagePower(cancellationToken);
-            if (!opened)
-            {
-                computer.Open();
-                opened = true;
-            }
-
-            var sensors = new List<(IHardware Hardware, ISensor Sensor)>();
-            foreach (var hardware in computer.Hardware) Collect(hardware, sensors);
-            var cpu = sensors.Where(item => item.Hardware.HardwareType == HardwareType.Cpu).Select(item => item.Sensor).ToArray();
+            var sensorSample = ReadSensorSnapshotLocked();
+            var sensors = sensorSample.Sensors;
+            var cpu = sensors.Where(item => item.Hardware.HardwareType == HardwareType.Cpu).ToArray();
             var gpuHardware = sensors.Select(item => item.Hardware).Distinct()
                 .Where(item => IsGpu(item.HardwareType))
                 .OrderBy(item => item.HardwareType == HardwareType.GpuNvidia ? 0 : item.HardwareType == HardwareType.GpuAmd ? 1 : 2)
                 .FirstOrDefault();
-            var gpu = sensors.Where(item => ReferenceEquals(item.Hardware, gpuHardware)).Select(item => item.Sensor).ToArray();
-            var memory = sensors.Where(item => item.Hardware.HardwareType == HardwareType.Memory).Select(item => item.Sensor).ToArray();
-            var fans = sensors.Where(item => item.Sensor.SensorType == SensorType.Fan).Select(item => item.Sensor).ToArray();
+            var gpu = sensors.Where(item => ReferenceEquals(item.Hardware, gpuHardware)).ToArray();
+            var memory = sensors.Where(item => item.Hardware.HardwareType == HardwareType.Memory).ToArray();
+            var fans = sensors.Where(item => item.SensorType == SensorType.Fan).ToArray();
             var nvidiaReading = nvidiaSmiReader.ReadAsync(cancellationToken).GetAwaiter().GetResult();
             var drives = ReadDrives();
             var memoryUsed = Named(memory, SensorType.Data, "Memory Used");
@@ -939,7 +979,9 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             var cpuFanRpm = Named(fans, SensorType.Fan, "CPU");
             var gpuFanRpm = Named(gpu, SensorType.Fan, "GPU") ?? Named(fans, SensorType.Fan, "GPU");
             var readProvider = HomeTelemetryProviderSelection.ForRead(telemetryProvider, observedMiProvider);
-            var miCpuTemperature = cpuTemperature ?? ReadMiCpuTemperature(readProvider, cancellationToken);
+            // Thermal guards use a fresh firmware reading, independently of the background sensor sample.
+            var miCpuTemperature = ReadMiCpuTemperature(readProvider, cancellationToken) ??
+                (DateTimeOffset.UtcNow - sensorSample.CapturedAtUtc <= TimeSpan.FromSeconds(3) ? cpuTemperature : null);
             var cpuPowerWatts = RoundInt(Preferred(cpu, SensorType.Power, "Package", "CPU")) ??
                 RoundInt(packagePower);
             (double? CpuRpm, double? GpuRpm) miFans = cpuFanRpm.HasValue && gpuFanRpm.HasValue
@@ -953,8 +995,8 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 cpuPowerWatts,
                 RoundInt(Preferred(gpu, SensorType.Power, "GPU Package", "Total", "GPU")) ?? nvidiaReading.PowerWatts)
             {
-                CpuUsagePercent = Preferred(cpu, SensorType.Load, "CPU Total", "Total") ?? ReadCpuUsagePercent(),
-                CpuFrequencyMhz = Average(cpu, SensorType.Clock, "Core") ?? ReadCpuFrequencyMhz(),
+                CpuUsagePercent = sensorSample.CpuUsagePercent,
+                CpuFrequencyMhz = sensorSample.CpuFrequencyMhz,
                 CpuVoltageVolts = cpuVoltage,
                 GpuUsagePercent = Preferred(gpu, SensorType.Load, "GPU Core", "Core", "D3D 3D") ?? nvidiaReading.UtilizationPercent,
                 GpuFrequencyMhz = Preferred(gpu, SensorType.Clock, "Core", "Graphics"),
@@ -1060,7 +1102,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         return double.TryParse(value, out var usage) && usage is >= 0 and <= 100 ? usage : null;
     }
 
-    private static double? Preferred(IEnumerable<ISensor> sensors, SensorType type, params string[] names)
+    private static double? Preferred(IEnumerable<SensorReading> sensors, SensorType type, params string[] names)
     {
         var values = sensors.Where(sensor => sensor.SensorType == type && sensor.Value.HasValue && IsPlausible(type, sensor.Value.Value)).ToArray();
         foreach (var name in names)
@@ -1072,10 +1114,10 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         return values.FirstOrDefault()?.Value;
     }
 
-    private static double? Named(IEnumerable<ISensor> sensors, SensorType type, string name) =>
+    private static double? Named(IEnumerable<SensorReading> sensors, SensorType type, string name) =>
         sensors.FirstOrDefault(sensor => sensor.SensorType == type && sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase))?.Value;
 
-    private static double? Average(IEnumerable<ISensor> sensors, SensorType type, string name)
+    private static double? Average(IEnumerable<SensorReading> sensors, SensorType type, string name)
     {
         var values = sensors.Where(sensor => sensor.SensorType == type && sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && sensor.Value.HasValue && IsPlausible(type, sensor.Value.Value))
             .Select(sensor => (double)sensor.Value!.Value)

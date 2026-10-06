@@ -254,7 +254,11 @@ public sealed partial class PagePresetToolbar : UserControl
         statusVisible = true;
         await TransitionAsync(1, 0);
 
-        if (!autoHide || version != statusVersion) return;
+        if (autoHide && version == statusVersion) _ = HideStatusAfterDelayAsync(version);
+    }
+
+    private async Task HideStatusAfterDelayAsync(int version)
+    {
         await Task.Delay(TimeSpan.FromSeconds(2));
         if (version == statusVersion) await HideStatusAsync(version);
     }

@@ -18,6 +18,12 @@ public sealed class ProtocolCompatibilityTests
         var json = JsonSerializer.Serialize(expected, ProtocolJsonContext.Default.HardwareCommand);
         var actual = JsonSerializer.Deserialize(json, ProtocolJsonContext.Default.HardwareCommand);
         Assert.AreEqual(expected, actual);
+        var legacy = new CommandResult(id, CommandState.Applied, null, RequiredUserAction.None, null, false);
+        string legacyJson = JsonSerializer.Serialize(legacy, ProtocolJsonContext.Default.CommandResult);
+        Assert.IsNull(JsonSerializer.Deserialize(legacyJson, ProtocolJsonContext.Default.CommandResult)!.VerifiedPerformanceMode);
+        var confirmed = legacy with { VerifiedPerformanceMode = PerformanceMode.Balanced };
+        Assert.AreEqual(confirmed, JsonSerializer.Deserialize(
+            JsonSerializer.Serialize(confirmed, ProtocolJsonContext.Default.CommandResult), ProtocolJsonContext.Default.CommandResult));
     }
 
     [TestMethod]
