@@ -29,8 +29,7 @@ public sealed partial class LightingWorkspaceV2
         var settings = preferences.Load();
         followPreset = settings.LightingFollowPreset;
         lightingSlots = settings.LightingPresetSlots ?? [];
-        FollowPresetButton.IsChecked = followPreset;
-        PresetToolbar.SetFollowPreset(followPreset);
+        PresetToolbar.ConfigureFollowPreset(followPreset);
         followPoll.Tick += (_, _) => _ = FollowCurrentPresetAsync();
         Loaded += (_, _) => { if (followPreset) followPoll.Start(); };
         Unloaded += (_, _) => followPoll.Stop();
@@ -93,15 +92,14 @@ public sealed partial class LightingWorkspaceV2
         return new(result);
     }
 
-    private async void OnFollowPresetClick(object sender, RoutedEventArgs e)
+    private async void OnFollowPresetClick(object? sender, bool requested)
     {
-        if (syncing || applying || loading || followSettingPending) { FollowPresetButton.IsChecked = followPreset; return; }
-        bool requested = FollowPresetButton.IsChecked == true;
+        if (syncing || applying || loading || followSettingPending) { PresetToolbar.SetFollowPreset(followPreset); return; }
         if (requested == followPreset) return;
         try
         {
             await RestoreHardwarePreviewAsync();
-            followSettingPending = true; FollowPresetButton.IsEnabled = false;
+            followSettingPending = true;
             preferences.Update(current => current with { LightingFollowPreset = requested });
             followPreset = requested;
             // Enabling automation applies once; disabling keeps the real current settings.
@@ -117,9 +115,7 @@ public sealed partial class LightingWorkspaceV2
         {
             followSettingPending = false;
             if (followPreset) followPoll.Start(); else followPoll.Stop();
-            FollowPresetButton.IsChecked = followPreset;
             PresetToolbar.SetFollowPreset(followPreset);
-            FollowPresetButton.IsEnabled = true;
             UpdateActionAvailability();
         }
         await FollowCurrentPresetAsync();

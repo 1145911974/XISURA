@@ -6,7 +6,6 @@
  <Grid.RowDefinitions><RowDefinition Height="126"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
  <Grid><StackPanel VerticalAlignment="Center" Spacing="6"><TextBlock Text="灯光" FontSize="32" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}"/><TextBlock Text="设置键盘与机身灯光效果" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}"/></StackPanel>
  <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Right" VerticalAlignment="Center">
- <ToggleButton x:Name="FollowPresetButton" VerticalAlignment="Top" Content="随模式应用" CornerRadius="12" Height="52" Padding="16,0" Style="{StaticResource ControlGlassToggleStyle}" Click="OnFollowPresetClick" AutomationProperties.Name="灯光随模式自动应用" ToolTipService.ToolTip="开启后仅在整机模式变化时自动应用对应灯光；关闭保持当前灯效。日常调节直接生效，预设管理只编辑保存配置"/>
  <shared:PagePresetToolbar x:Name="PresetToolbar" VerticalAlignment="Top"/></StackPanel></Grid>
  <Border Grid.Row="1" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="18">
  <Grid RowSpacing="10"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>

@@ -100,7 +100,7 @@ public sealed partial class PagePresetToolbar : UserControl
             ? $"当前使用：{PresetPicker.DisplayNameFor(key)}{(currentModified ? " · 已调整" : string.Empty)}"
             : "当前电脑 · 手动设置";
         if (submittedPreset is { } submitted) current += $"　｜　已提交：{PresetPicker.DisplayNameFor(submitted)} · 部分设置未读回";
-        ContextText.Text = IsEditingPreset ? $"正在编辑：{SelectedDisplayName}　｜　{current}" : current;
+        ContextText.Text = current;
         ToolTipService.SetToolTip(ContextText, ContextText.Text);
     }
 
@@ -146,10 +146,15 @@ public sealed partial class PagePresetToolbar : UserControl
     {
         PresetPicker.IsEnabled = requestedSaveEnabled || requestedUseEnabled;
         ManageButton.IsEnabled = requestedSaveEnabled || requestedUseEnabled;
-        SaveButton.Content = IsEditingPreset ? "保存预设" : "保存当前";
+        ManagePresetMenuItem.IsEnabled = ManageButton.IsEnabled;
+        ManagePresetMenuItem.Visibility = IsEditingPreset ? Visibility.Collapsed : Visibility.Visible;
+        SaveCurrentMenuItem.Visibility = IsEditingPreset ? Visibility.Collapsed : Visibility.Visible;
+        SaveCurrentMenuItem.IsEnabled = requestedSaveEnabled && CurrentSourceKey.HasValue;
+        SaveButton.Visibility = IsEditingPreset ? Visibility.Visible : Visibility.Collapsed;
+        ManageButton.Visibility = IsEditingPreset ? Visibility.Visible : Visibility.Collapsed;
         ToolTipService.SetToolTip(SaveButton, IsEditingPreset ? "保存编辑草稿，不改变电脑" : "将当前设置保存到来源预设");
         ManageButton.Content = IsEditingPreset ? "返回当前电脑" : "管理预设";
-        UseButton.Content = IsEditingPreset ? "保存并应用" : "应用调整";
+        UseButton.Text = IsEditingPreset ? "保存并应用" : "应用调整";
         UseButton.Visibility = IsEditingPreset || requestedUseEnabled ? Visibility.Visible : Visibility.Collapsed;
         SaveButton.IsEnabled = requestedSaveEnabled && (IsEditingPreset || CurrentSourceKey.HasValue);
         SaveAsButton.IsEnabled = requestedSaveEnabled;

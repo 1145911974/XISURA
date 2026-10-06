@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Reflection;
 using System.Xml.Linq;
 using Jiaolong.Contracts.Models;
@@ -424,7 +424,7 @@ public sealed class GpuWorkspaceV2ContractTests
 
         Assert.IsFalse(gpu.Contains("x:Key=\"GpuActionStyle\"", StringComparison.Ordinal));
         Assert.IsFalse(performance.Contains("x:Key=\"V2ActionButtonStyle\"", StringComparison.Ordinal));
-        Assert.AreEqual(3, toolbar.Split("Style=\"{StaticResource PerformanceV2ActionButtonStyle}\"").Length - 1);
+        Assert.AreEqual(2, toolbar.Split("Style=\"{StaticResource PerformanceV2ActionButtonStyle}\"").Length - 1);
         Assert.IsFalse(gpu.Contains("PerformanceV2AdvancedButtonStyle", StringComparison.Ordinal));
         StringAssert.Contains(performance, "x:Name=\"AdvancedButton\" Grid.Row=\"3\" Style=\"{StaticResource PerformanceV2AdvancedButtonStyle}\"");
         StringAssert.Contains(resources, "VisualState x:Name=\"PointerOver\"");

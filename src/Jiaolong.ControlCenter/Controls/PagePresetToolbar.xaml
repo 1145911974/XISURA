@@ -1,33 +1,40 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<UserControl
-    x:Class="Jiaolong_ControlCenter.Controls.PagePresetToolbar"
+<UserControl x:Class="Jiaolong_ControlCenter.Controls.PagePresetToolbar"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Jiaolong_ControlCenter.Controls">
-    <StackPanel Spacing="8" VerticalAlignment="Top">
-    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Top" Height="52">
-        <Grid Height="52">
+    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Top">
+        <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="162" /></Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Top" Height="52">
+            <StackPanel Width="260" Spacing="8">
                 <StackPanel.RenderTransform><TranslateTransform x:Name="PresetPickerTranslation" X="162" /></StackPanel.RenderTransform>
-                <ToggleButton x:Name="FollowPresetButton" Content="随模式应用" CornerRadius="12" Visibility="Collapsed" Height="52" Padding="12,0" Style="{StaticResource ControlGlassToggleStyle}" Click="OnFollowPresetClick" AutomationProperties.Name="随模式自动应用本页预设" ToolTipService.ToolTip="随整机模式自动应用本页已保存配置；关闭后仍可实时调节、使用和管理预设" />
-                <local:ModePresetPicker x:Name="PresetPicker" Width="190" Height="52" VerticalAlignment="Top" SelectedKeyChanged="OnSelectedKeyChanged" />
+                <local:ModePresetPicker x:Name="PresetPicker" Height="52" SelectedKeyChanged="OnSelectedKeyChanged" />
+                <TextBlock x:Name="ContextText" Text="当前电脑 · 手动设置" FontSize="13" Foreground="{StaticResource PrototypeSecondaryTextBrush}" TextTrimming="CharacterEllipsis" HorizontalAlignment="Left" />
             </StackPanel>
-        <Grid x:Name="PresetStatusHost" Grid.Column="1" Width="148" Height="52" Visibility="Visible" Opacity="0" IsHitTestVisible="False" Background="Transparent" HorizontalAlignment="Right">
-            <Grid.RenderTransform><TranslateTransform x:Name="PresetStatusTranslation" /></Grid.RenderTransform>
-            <Grid.Clip><RectangleGeometry Rect="0,0,148,52" /></Grid.Clip>
-            <Grid Width="148" ColumnSpacing="8" VerticalAlignment="Center">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="10" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <Ellipse Width="10" Height="10" Fill="{StaticResource ModeAccentBrush}" />
-                <TextBlock x:Name="PresetStatusText" Grid.Column="1" Text="有未保存的更改" Foreground="{StaticResource ModeAccentBrush}" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <Grid x:Name="PresetStatusHost" Grid.Column="1" Width="148" Height="52" VerticalAlignment="Top" Visibility="Visible" Opacity="0" IsHitTestVisible="False" Background="Transparent" HorizontalAlignment="Right">
+                <Grid.RenderTransform><TranslateTransform x:Name="PresetStatusTranslation" /></Grid.RenderTransform>
+                <Grid.Clip><RectangleGeometry Rect="0,0,148,52" /></Grid.Clip>
+                <Grid Width="148" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="10" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Ellipse Width="10" Height="10" Fill="{StaticResource ModeAccentBrush}" />
+                    <TextBlock x:Name="PresetStatusText" Grid.Column="1" Text="有未保存的更改" Foreground="{StaticResource ModeAccentBrush}" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                </Grid>
             </Grid>
         </Grid>
-        </Grid>
-            <Button x:Name="ManageButton" Height="52" Content="管理预设" CornerRadius="12" Padding="12,0" Style="{StaticResource PerformanceV2ActionButtonStyle}" Click="OnManageClick" />
-            <Button x:Name="SaveButton" Height="52" VerticalAlignment="Top" Content="保存当前" Style="{StaticResource PerformanceV2ActionButtonStyle}" BorderBrush="{StaticResource PrototypeStrokeBrush}" Click="OnSaveClick" />
-            <Button x:Name="SaveAsButton" Height="52" Width="34" MinWidth="0" Padding="0" CornerRadius="12" Style="{StaticResource ControlGlassButtonStyle}" Click="OnSaveAsClick" AutomationProperties.Name="另存为预设" ToolTipService.ToolTip="将当前设置或编辑草稿保存到指定预设，不改变电脑状态"><FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE70D;" FontSize="12" /></Button>
-            <Button x:Name="UseButton" Height="52" VerticalAlignment="Top" Content="保存并应用" Style="{StaticResource PerformanceV2ActionButtonStyle}" Background="{StaticResource ModeSelectionBrush}" BorderBrush="{StaticResource ModeAccentBrush}" BorderThickness="1" Click="OnUseClick" />
-    </StackPanel>
-    <TextBlock x:Name="ContextText" Text="当前电脑 · 手动设置" FontSize="13" Foreground="{StaticResource PrototypeSecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+        <Button x:Name="SaveButton" Height="52" VerticalAlignment="Top" Content="保存预设" CornerRadius="12" Style="{StaticResource PerformanceV2ActionButtonStyle}" Click="OnSaveClick" />
+        <Button x:Name="ManageButton" Height="52" VerticalAlignment="Top" Content="返回当前电脑" CornerRadius="12" Padding="12,0" Style="{StaticResource PerformanceV2ActionButtonStyle}" Click="OnManageClick" />
+        <Button x:Name="MoreButton" Height="52" Width="52" VerticalAlignment="Top" CornerRadius="12" Style="{StaticResource ControlGlassButtonStyle}" AutomationProperties.Name="更多预设操作" ToolTipService.ToolTip="管理、保存与自动应用设置">
+            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE712;" FontSize="18" />
+            <Button.Flyout>
+                <MenuFlyout>
+                    <MenuFlyoutItem x:Name="ManagePresetMenuItem" Text="管理预设" Click="OnManageClick" />
+                    <MenuFlyoutItem x:Name="SaveCurrentMenuItem" Text="保存当前" Click="OnSaveClick" />
+                    <MenuFlyoutItem x:Name="SaveAsButton" Text="另存为预设" Click="OnSaveAsClick" />
+                    <MenuFlyoutItem x:Name="UseButton" Text="保存并应用" Click="OnUseClick" />
+                    <MenuFlyoutSeparator />
+                    <ToggleMenuFlyoutItem x:Name="FollowPresetButton" Text="随模式应用" Visibility="Collapsed" Click="OnFollowPresetClick" AutomationProperties.Name="随模式自动应用本页预设" ToolTipService.ToolTip="开启后随整机模式自动应用本页配置；关闭后保持当前设置" />
+                </MenuFlyout>
+            </Button.Flyout>
+        </Button>
     </StackPanel>
 </UserControl>

@@ -129,7 +129,7 @@ public sealed partial class ModePresetPicker : UserControl
 
     private void UpdateSelection(PresetKey key)
     {
-        SelectionText.Text = editingPreset ? SelectedDisplayName : "使用预设";
+        SelectionText.Text = editingPreset ? $"编辑 · {SelectedDisplayName}" : "使用预设";
         SelectionIcon.Glyph = key.Mode switch
         {
             ControlModeId.Office => "\uE7F4",

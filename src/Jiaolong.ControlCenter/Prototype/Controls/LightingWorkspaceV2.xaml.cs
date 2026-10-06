@@ -201,7 +201,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     public LightingWorkspaceV2()
     {
         InitializeComponent();
-        FollowPresetButton.RenderTransform = PresetToolbar.ModeSelectorTranslation;
+        PresetToolbar.FollowPresetChanged += OnFollowPresetClick;
         lightingFollower = new AdaptivePresetExecutor(ApplyFollowedPresetAsync);
         InitializeLightingControl();
         foreach (var slider in new[] { BrightnessSlider, SpeedSlider })
