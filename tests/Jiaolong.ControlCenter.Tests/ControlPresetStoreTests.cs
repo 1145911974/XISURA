@@ -44,7 +44,7 @@ public sealed class ControlPresetStoreTests
         Assert.IsNotNull(loaded);
         Assert.AreEqual(expected.DisplayName, loaded.DisplayName);
         Assert.AreEqual(expected.Payload.GetProperty("temperatureLimitC").GetInt32(), loaded.Payload.GetProperty("temperatureLimitC").GetInt32());
-        Assert.ThrowsExactly<InvalidOperationException>(() => SavedPerformancePreset.ReadDraft(loaded, key));
+        Assert.AreEqual(76, SavedPerformancePreset.ReadDraft(loaded, key).TemperatureLimitC);
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         var draft = new Jiaolong_ControlCenter.ViewModels.PerformanceDraft
         {

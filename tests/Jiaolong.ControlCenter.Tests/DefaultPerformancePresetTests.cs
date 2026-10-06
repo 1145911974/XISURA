@@ -61,7 +61,7 @@ public sealed class DefaultPerformancePresetTests
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
         await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => store.LoadAsync(ControlPageId.Performance, PresetKey.All[0], canceled.Token));
-        Assert.IsNull(await store.LoadAsync(ControlPageId.Fan, PresetKey.All[0], CancellationToken.None));
+        Assert.IsNotNull(await store.LoadAsync(ControlPageId.Fan, PresetKey.All[0], CancellationToken.None));
     }
 
     [TestMethod]
@@ -80,7 +80,7 @@ public sealed class DefaultPerformancePresetTests
         var loaded = await store.LoadAsync(ControlPageId.Performance, key, CancellationToken.None);
         Assert.AreEqual("我的配置", loaded!.DisplayName);
         Assert.AreEqual(81, loaded.Payload.GetProperty("temperatureLimitC").GetInt32());
-        Assert.ThrowsExactly<InvalidOperationException>(() => SavedPerformancePreset.ReadDraft(loaded, key));
+        Assert.AreEqual(81, SavedPerformancePreset.ReadDraft(loaded, key).TemperatureLimitC);
         CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(path));
         Assert.HasCount(1, paths.WrittenPaths);
     }

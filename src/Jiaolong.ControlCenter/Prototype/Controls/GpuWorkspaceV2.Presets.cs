@@ -75,6 +75,8 @@ public sealed partial class GpuWorkspaceV2
                 (saved.Payload.Deserialize<GpuDraft>() is { } legacy
                     ? new GpuWorkspacePreset(legacy.CoreFrequencyLimitMhz, null, null, null)
                     : null);
+            if (saved.SavedAtUtc == DateTimeOffset.UnixEpoch && draft?.CoreFrequencyLimitMhz is int recommended && session?.State?.Controls.GpuClockLimit is { Error: null } range)
+                draft = draft with { CoreFrequencyLimitMhz = Math.Clamp(recommended, range.MinimumMhz, range.MaximumMhz) };
             if (draft is null || !ValidPreset(draft)) { await PresetToolbar.ShowStatusAsync("GPU 预设格式无效或没有有效项目"); return; }
             selectedGpuPreset = draft;
             bool retained = edit && gpuEditorDrafts.TryGetValue(key, out _);

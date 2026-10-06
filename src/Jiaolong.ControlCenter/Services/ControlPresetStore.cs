@@ -31,8 +31,8 @@ public sealed class ControlPresetStore : IControlPresetStore
         PresetKey.Create(key.Mode, key.Slot);
         cancellationToken.ThrowIfCancellationRequested();
         var presets = await LoadAllAsync(page, cancellationToken);
-        return presets.TryGetValue(StorageKey(key), out var preset) ? preset
-            : page == ControlPageId.Performance ? DefaultPerformancePresets.Create(key) : null;
+        return presets.TryGetValue(StorageKey(key), out var preset) && preset.Key == key
+            ? DefaultControlPresets.Complete(preset) : DefaultControlPresets.Create(page, key);
     }
 
     public async Task<PagePresetEnvelope> ResetPerformanceAsync(PresetKey key, CancellationToken cancellationToken)
