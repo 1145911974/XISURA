@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace Jiaolong.Service.Home;
 
-// The private NVAPI table layout is limited to the verified RTX 4070 Laptop configuration.
+// The driver must accept these versioned layouts; unsupported responses fail before any write.
 internal sealed class NvapiVfInterop : IDisposable
 {
     internal readonly record struct PstateMemory(int OffsetKhz, int MinimumKhz, int MaximumKhz,

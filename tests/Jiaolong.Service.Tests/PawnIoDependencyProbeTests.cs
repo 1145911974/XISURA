@@ -35,6 +35,22 @@ public sealed class PawnIoDependencyProbeTests
 
         Assert.IsNull(dependency);
 
+        foreach (int coreCount in new[] { 4, 16 })
+        {
+            var offsets = Enumerable.Range(0, coreCount).ToDictionary(core => core, _ => -10);
+            using var variableCpu = new PawnIoCurveOptimizerTransport((command, argument) =>
+            {
+                int core = (int)(argument >> 20);
+                if (command == 0x06) offsets[core] = unchecked((short)argument);
+                return unchecked((uint)offsets[core]);
+            }, coreCount);
+            var snapshot = variableCpu.ReadPerCore(CancellationToken.None);
+            variableCpu.WriteAsync(-30, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.IsTrue(offsets.Values.All(value => value == -30));
+            variableCpu.RestorePerCore(snapshot, CancellationToken.None);
+            Assert.IsTrue(offsets.Values.All(value => value == -10));
+        }
+
         var smu = new CurveMailbox();
         using var curve = new PawnIoCurveOptimizerTransport(smu.Execute);
         var original = curve.ReadPerCore(CancellationToken.None);

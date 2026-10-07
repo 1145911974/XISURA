@@ -8,7 +8,7 @@ public static class QuickMenuCatalog
 
     public static bool IsAvailable(QuickMenuItem item, HomeStateSnapshot? snapshot) =>
         IsLocal(item.Kind) || item.IsAction || snapshot?.Capabilities.Items.Any(capability =>
-            capability.Key == item.CapabilityKey && capability.State == CapabilityState.Available) == true;
+            capability.Key == item.CapabilityKey) == true;
 
     public static IReadOnlyList<QuickMenuItem> CreateDefault() =>
     [

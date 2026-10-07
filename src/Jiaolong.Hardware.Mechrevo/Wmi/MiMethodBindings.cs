@@ -41,7 +41,7 @@ public sealed record VerifiedWmiBinding(
             return false;
         }
 
-        if (!decision.Manifest.Capabilities.Any(candidate =>
+        if (!decision.Capabilities.Items.Any(candidate =>
                 string.Equals(candidate.Key, key.Value, StringComparison.Ordinal) &&
                 candidate.State == Jiaolong.Contracts.Models.CapabilityState.Available))
         {

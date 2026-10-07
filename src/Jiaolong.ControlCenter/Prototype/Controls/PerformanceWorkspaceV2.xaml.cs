@@ -196,7 +196,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (currentState?.TemperatureLimitC is null || currentState.SplWatts is null || currentState.SpptWatts is null ||
             TryCreateDraft() is not { } draft)
         {
-            _ = PresetToolbar.ShowStatusAsync("当前 CPU 参数读回不完整，未应用编辑");
+            _ = ShowOperationFailureAsync("当前 CPU 参数读回不完整，未应用编辑。");
             return;
         }
         _ = ApplyLiveEditAsync(draft);
@@ -613,12 +613,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     {
         if (applyInProgress || liveEditApplying || liveEditPending || presetEditorLoading) return false;
         PerformanceDraft? draft = TryCreateDraft();
-        if (draft is null) { await PresetToolbar.ShowStatusAsync("当前值不可用，未保存"); return false; }
-        if (!PresetToolbar.IsEditingPreset && (draft.TemperatureLimitC is < 45 or > 100 || draft.SplWatts is < 45 or > 75 || draft.SpptWatts is < 45 or > 75))
-        {
-            await PresetToolbar.ShowStatusAsync("当前厂商限值超出预设编辑范围，未保存；可在管理预设中编辑允许范围内的配置");
-            return false;
-        }
+        if (draft is null) { await ShowOperationFailureAsync("当前设置尚未读回完整，未保存。请重试或进入预设编辑。"); return false; }
         applyInProgress = true;
         SetInteractionAvailability(false);
         try
@@ -637,7 +632,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             _ = PresetToolbar.ShowSavedStatusAsync();
             return true;
         }
-        catch { await PresetToolbar.ShowStatusAsync("保存失败，原预设未确认更改"); return false; }
+        catch { await ShowOperationFailureAsync("保存失败，原预设未更改。请重试。"); return false; }
         finally { applyInProgress = false; SetInteractionAvailability(currentState is not null); }
     }
 
@@ -728,7 +723,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (applyInProgress || session is null || currentState is null ||
             !PerformanceCommandFactory.HasPresetTargets(draft))
         {
-            await PresetToolbar.ShowStatusAsync("硬件不可用");
+            await ShowOperationFailureAsync("此功能尚未读回当前设置，本次未应用。请重试或导出日志反馈。");
             return false;
         }
 
@@ -737,7 +732,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             : draft);
         if (!validation.IsValid)
         {
-            await PresetToolbar.ShowStatusAsync(validation.Errors[0]);
+            await ShowOperationFailureAsync(validation.Errors[0]);
             return false;
         }
 
@@ -756,18 +751,18 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                 pboCapabilityAvailable, curveOptimizerCapabilityAvailable, forceApply: forcePreset);
         if (commandPlan.Error is not null)
         {
-            await PresetToolbar.ShowStatusAsync(commandPlan.Error);
+            await ShowOperationFailureAsync(commandPlan.Error);
             return false;
         }
         if (requireComplete && commandPlan.Skipped.Count > 0)
         {
-            await PresetToolbar.ShowStatusAsync($"硬件未提供完整预设回读；未提交：{string.Join("、", commandPlan.Skipped)}");
+            await ShowOperationFailureAsync($"硬件未提供完整预设回读，未应用：{string.Join("、", commandPlan.Skipped)}。");
             return false;
         }
         if (commandPlan.Steps.Any(step => step.Label is "温度墙" or "持续功耗 SPL" or "短时功耗 SPPT") &&
             session.State?.Telemetry?.AcPowerConnected is not true)
         {
-            await PresetToolbar.ShowStatusAsync("性能预设包含 OEM 功耗/温度写入；请接通电源并等待状态确认");
+            await ShowOperationFailureAsync("此预设需要调整功耗或温度限制。请接通电源并等待状态确认。");
             return false;
         }
         if (commandPlan.Steps.Count == 0 && beforeApply is null)
@@ -797,7 +792,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                 CpuTuningState? postModeState = session.State?.Controls.CpuTuning;
                 if (postModeState is null)
                 {
-                    await PresetToolbar.ShowStatusAsync("模式切换后未读回 CPU 状态；未提交性能预设");
+                await ShowOperationFailureAsync("模式切换后未读回 CPU 状态，性能预设未应用。");
                     return false;
                 }
                 commandPlan = PerformanceCommandFactory.CreatePresetCommands(
@@ -805,7 +800,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                     pboCapabilityAvailable, curveOptimizerCapabilityAvailable, forceApply: forcePreset);
                 if (commandPlan.Error is not null || requireComplete && commandPlan.Skipped.Count > 0)
                 {
-                    await PresetToolbar.ShowStatusAsync(commandPlan.Error ??
+                await ShowOperationFailureAsync(commandPlan.Error ??
                         $"模式切换后硬件未提供完整预设回读；未提交：{string.Join("、", commandPlan.Skipped)}");
                     return false;
                 }
@@ -844,14 +839,14 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                 string reason = result.Error?.Details.GetValueOrDefault("reason") == "cpuThermalHeadroomRequired"
                     ? "CPU 温度较高，暂不能提高温度墙或功耗；降低参数仍可应用"
                     : result.Error?.Code.ToString() ?? string.Empty;
-                await PresetToolbar.ShowStatusAsync(recovery + (reason.Length == 0 ? "" : $"；{reason}"));
+                if (result.Error is null) await ShowOperationFailureAsync(recovery + (reason.Length == 0 ? "" : $"；{reason}"));
                 return false;
             }
             if (nativeMode is not null && session.State?.Controls.PerformanceMode != nativeMode ||
                 commandPlan.Steps.Any(step => step.ReadbackPlan is not null &&
                 !PerformanceCommandFactory.MatchesReadBack(session.State?.Controls.CpuTuning, step.ReadbackPlan)))
             {
-                await PresetToolbar.ShowStatusAsync("服务已完成，但页面读回不一致；请重新读取，预设未标记为应用");
+                await ShowOperationFailureAsync("服务已返回，但读回值不一致。请重新读取，预设未标记为应用。");
                 return false;
             }
             applied = commandPlan.Steps.Count;
@@ -871,7 +866,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
         catch
         {
-            await PresetToolbar.ShowStatusAsync(
+            await ShowOperationFailureAsync(
                 $"{inFlight ?? "完整性能预设"}请求中断、结果未知；请重新读取硬件状态。");
             return false;
         }
@@ -920,8 +915,15 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         SplWatts = state.SplWatts == draft.SplWatts && (draft.SplWatts is < 45 or > 75)
             ? 55 : draft.SplWatts,
         SpptWatts = state.SpptWatts == draft.SpptWatts && (draft.SpptWatts is < 45 or > 75)
-            ? 55 : draft.SpptWatts
+            ? 55 : draft.SpptWatts,
+        AdvancedCpuTuning = draft.AdvancedCpuTuning?.WithoutUnchangedHardwareFields(state.AdvancedLimits)
     };
+
+    private Task ShowOperationFailureAsync(string message)
+    {
+        session?.ReportOperationFailure(message);
+        return Task.CompletedTask;
+    }
 
     private async Task<PagePresetEnvelope?> LoadSelectedPresetAsync(bool applyToEditor, bool animate = false)
     {
@@ -1050,7 +1052,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
         return new PerformanceDraft
         {
-            UseOfficialCpuPolicy = PresetToolbar.IsEditingPreset && useOfficialCpuPolicy,
+            UseOfficialCpuPolicy = PresetToolbar.IsEditingPreset ? useOfficialCpuPolicy : currentState.OemCustomPowerMode is false,
             TemperatureLimitC = temperature,
             SplWatts = sustained,
             SpptWatts = burst,
@@ -1249,10 +1251,10 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         AdvancedWorkspace.SetCoreCount(enabledCores);
     }
 
-    private static bool IsCapabilityAvailable(HomeStateSnapshot snapshot, string key) =>
+    private bool IsCapabilityAvailable(HomeStateSnapshot snapshot, string key) =>
         snapshot.Capabilities.Items.Any(item =>
             string.Equals(item.Key, key, StringComparison.Ordinal) &&
-            item.State == CapabilityState.Available);
+            (item.State == CapabilityState.Available || session?.IsServiceConnected == true));
 
     private static Brush Brush(string key) =>
         (Brush)Application.Current.Resources[key];

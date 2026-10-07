@@ -9,10 +9,8 @@ public sealed partial class WindowsHomeHardwareProvider
     private static readonly TimeSpan GpuVfRefreshInterval = TimeSpan.FromSeconds(2);
 
     private bool IsVerifiedGpuVfDevice() =>
-        identity.BoardProduct == "MRID6-23" &&
-        identity.BiosVersion == "MRID6_23_P_V39" &&
-        identity.GpuName.Contains("RTX 4070 Laptop GPU", StringComparison.Ordinal) &&
-        compatibilityDecision?.Mode == Jiaolong.Hardware.Abstractions.Compatibility.CompatibilityMode.Writable;
+        compatibilityDecision?.Capabilities.Items.Any(item => item.Key == "gpuVfCurve" &&
+            item.State == CapabilityState.Available) == true;
 
     private GpuVfState ReadGpuVfLocked(CancellationToken cancellationToken, bool force = false)
     {

@@ -157,6 +157,7 @@ public sealed partial class PrototypeWindow : Window
         homeSession.StateChanged += OnHomeStateChanged;
         homeSession.TelemetryUpdated += OnHomeTelemetryUpdated;
         homeSession.RestoreWarning += OnRestoreWarning;
+        homeSession.NotificationRequested += OnHardwareOperationNotification;
         StartConnectionAvailabilityTimer();
         RequestModeVisuals(PrototypePerformanceMode.Office, animate: false);
         Hero.SetBrandingState(userPreferences.LogoStyle, null, animate: false);
@@ -597,6 +598,7 @@ public sealed partial class PrototypeWindow : Window
         restoreWarningTimer = null;
         lifetimeCancellation.Cancel();
         homeSession.RestoreWarning -= OnRestoreWarning;
+        homeSession.NotificationRequested -= OnHardwareOperationNotification;
         PageWorkspace.StopAutomationClient();
         var pendingTasks = new[] { modeCommandTask, customActivationTask, homeSessionTask, strongCoolingCommandTask }
             .Where(task => task is not null)
@@ -985,7 +987,7 @@ public sealed partial class PrototypeWindow : Window
     }
 
     private static bool HasCapability(HomeStateSnapshot snapshot, string key) =>
-        snapshot.Capabilities.Items.Any(item => string.Equals(item.Key, key, StringComparison.Ordinal) && item.State == CapabilityState.Available);
+        snapshot.Capabilities.Items.Any(item => string.Equals(item.Key, key, StringComparison.Ordinal));
 
     private void ApplySharedQuickSettingState(QuickSettingKind setting, bool? enabled, bool available)
     {
@@ -1740,6 +1742,23 @@ public sealed partial class PrototypeWindow : Window
             trayQuickConsole?.ApplyAdaptiveState(adaptiveModeEnabled, available);
         }
     }
+
+    private bool hardwareDialogOpen;
+
+    private void OnHardwareOperationNotification(string message) => DispatcherQueue.TryEnqueue(async () =>
+    {
+        if (allowClose || hardwareDialogOpen || string.IsNullOrWhiteSpace(message)) return;
+        var root = Content is FrameworkElement { XamlRoot.IsHostVisible: true } main ? main.XamlRoot :
+            trayQuickConsole?.Content is FrameworkElement { XamlRoot.IsHostVisible: true } popup ? popup.XamlRoot : null;
+        if (root is null) return;
+        hardwareDialogOpen = true;
+        try
+        {
+            await new ContentDialog { XamlRoot = root, Title = "操作未完成", Content = message, CloseButtonText = "知道了" }.ShowAsync();
+        }
+        catch (Exception error) { AppRuntimeLog.Write($"Hardware operation dialog: {error.Message}\n"); }
+        finally { hardwareDialogOpen = false; }
+    });
 
     private void OnRestoreWarning(string message) => DispatcherQueue.TryEnqueue(() =>
     {

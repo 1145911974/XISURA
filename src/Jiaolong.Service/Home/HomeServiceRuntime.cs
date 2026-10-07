@@ -201,7 +201,6 @@ public sealed class HomeServiceRuntime(IHomeHardwareProvider provider, Jiaolong.
 
     private static bool CanExecute(HardwareCommand command, HomeHardwareState current)
     {
-        if (current.SupportState != DeviceSupportState.Ready) return false;
         var key = HomeCapabilityCatalog.RequiredCapability(command);
         return current.Capabilities.Items.Any(item =>
             string.Equals(item.Key, key, StringComparison.Ordinal) &&

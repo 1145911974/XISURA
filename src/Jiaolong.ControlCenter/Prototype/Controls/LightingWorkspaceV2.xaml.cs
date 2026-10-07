@@ -77,7 +77,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
             HardwareStatusText.Text = "正在设备上预览 · 离开页面后恢复正在使用的灯效";
         if (lastFollowedTarget is { } active && lastFollowedPlan is { } plan)
             PresetToolbar.SetCurrentPreset(active, !LightingPresetPolicy.SameEffect(plan, appliedLightingPlan));
-        lightingAvailable = snapshot.Capabilities.Items.Any(item => item.Key == "keyboardLighting" && item.State == CapabilityState.Available);
+        lightingAvailable = snapshot.Capabilities.Items.Any(item => item.Key == "keyboardLighting");
         UpdateActionAvailability();
         if (snapshot.Controls.KeyboardLightingError is { } error && error != lastEffectError)
             _ = PresetToolbar.ShowStatusAsync("灯光执行异常，请重新应用预设");
@@ -151,13 +151,12 @@ public sealed partial class LightingWorkspaceV2 : UserControl
                 if (!PresetToolbar.IsEditingPreset) { draft = independentDraft!; Render(); }
                 await PresetToolbar.ShowStatusAsync("灯光已应用");
             }
-            else await PresetToolbar.ShowStatusAsync(result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.ConflictDetected
-                ? "二创控制台正在运行，请先退出后重试" : "应用失败，未确认灯光生效");
+            else if (result.Error is null) session.ReportOperationFailure("灯光设置未确认生效，请重试或导出日志反馈。");
         }
         catch (Exception error)
         {
             AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Lighting preset use: {error}\n");
-            await PresetToolbar.ShowStatusAsync("灯光应用或当前设置记录未完成，请检查连接和存储");
+            session?.ReportOperationFailure("灯光应用或当前设置记录未完成，请检查连接和存储。");
         }
         finally { applying = false; PresetToolbar.IsEnabled = true; UpdateActionAvailability(); }
     }

@@ -80,28 +80,24 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             telemetryCache = null;
             identity = ReadIdentity();
             var fingerprint = ReadFingerprint(identity, cancellationToken);
-            var decision = resolver.ResolveAsync(fingerprint, cancellationToken).GetAwaiter().GetResult();
+            var decision = resolver.ResolveAsync(fingerprint, cancellationToken).GetAwaiter().GetResult()
+                with { Mode = CompatibilityMode.Writable };
             compatibilityDecision = decision;
-            telemetryProvider = MatchesTelemetryIdentity(decision.Manifest, identity)
-                ? decision.Manifest!.WmiProvider
-                : null;
+            telemetryProvider = observedMiProvider;
             ConfigureCpuTuning(decision);
             ConfigureMux(decision);
-            var reason = decision.Reasons.FirstOrDefault()?.Code;
+            string? reason = null;
             var telemetry = ReadTelemetryLocked(cancellationToken);
             var cpuTuningState = ReadCpuTuningState(cancellationToken);
             var muxMode = ReadMuxMode(telemetryProvider ?? observedMiProvider, cancellationToken);
             var gpuVf = ReadGpuVfLocked(cancellationToken);
             var radios = radioController.ReadAsync(cancellationToken).GetAwaiter().GetResult();
-            var supportState = decision.Mode == Jiaolong.Hardware.Abstractions.Compatibility.CompatibilityMode.Writable
-                ? DeviceSupportState.Ready
-                : DeviceSupportState.ReadOnly;
+            var supportState = DeviceSupportState.Ready;
             var items = decision.Capabilities.Items
                 .Where(item => item.Key is not ("gpuVoltageBoost" or "gpuPowerLimit" or "cpuTuning:manualOc"))
                 .Concat([new CapabilityDescriptor("monitoring", CapabilityState.Available, null)])
-                .Concat(supportState == DeviceSupportState.ReadOnly
-                    ? HomeCapabilityCatalog.ReadOnlyControls(reason ?? "verifiedWritableEvidenceMissing")
-                    : Array.Empty<CapabilityDescriptor>())
+                .Concat(HomeCapabilityCatalog.ControlKeys.Where(key => !decision.Capabilities.Items.Any(item => item.Key == key))
+                    .Select(key => new CapabilityDescriptor(key, CapabilityState.Unavailable, "hardwareInterfaceUnavailable")))
                 .Select(item => item.Key switch
                 {
                     "cpuTuning" when !HasReadableCpuTuning(cpuTuningState) => item with
@@ -183,6 +179,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                     SupportState = supportState,
                     Reason = reason
                 };
+            compatibilityDecision = decision with { Capabilities = capabilities };
             return Task.FromResult(new HomeHardwareState(
                 capabilities,
                 supportState,
@@ -554,11 +551,12 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 item.Key == "cpuTuning:curveOptimizer" && item.State == CapabilityState.Available))
         {
             curveProbeCompleted = true;
-            var probe = new PawnIoCurveOptimizerTransport();
+            int.TryParse(ReadManagementValue("Win32_Processor", "NumberOfCores"), out var physicalCoreCount);
+            var probe = new PawnIoCurveOptimizerTransport(Math.Clamp(physicalCoreCount, 1, 16));
             try
             {
-                if (identity.CpuModel.Contains("7745HX", StringComparison.OrdinalIgnoreCase) &&
-                    probe.TryInitialize() && probe.ReadPerCore(CancellationToken.None).Count == 8)
+                if (physicalCoreCount is >= 1 and <= 16 && probe.TryInitialize() &&
+                    probe.ReadPerCore(CancellationToken.None).Count == physicalCoreCount)
                 {
 
                     curveOptimizer = probe;
@@ -600,7 +598,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             powerSettings,
             curveOptimizer,
             pboScalarTransport,
-            curveOptimizer);
+            curveOptimizer ?? pboScalarTransport);
         performanceController = new PerformanceController(cpuTransport: cpuTuningTransport);
     }
 
@@ -610,9 +608,6 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
 
         try
         {
-            if (!cpuTuningTransport.IsMiCpuPowerProtocolAvailable(cancellationToken))
-                return null;
-
             var limitSnapshot = ReadSmuLimits(cancellationToken);
             var temperatureValue = limitSnapshot?.Limits.Mp1TemperatureC;
             var splValue = limitSnapshot?.OemSplWatts;
@@ -628,7 +623,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             var curveSnapshot = ReadOptionalCpuField(CpuTuningField.NegativeCurveOptimizer, cancellationToken);
             var curveCores = curveSnapshot as IReadOnlyDictionary<int, int>;
             int? curve = curveSnapshot as int?;
-            if (curveCores?.Count == 8 && curveCores.Values.Distinct().Count() == 1)
+            if (curveCores?.Count is > 0 and <= 16 && curveCores.Values.Distinct().Count() == 1)
                 curve = curveCores.Values.First();
             return new CpuTuningState(
                 temperatureLimit,
@@ -639,7 +634,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 cores as int?,
                 windows.ActiveSchemeId,
                 curve,
-                curveCores?.Count == 8 ? "hardwareReadback" : null)
+                curveCores?.Count is > 0 and <= 16 ? "hardwareReadback" : null)
             {
                 AcMaxFrequencyMhz = windows.AcMaxFrequencyMhz,
                 DcMaxFrequencyMhz = windows.DcMaxFrequencyMhz,
@@ -664,7 +659,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
     private CpuSmuLimitSnapshot? ReadSmuLimits(CancellationToken cancellationToken)
     {
         if (DateTimeOffset.UtcNow - smuLimitCacheAt < TimeSpan.FromSeconds(1)) return smuLimitCache;
-        try { smuLimitCache = curveOptimizer?.ReadLimitSnapshot(cancellationToken); }
+        try { smuLimitCache = (curveOptimizer ?? pboScalarTransport)?.ReadLimitSnapshot(cancellationToken); }
         catch { smuLimitCache = null; }
         smuLimitCacheAt = DateTimeOffset.UtcNow;
         return smuLimitCache;
@@ -1073,13 +1068,6 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             provider.ReadType);
         return miCpuTelemetry.ReadAsync(binding, cancellationToken).GetAwaiter().GetResult();
     }
-
-    private static bool MatchesTelemetryIdentity(CompatibilityManifest? manifest, HardwareIdentity value) =>
-        manifest is not null &&
-        manifest.BoardProductsExact.Contains(value.BoardProduct, StringComparer.Ordinal) &&
-        manifest.BiosVersionsExact.Contains(value.BiosVersion, StringComparer.Ordinal) &&
-        value.CpuModel.Contains(manifest.Cpu.ModelContains, StringComparison.Ordinal) &&
-        manifest.Gpus.Any(gpu => value.GpuName.Contains(gpu.NameContains, StringComparison.Ordinal));
 
     private static double? ReadCpuFrequencyMhz()
     {

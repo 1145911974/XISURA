@@ -57,32 +57,45 @@ public sealed record CompatibilityManifest
     public MigrationRules Migration { get; init; } = new();
 
     public bool MatchesWritableFingerprint(HardwareFingerprint fingerprint)
+        => WritableMismatchReason(fingerprint) is null;
+
+    public string? WritableMismatchReason(HardwareFingerprint fingerprint)
     {
-        if (!fingerprint.HasVerifiedWritableEvidence ||
-            !BoardProductsExact.Contains(fingerprint.BoardProduct, StringComparer.Ordinal) ||
-            !BiosVersionsExact.Contains(fingerprint.BiosVersion, StringComparer.Ordinal) ||
-            !string.Equals(Cpu.Vendor, fingerprint.CpuVendor, StringComparison.Ordinal) ||
-            !fingerprint.CpuModel.Contains(Cpu.ModelContains, StringComparison.Ordinal) ||
-            Dependencies.Length == 0 ||
-            fingerprint.OemProvider is null ||
-            !WmiProvider.Matches(fingerprint.OemProvider) ||
-            fingerprint.Dependencies.Count != Dependencies.Length)
-        {
-            return false;
-        }
+        if (!BoardProductsExact.Contains(fingerprint.BoardProduct, StringComparer.Ordinal)) return "boardUnsupported";
+        if (!BiosVersionsExact.Contains(fingerprint.BiosVersion, StringComparer.Ordinal)) return "biosUnsupported";
+        if (!string.Equals(Cpu.Vendor, fingerprint.CpuVendor, StringComparison.Ordinal) ||
+            !fingerprint.CpuModel.Contains(Cpu.ModelContains, StringComparison.Ordinal)) return "cpuUnsupported";
+        if (Dependencies.Length == 0) return "manifestEvidenceIncomplete";
+        if (fingerprint.OemProvider is null) return "oemInterfaceUnavailable";
+        if (!WmiProvider.Matches(fingerprint.OemProvider)) return "oemInterfaceMismatch";
 
         var gpu = Gpus.FirstOrDefault(candidate =>
             string.Equals(candidate.VendorId, fingerprint.GpuVendorId, StringComparison.OrdinalIgnoreCase) &&
             fingerprint.GpuName.Contains(candidate.NameContains, StringComparison.Ordinal));
 
-        if (gpu is null ||
-            gpu.PnpDeviceIdsExact.Length == 0 ||
-            !fingerprint.GpuPnpDeviceIdsExact.Any(id => gpu.PnpDeviceIdsExact.Contains(id, StringComparer.OrdinalIgnoreCase)))
-        {
-            return false;
-        }
+        if (gpu is null) return "gpuUnsupported";
+        if (gpu.PnpDeviceIdsExact.Length == 0) return "manifestEvidenceIncomplete";
+        if (fingerprint.GpuPnpDeviceIdsExact.Count == 0) return "gpuEvidenceMissing";
+        if (!fingerprint.GpuPnpDeviceIdsExact.Any(observed => PciHardwareId(observed) is { } hardwareId &&
+            gpu.PnpDeviceIdsExact.Any(expected => string.Equals(hardwareId, PciHardwareId(expected), StringComparison.OrdinalIgnoreCase))))
+            return "gpuHardwareMismatch";
+        if (Dependencies.Any(required => !fingerprint.Dependencies.Any(observed => string.Equals(required.Name, observed.Name, StringComparison.Ordinal))))
+            return "hardwareDependencyMissing";
+        if (fingerprint.Dependencies.Count != Dependencies.Length ||
+            !Dependencies.All(required => fingerprint.Dependencies.Any(observed => required.Matches(observed))))
+            return "hardwareDependencyMismatch";
+        return fingerprint.HasVerifiedWritableEvidence ? null : "verifiedWritableEvidenceMissing";
+    }
 
-        return Dependencies.All(required => fingerprint.Dependencies.Any(observed => required.Matches(observed)));
+    private static string? PciHardwareId(string instanceId)
+    {
+        // The instance suffix identifies one computer's PCI location; VEN/DEV/SUBSYS/REV identify the verified hardware.
+        var parts = instanceId.Split('\\');
+        if (parts.Length is < 2 or > 3 || !string.Equals(parts[0], "PCI", StringComparison.OrdinalIgnoreCase) ||
+            !parts[1].StartsWith("VEN_", StringComparison.OrdinalIgnoreCase) ||
+            !parts[1].Contains("&DEV_", StringComparison.OrdinalIgnoreCase) ||
+            parts.Length == 3 && string.IsNullOrWhiteSpace(parts[2])) return null;
+        return $"{parts[0]}\\{parts[1]}";
     }
 }
 

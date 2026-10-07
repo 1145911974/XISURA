@@ -29,6 +29,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
     private Popup? trayQuickMenuEditorPopup;
     private readonly Dictionary<Grid, Storyboard> settingsDetailsAnimations = new();
     private string startupStatusText = "开机启动状态尚未读取";
+    private string currentGpuName = "显卡";
     private readonly List<double> gpuUsageHistory = new()
     {
         50, 42, 48, 44, 47, 54, 58, 52, 48, 45, 52, 55, 50, 56, 52, 60, 68, 76, 72, 65, 70, 62, 58, 65, 78, 85, 82, 75, 70, 72
@@ -264,7 +265,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
         GpuMonitorStatusDot.Fill = (Brush)GpuPage.Resources[gpuMonitorAvailable
             ? "GpuMonitorOnlineBrush"
             : "GpuMonitorOfflineBrush"];
-        GpuMonitorStatusText.Text = gpuMonitorAvailable ? "NVIDIA GeForce RTX 4070" : "监控不可用";
+        GpuMonitorStatusText.Text = gpuMonitorAvailable ? currentGpuName : "监控不可用";
     }
 
     private static void UpdateMeterColumns(ColumnDefinition activeCol, ColumnDefinition inactiveCol, double value, double max)
@@ -344,11 +345,12 @@ public sealed partial class PrototypePageWorkspace : UserControl
         };
         MuxStatusText.Text = supportText;
         FanStatusText.Text = supportText;
-        SettingsServiceStatusText.Text = session?.Status == HomeSessionStatus.Connected
+        SettingsServiceStatusText.Text = session?.IsServiceConnected == true
             ? "硬件服务 IPC 已连接"
             : "硬件服务 IPC 未连接";
 
         var identity = snapshot.Capabilities.Identity;
+        currentGpuName = identity?.GpuName ?? "显卡";
         SettingsBoardText.Text = identity?.BoardProduct ?? "未知";
         SettingsCpuModelText.Text = identity?.CpuModel ?? "未知";
         SettingsBiosText.Text = identity?.BiosVersion ?? "未知";
@@ -359,7 +361,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
         ToolTipService.SetToolTip(SettingsBoardText, SettingsBoardText.Text);
         ToolTipService.SetToolTip(SettingsCpuModelText, SettingsCpuModelText.Text);
         ToolTipService.SetToolTip(SettingsBiosText, SettingsBiosText.Text);
-        SettingsServiceConnectionText.Text = session?.Status == HomeSessionStatus.Connected
+        SettingsServiceConnectionText.Text = session?.IsServiceConnected == true
             ? "客户端 IPC 已连接"
             : "客户端 IPC 未连接";
 
@@ -481,7 +483,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
     private async void OnSettingsRepair(object sender, RoutedEventArgs e)
     {
         SettingsStatusText.Visibility = Visibility.Visible;
-        var connected = session?.Status == HomeSessionStatus.Connected;
+        var connected = session?.IsServiceConnected == true;
         SettingsServiceStatusText.Text = connected ? "硬件服务 IPC 已连接" : "硬件服务 IPC 未连接";
         SettingsServiceConnectionText.Text = connected ? "客户端 IPC 已连接" : "客户端 IPC 未连接";
         SettingsStatusText.Text = connected
@@ -511,36 +513,85 @@ public sealed partial class PrototypePageWorkspace : UserControl
         SettingsStatusText.Text = "依赖修复仅使用本机安装目录；不会下载、执行 OEM GUI 或访问网络。";
     }
 
+    private bool exportingDiagnostics;
     private async void OnSettingsExport(object sender, RoutedEventArgs e)
     {
+        if (exportingDiagnostics) return;
+        exportingDiagnostics = true;
+        SettingsExportLogsButton.IsEnabled = false;
         SettingsStatusText.Visibility = Visibility.Visible;
+        string? temporary = null;
         try
         {
             var owner = ownerWindow ?? throw new InvalidOperationException("主窗口尚未连接。");
             var picker = new FileSavePicker
             {
-                SuggestedFileName = $"Jiaolong-diagnostics-{DateTime.UtcNow:yyyyMMdd-HHmmss}",
+                SuggestedFileName = $"XISURA-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}",
                 SuggestedStartLocation = PickerLocationId.DocumentsLibrary
             };
-            picker.FileTypeChoices.Add("诊断压缩包", new List<string> { ".zip" });
+            picker.FileTypeChoices.Add("诊断日志压缩包", new List<string> { ".zip" });
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(owner));
             var destination = await picker.PickSaveFileAsync();
             if (destination is null) return;
-
+            SettingsStatusText.Text = "正在收集诊断日志…";
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            var entries = await SupportDiagnosticCollector.CollectAsync(session?.State, session?.Status.ToString() ?? "NotStarted",
+                session?.IsServiceConnected == true, deadline.Token);
             await using var client = new ControlCenterClient();
-            var viewModel = new SettingsViewModel(client, preferences, startupRegistration);
-            var export = await viewModel.ExportDiagnosticsAsync(CancellationToken.None);
-            var copy = await viewModel.CopyExportToAsync(export, destination, CancellationToken.None);
-            SettingsStatusText.Text = copy.StagingCleanupConfirmed
-                ? "诊断包已导出到用户选择的位置。"
-                : "诊断包已导出；服务端暂存副本未能确认清理，请检查硬件服务版本和连接。";
+            Jiaolong.Diagnostics.DiagnosticExport? serviceExport = null;
+            try
+            {
+                if (session?.IsServiceConnected == true)
+                {
+                    using var serviceDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+                    serviceDeadline.CancelAfter(TimeSpan.FromSeconds(8));
+                    try
+                    {
+                        serviceExport = await client.StageDiagnosticsAsync(new Jiaolong_ControlCenter.ViewModels.DiagnosticExportRequest(Guid.NewGuid()), serviceDeadline.Token);
+                    }
+                    catch (Exception error) when (!deadline.IsCancellationRequested)
+                    { entries["service-export-error.txt"] = error.ToString(); }
+                }
+                else entries["service-export-status.txt"] = "IPC 未连接；已导出本地诊断，服务端遥测未收集。";
+                temporary = Path.Combine(Path.GetTempPath(), $"xisura-diagnostics-{Guid.NewGuid():N}.zip");
+                await using (var archive = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                    await Jiaolong.Diagnostics.SupportDiagnosticBundle.WriteAsync(archive, entries, serviceExport?.FilePath, deadline.Token);
+                await using (var source = new FileStream(temporary, FileMode.Open, FileAccess.Read, FileShare.Read))
+                await using (var target = await destination.OpenStreamForWriteAsync())
+                {
+                    target.SetLength(0);
+                    await source.CopyToAsync(target, deadline.Token);
+                    await target.FlushAsync(deadline.Token);
+                }
+                SettingsStatusText.Text = "诊断日志已导出，可将 ZIP 文件发送给作者排查。";
+            }
+            finally
+            {
+                if (serviceExport is not null)
+                {
+                    using var cleanupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    try { await client.DeleteStagedDiagnosticsAsync(serviceExport, cleanupDeadline.Token); }
+                    catch (Exception error) { AppRuntimeLog.Write($"Diagnostic staging cleanup: {error.Message}\n"); }
+                }
+            }
         }
-        catch (Exception exception)
+        catch (Exception error)
         {
-            SettingsStatusText.Text = $"导出诊断包失败：{exception.Message}";
+            SettingsStatusText.Text = $"导出日志失败：{error.Message}";
+            AppRuntimeLog.Write($"Diagnostic export failed: {error}\n");
+        }
+        finally
+        {
+            if (temporary is not null)
+            {
+                try { File.Delete(temporary); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                { AppRuntimeLog.Write($"Diagnostic local cleanup: {error.Message}\n"); }
+            }
+            exportingDiagnostics = false;
+            SettingsExportLogsButton.IsEnabled = true;
         }
     }
-
     private void OnSettingsStartupToggled(object sender, RoutedEventArgs e)
     {
         SettingsStatusText.Visibility = Visibility.Visible;
@@ -709,23 +760,27 @@ public sealed partial class PrototypePageWorkspace : UserControl
     {
         if (session is null)
         {
-            status.Text = "硬件服务尚未连接，未执行写入";
+            await ShowOperationFailureAsync("硬件服务尚未连接，本次未应用。请重试或导出日志反馈。");
             return new CommandResult(command.OperationId, CommandState.Rejected, null, RequiredUserAction.None, null, false);
         }
 
         try
         {
             var result = await session.ExecuteAsync(command, CancellationToken.None);
-            status.Text = result.Error is null && result.State == CommandState.Applied
-                ? "已应用并完成服务回读"
-                : $"未应用：{result.Error?.Code.ToString() ?? result.State.ToString()}";
+            status.Text = string.Empty;
             return result;
         }
         catch (Exception exception)
         {
-            status.Text = $"未应用：{exception.Message}";
+            await ShowOperationFailureAsync($"本次设置未完成：{exception.Message}");
             return new CommandResult(command.OperationId, CommandState.Rejected, null, RequiredUserAction.None, null, false);
         }
+    }
+
+    private async Task ShowOperationFailureAsync(string message)
+    {
+        if (XamlRoot is null) return;
+        await new ContentDialog { XamlRoot = XamlRoot, Title = "操作未完成", Content = message, CloseButtonText = "知道了" }.ShowAsync();
     }
 
     private static string Format(double? value, string suffix) =>
@@ -733,6 +788,5 @@ public sealed partial class PrototypePageWorkspace : UserControl
 
     private static bool IsCapabilityAvailable(HomeStateSnapshot snapshot, string key) =>
         snapshot.Capabilities.Items.Any(item =>
-            string.Equals(item.Key, key, StringComparison.Ordinal) &&
-            item.State == CapabilityState.Available);
+            string.Equals(item.Key, key, StringComparison.Ordinal));
 }

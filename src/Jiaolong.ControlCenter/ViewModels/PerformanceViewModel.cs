@@ -51,11 +51,25 @@ public sealed record AdvancedCpuTuningDraft
 {
     public CpuCurveOptimizerMode? CurveOptimizerMode { get; init; }
 
+    public AdvancedCpuTuningDraft WithoutUnchangedHardwareFields(AdvancedCpuTuningPlan? limits) => this with
+    {
+        StapmWatts = StapmWatts == limits?.StapmWatts ? null : StapmWatts,
+        FastPptWatts = FastPptWatts == limits?.FastPptWatts ? null : FastPptWatts,
+        SlowPptWatts = SlowPptWatts == limits?.SlowPptWatts ? null : SlowPptWatts,
+        PptWatts = PptWatts == limits?.PptWatts ? null : PptWatts,
+        VrmCurrentMilliamps = VrmCurrentMilliamps == limits?.VrmCurrentMilliamps ? null : VrmCurrentMilliamps,
+        TdcCurrentMilliamps = TdcCurrentMilliamps == limits?.TdcCurrentMilliamps ? null : TdcCurrentMilliamps,
+        EdcCurrentMilliamps = EdcCurrentMilliamps == limits?.EdcCurrentMilliamps ? null : EdcCurrentMilliamps,
+        Mp1TemperatureC = Mp1TemperatureC == limits?.Mp1TemperatureC ? null : Mp1TemperatureC,
+        RsmuTemperatureC = RsmuTemperatureC == limits?.RsmuTemperatureC ? null : RsmuTemperatureC
+    };
+
     public static AdvancedCpuTuningDraft FromCurveReadback(CpuTuningState? state, CpuCurveOptimizerMode? preferredMode)
     {
-        if (state is not { CurveOptimizerVerification: "hardwareReadback", PerCoreCurveOptimizer: { Count: 8 } cores } ||
-            Enumerable.Range(0, 8).Any(core => !cores.TryGetValue(core, out int value) || value is < -30 or > 0))
+        if (state?.CurveOptimizerVerification != "hardwareReadback" || !state.HasCompleteCurveValues() ||
+            state.PerCoreCurveOptimizer!.Values.Any(value => value > 0))
             return new() { CurveOptimizerMode = preferredMode ?? CpuCurveOptimizerMode.Bios };
+        var cores = state.PerCoreCurveOptimizer!;
         int first = cores[0];
         bool uniform = cores.Values.All(value => value == first);
         var mode = preferredMode ?? (uniform

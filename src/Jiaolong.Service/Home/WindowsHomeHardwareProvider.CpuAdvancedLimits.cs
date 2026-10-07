@@ -40,7 +40,7 @@ public sealed partial class WindowsHomeHardwareProvider
                     thermalGuard |= advanced.PboScalar.Value > previous;
                 }
                 if (advanced.CurveOptimizerAll is < -30 or > 0 ||
-                    advanced.PerCoreCurveOptimizer?.Any(pair => pair.Key is < 0 or > 7 || pair.Value is < -30 or > 0) == true)
+                    advanced.PerCoreCurveOptimizer?.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -30 or > 0) == true)
                     return Rejected(command.OperationId, ErrorCode.ValidationFailed);
             }
             if ((plan.NegativeCurveOptimizer.HasValue || plan.Advanced?.CurveOptimizerAll.HasValue == true || plan.Advanced?.PerCoreCurveOptimizer is { Count: > 0 }) &&

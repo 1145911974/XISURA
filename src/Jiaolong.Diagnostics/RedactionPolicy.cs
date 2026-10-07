@@ -23,6 +23,7 @@ public static partial class RedactionPolicy
         ArgumentNullException.ThrowIfNull(value);
         value = SidPattern().Replace(value, "[redacted-sid]");
         value = UserPathPattern().Replace(value, "[redacted-path]");
+        value = JsonSecretPattern().Replace(value, "$1\"[redacted]\"");
         value = value.Replace("secret-token", "[redacted]", StringComparison.OrdinalIgnoreCase);
         value = SecretPattern().Replace(value, "$1[redacted]");
         return UsernamePattern().Replace(value, "[redacted-user]");
@@ -63,8 +64,11 @@ public static partial class RedactionPolicy
     [GeneratedRegex(@"(?i)S-1-5-21-(?:-?\d+){3,4}", RegexOptions.CultureInvariant)]
     private static partial Regex SidPattern();
 
-    [GeneratedRegex(@"(?i)C:\\Users\\[^""\r\n ]*", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?i)[A-Z]:\\{1,2}Users\\{1,2}[^""\r\n]*", RegexOptions.CultureInvariant)]
     private static partial Regex UserPathPattern();
+
+    [GeneratedRegex(@"(?i)(""(?:token|password|secret)""\s*:\s*)""(?:\\.|[^""\\])*""", RegexOptions.CultureInvariant)]
+    private static partial Regex JsonSecretPattern();
 
     [GeneratedRegex(@"(?i)(secret-token|(?:token|password|secret)\s*[:=]\s*)\S+", RegexOptions.CultureInvariant)]
     private static partial Regex SecretPattern();

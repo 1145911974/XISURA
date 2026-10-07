@@ -74,6 +74,7 @@ public sealed class HomeControlSession : IAsyncDisposable
     }
 
     public bool ConfigurationRestorationSettled => restoreScheduled && Volatile.Read(ref restoreTask)?.IsCompleted == true;
+    public bool IsServiceConnected => client.IsConnected;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -106,7 +107,11 @@ public sealed class HomeControlSession : IAsyncDisposable
         if (command is not (SetAdaptiveAutomationConfigurationCommand or UpdateAdaptiveAutomationContextCommand))
             Interlocked.Increment(ref manualCommandVersion);
         if (command is SetQuickSettingCommand { Setting: QuickSettingKind.Wifi or QuickSettingKind.Bluetooth } radioCommand)
-            return await ExecuteRadioAsync(radioCommand, cancellationToken);
+        {
+            var radioResult = await ExecuteRadioAsync(radioCommand, cancellationToken);
+            if (radioResult.Error is not null) Notify(ErrorText(radioResult.Error.Code));
+            return radioResult;
+        }
 
         if (Status == HomeSessionStatus.Disconnected)
             await ConnectAndRefreshAsync(cancellationToken, notifyFailure: true);
@@ -192,7 +197,11 @@ public sealed class HomeControlSession : IAsyncDisposable
                 }
                 if (confirmed is not null) StateChanged?.Invoke(confirmed);
             }
-            else await RefreshStateAsync(token); // Compatibility with services lacking mode readback.
+            else
+            {
+                if (result.Error is not null) Notify(ErrorText(result.Error.Code));
+                await RefreshStateAsync(token); // Compatibility with services lacking mode readback.
+            }
             try { await automaticRestore.RecordAppliedAsync(command, result, CancellationToken.None); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             { RestoreWarning?.Invoke("模式已返回，但自动恢复快照保存失败；请检查存储后重试"); }
@@ -469,6 +478,8 @@ public sealed class HomeControlSession : IAsyncDisposable
 
     private void Notify(string text) => NotificationRequested?.Invoke(text);
 
+    public void ReportOperationFailure(string message) => Notify(message);
+
     private async Task<CommandResult> ExecuteRadioAsync(
         SetQuickSettingCommand command,
         CancellationToken cancellationToken)
@@ -585,12 +596,15 @@ public sealed class HomeControlSession : IAsyncDisposable
 
     private static string ErrorText(ErrorCode code) => code switch
     {
-        ErrorCode.ReadOnlySafeMode => HomeSessionMessages.ReadOnlyMode,
-        ErrorCode.BiosUnsupported => "当前 BIOS 未验证，硬件控制未执行",
-        ErrorCode.DependencyMissing => "硬件依赖缺失，已尝试修复但仍不可用",
-        ErrorCode.ConflictDetected => "检测到其他控制程序，已暂停硬件控制",
-        ErrorCode.DeviceMismatch => "当前设备不是已验证的适配基线",
+        ErrorCode.ReadOnlySafeMode or ErrorCode.BiosUnsupported or ErrorCode.DeviceMismatch or ErrorCode.CapabilityUnavailable => "当前设备未提供此功能所需的控制接口，本次设置未应用。其他功能仍可使用。",
+        ErrorCode.DependencyMissing => "此功能所需的硬件驱动未就绪，本次设置未应用。可导出日志反馈。",
+        ErrorCode.HardwareReadFailed => "无法读取此功能的当前设置，本次未写入。请重试或导出日志反馈。",
+        ErrorCode.HardwareWriteFailed => "硬件未接受本次设置，请重试或导出日志反馈。",
+        ErrorCode.ReadBackMismatch => "硬件读回值与目标不一致，已尝试恢复原设置。",
+        ErrorCode.RollbackFailed => "硬件设置恢复未成功，请重启电脑并导出日志反馈。",
+        ErrorCode.ValidationFailed => "此设置超出当前接口允许范围或未满足电源、温度条件，未应用。",
+        ErrorCode.ConflictDetected => "检测到另一程序正在控制同一功能，本次未应用。请关闭冲突程序后重试。",
         ErrorCode.ServiceUnavailable => "硬件服务暂不可用",
-        _ => "当前硬件功能不可用，已尝试修复但仍未成功"
+        _ => "本次设置未完成，请重试或导出日志反馈。"
     };
 }

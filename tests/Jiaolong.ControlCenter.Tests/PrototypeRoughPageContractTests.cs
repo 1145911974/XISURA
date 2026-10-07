@@ -56,15 +56,33 @@ public sealed class PrototypeRoughPageContractTests
     public void Main_window_diagnostic_export_uses_the_service_and_user_file_picker()
     {
         var code = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "PrototypePageWorkspace.xaml.cs");
+        var xaml = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "PrototypePageWorkspace.xaml");
+        var runtimeStart = xaml.IndexOf("x:Name=\"SettingsRuntimeCard\"", StringComparison.Ordinal);
+        var detailsStart = xaml.IndexOf("x:Name=\"SettingsDetailsCards\"", StringComparison.Ordinal);
+        var supportStart = xaml.IndexOf("x:Name=\"SettingsProjectSupportCard\"", StringComparison.Ordinal);
+        Assert.IsTrue(runtimeStart >= 0 && detailsStart > runtimeStart && supportStart > detailsStart);
+        var runtime = xaml[runtimeStart..detailsStart];
+        var details = xaml[detailsStart..supportStart];
+        Assert.IsFalse(runtime.Contains("运行状态更多操作", StringComparison.Ordinal));
+        Assert.IsFalse(details.Contains("Content=\"导出日志\"", StringComparison.Ordinal));
+        foreach (var action in new[] { "OnSettingsRepair", "OnSettingsExport", "OnSettingsRepairNotes" })
+        {
+            var binding = $"Click=\"{action}\"";
+            Assert.AreEqual(1, xaml.Split(binding, StringSplitOptions.None).Length - 1);
+            StringAssert.Contains(details, binding);
+            Assert.IsFalse(runtime.Contains(binding, StringComparison.Ordinal));
+        }
+        StringAssert.Contains(details, "Content=\"导出诊断包\"");
 
         StringAssert.Contains(code, "async void OnSettingsExport");
         StringAssert.Contains(code, "FileSavePicker");
         StringAssert.Contains(code, "PickSaveFileAsync");
-        StringAssert.Contains(code, "ExportDiagnosticsAsync");
-        StringAssert.Contains(code, "CopyExportToAsync");
-        StringAssert.Contains(code, "copy.StagingCleanupConfirmed");
-        StringAssert.Contains(code, "服务端暂存副本未能确认清理");
-        StringAssert.Contains(code, "导出诊断包失败：");
+        StringAssert.Contains(code, "SupportDiagnosticCollector.CollectAsync");
+        StringAssert.Contains(code, "SupportDiagnosticBundle.WriteAsync");
+        StringAssert.Contains(code, "StageDiagnosticsAsync");
+        StringAssert.Contains(code, "DeleteStagedDiagnosticsAsync");
+        StringAssert.Contains(code, "IPC 未连接；已导出本地诊断");
+        StringAssert.Contains(code, "导出日志失败：");
         Assert.IsFalse(code.Contains("诊断摘要已导出", StringComparison.Ordinal));
     }
 
@@ -76,7 +94,7 @@ public sealed class PrototypeRoughPageContractTests
 
         StringAssert.Contains(code, "SettingsBoardText.Text = identity?.BoardProduct ?? \"未知\";");
         StringAssert.Contains(code, "SettingsBiosText.Text = identity?.BiosVersion ?? \"未知\";");
-        StringAssert.Contains(code, "SettingsServiceConnectionText.Text = session?.Status == HomeSessionStatus.Connected");
+        StringAssert.Contains(code, "SettingsServiceConnectionText.Text = session?.IsServiceConnected == true");
         Assert.IsFalse(xaml.Contains("N.1.08MRV02", StringComparison.Ordinal));
         Assert.IsFalse(xaml.Contains("微软 WHQL 签名验证", StringComparison.Ordinal));
         Assert.IsFalse(xaml.Contains("1 小时 32 分", StringComparison.Ordinal));
@@ -655,7 +673,7 @@ public sealed class PrototypeRoughPageContractTests
         var toolbarCode = ReadSource("src", "Jiaolong.ControlCenter", "Controls", "PagePresetToolbar.xaml.cs");
         var workspace = ReadPerformanceV2Markup();
         StringAssert.Contains(code, "_ = PresetToolbar.ShowSavedStatusAsync()");
-        StringAssert.Contains(code, "await PresetToolbar.ShowStatusAsync(\"保存失败，原预设未确认更改\")");
+        StringAssert.Contains(code, "await ShowOperationFailureAsync(\"保存失败，原预设未更改。请重试。\")");
         StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(2)");
         StringAssert.Contains(workspace, "SaveRequested=\"OnSavePresetClick\"");
         StringAssert.Contains(workspace, "UseRequested=\"OnUsePresetClick\"");

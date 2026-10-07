@@ -54,6 +54,11 @@ public sealed record CpuTuningState(
 
 public static class CpuTuningStateExtensions
 {
+    public static bool HasCompleteCurveValues(this CpuTuningState state) =>
+        state.PerCoreCurveOptimizer is { Count: > 0 and <= 16 } cores &&
+        cores.Count == (state.EnabledCoreCount ?? 8) &&
+        Enumerable.Range(0, cores.Count).All(core => cores.TryGetValue(core, out int value) && value is >= -30 and <= 30);
+
     public static int? AcFrequency(this CpuTuningState state) =>
         state.AcMaxFrequencyMhz ?? state.MaxFrequencyMhz;
 

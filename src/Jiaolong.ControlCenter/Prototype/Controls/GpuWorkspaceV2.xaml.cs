@@ -381,7 +381,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         } && hardware.Error is null;
         if (!memoryReady)
         {
-            MemoryRail.IsEnabled = MemoryValueBox.IsEnabled = false;
+            MemoryRail.IsEnabled = MemoryValueBox.IsEnabled = capabilityAvailable && !memoryPending;
             SetGpuHelpState(MemoryOffsetHelp, "硬件偏移不可用");
             return;
         }
@@ -402,6 +402,8 @@ public sealed partial class GpuWorkspaceV2 : UserControl
 
     private void UpdateMemoryDraft()
     {
+        if (!memoryReady && !PresetToolbar.IsEditingPreset)
+            session?.ReportOperationFailure("显卡驱动未提供显存偏移读回，本次未应用。可导出日志反馈。");
         memoryDraftDirty = memoryReady && memoryAppliedKhz is int applied &&
             (int)Math.Round((MemoryRail.Value ?? 0) * 1000d) != applied;
 
@@ -419,7 +421,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         } && hardware.CoreMinimumOffsetKhz <= hardware.CoreMaximumOffsetKhz;
         if (!coreOffsetReady)
         {
-            CoreOffsetRail.IsEnabled = CoreOffsetValueBox.IsEnabled = false;
+            CoreOffsetRail.IsEnabled = CoreOffsetValueBox.IsEnabled = capabilityAvailable && !coreOffsetPending;
             SetGpuHelpState(CoreOffsetHelp, "硬件偏移不可用");
             return;
         }
@@ -453,6 +455,8 @@ public sealed partial class GpuWorkspaceV2 : UserControl
 
     private void UpdateCoreOffsetDraft()
     {
+        if (!coreOffsetReady && !PresetToolbar.IsEditingPreset)
+            session?.ReportOperationFailure("显卡驱动未提供核心偏移读回，本次未应用。可导出日志反馈。");
         coreOffsetDirty = coreOffsetReady && coreOffsetAppliedKhz is int applied &&
             (int)Math.Round(CoreOffsetValueBox.Value * 1000d) != applied;
 
@@ -499,7 +503,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         if (!ReferenceEquals(UsageProgressPath.Data, usageGeometry)) UsageProgressPath.Data = usageGeometry;
     }
 
-    private static bool CapabilityAvailable(HomeStateSnapshot snapshot, string key) => snapshot.Capabilities.Items.Any(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase) && item.State == CapabilityState.Available);
+    private static bool CapabilityAvailable(HomeStateSnapshot snapshot, string key) => snapshot.Capabilities.Items.Any(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
     private static string Format(double? value, string unit) => value is double actual && double.IsFinite(actual) ? $"{actual:0} {unit}" : $"-- {unit}";
 
 }

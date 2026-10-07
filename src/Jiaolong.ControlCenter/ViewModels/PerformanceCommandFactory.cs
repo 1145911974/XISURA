@@ -37,10 +37,15 @@ public static class PerformanceCommandFactory
         var validation = PerformanceDraftValidator.Validate(draft);
         if (!validation.IsValid)
             return new(steps, skipped, validation.Errors[0]);
-        if (draft.TemperatureLimitC is < 45 or > 100 || draft.SplWatts is < 45 or > 75 || draft.SpptWatts is < 45 or > 75)
+        if (!draft.UseOfficialCpuPolicy &&
+            (draft.TemperatureLimitC is < 45 or > 100 || draft.SplWatts is < 45 or > 75 || draft.SpptWatts is < 45 or > 75))
             return new(steps, skipped, "OEM 温度墙须为 45–100°C，SPL/SPPT 须为 45–75W；未发送任何命令");
 
-        AdvancedCpuTuningDraft? advanced = draft.AdvancedCpuTuning;
+        AdvancedCpuTuningDraft? advanced = draft.AdvancedCpuTuning?.WithoutUnchangedHardwareFields(state.AdvancedLimits);
+        if (draft.UseOfficialCpuPolicy && advanced is not null)
+            advanced = advanced with { StapmWatts = null, FastPptWatts = null, SlowPptWatts = null, PptWatts = null,
+                VrmCurrentMilliamps = null, TdcCurrentMilliamps = null, EdcCurrentMilliamps = null,
+                Mp1TemperatureC = null, RsmuTemperatureC = null };
         if (advanced is not null &&
             ((advanced.FastPptWatts is double fastTarget && fastTarget != draft.SpptWatts) ||
              (advanced.PptWatts is double pptTarget && pptTarget != draft.SpptWatts)))
@@ -121,14 +126,16 @@ public static class PerformanceCommandFactory
         if (HasPlanValues(windowsPlan))
             steps.Add(Step("Windows 频率/Boost/电源方案/停泊", windowsPlan, windowsPlan));
 
-        // Balanced factory presets tune Windows policy only; the OEM mode owns power/thermal limits.
-        if (draft.UseOfficialCpuPolicy) return new(steps, skipped);
+        // Official policy owns power/thermal limits; explicitly requested CO/PBO adjustments remain independent.
+        if (!draft.UseOfficialCpuPolicy)
+        {
         var temperaturePlan = new CpuTuningPlan(draft.TemperatureLimitC, null, null, null, null, null, null, null);
         var splPlan = new CpuTuningPlan(null, draft.SplWatts, null, null, null, null, null, null);
         var spptPlan = new CpuTuningPlan(null, null, draft.SpptWatts, null, null, null, null, null);
         steps.Add(Step("温度墙", temperaturePlan, temperaturePlan));
         steps.Add(Step("持续功耗 SPL", splPlan, splPlan));
         steps.Add(Step("短时功耗 SPPT", spptPlan, spptPlan));
+        }
 
         if (advanced is not null)
         {
@@ -179,8 +186,8 @@ public static class PerformanceCommandFactory
             {
                 if (!curveOptimizerAvailable)
                     return new([], skipped, "预设包含曲线优化，但当前 CO 能力不可用；未发送任何命令");
-                if (cores.Any(pair => pair.Key is < 0 or > 7 || pair.Value is < -30 or > 0))
-                    return new([], skipped, "逐核 Curve Optimizer 仅接受核心 0–7、偏移 -30–0；未发送任何命令");
+                if (cores.Any(pair => pair.Key < 0 || pair.Key >= (state?.EnabledCoreCount ?? 8) || pair.Value is < -30 or > 0))
+                    return new([], skipped, "逐核 Curve Optimizer 仅接受当前 CPU 的有效核心、偏移 -30–0；未发送任何命令");
                 var coPlan = new CpuTuningPlan(null, null, null, null, null, null, null, null)
                 { Advanced = new AdvancedCpuTuningPlan(PerCoreCurveOptimizer: new Dictionary<int, int>(cores)) };
                 steps.Add(Step("逐核 Curve Optimizer", coPlan, coPlan));
@@ -223,10 +230,10 @@ public static class PerformanceCommandFactory
         (plan.Advanced?.RsmuTemperatureC is null || state.AdvancedLimits?.RsmuTemperatureC == plan.Advanced.RsmuTemperatureC) &&
         (plan.Advanced?.PboScalar is null || state.PboScalar == plan.Advanced.PboScalar) &&
         ((plan.NegativeCurveOptimizer ?? plan.Advanced?.CurveOptimizerAll) is not int curve ||
-            state.PerCoreCurveOptimizer is { Count: 8 } allCores && allCores.Values.All(value => value == curve)) &&
+            state.HasCompleteCurveValues() && state.PerCoreCurveOptimizer!.Values.All(value => value == curve)) &&
         (plan.Advanced?.PerCoreCurveOptimizer is not { Count: > 0 } targets ||
-            state.PerCoreCurveOptimizer is { Count: 8 } cores &&
-            targets.All(pair => cores.TryGetValue(pair.Key, out int actual) && actual == pair.Value));
+            state.HasCompleteCurveValues() &&
+            targets.All(pair => state.PerCoreCurveOptimizer!.TryGetValue(pair.Key, out int actual) && actual == pair.Value));
 
     private static bool HasSmuFields(AdvancedCpuTuningDraft draft) =>
         draft.StapmWatts is not null || draft.FastPptWatts is not null || draft.SlowPptWatts is not null ||

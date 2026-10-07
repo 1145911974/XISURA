@@ -143,8 +143,8 @@ public sealed partial class GpuWorkspaceV2
                 ? gpuVfDraft ?? lastGpuVf.Nodes.Select(node => node.OffsetKhz).ToArray() : null;
             var draft = PresetToolbar.IsEditingPreset ? new GpuWorkspacePreset(
                 clockReady && clockInitialized && !gpuEditorResetClock ? (int)Math.Round(CoreRail.Value ?? CoreValueBox.Value) : null,
-                memoryReady ? (int)Math.Round((MemoryRail.Value ?? MemoryValueBox.Value) * 1000d) : null,
-                coreOffsetReady ? (int)Math.Round(CoreOffsetValueBox.Value * 1000d) : null,
+                (int)Math.Round((MemoryRail.Value ?? MemoryValueBox.Value) * 1000d),
+                (int)Math.Round(CoreOffsetValueBox.Value * 1000d),
                 vf) { ResetCoreFrequencyLimit = gpuEditorResetClock } : new GpuWorkspacePreset(null,
                     memoryReady ? hardware?.Controls.GpuVf?.MemoryOffsetKhz : null,
                     coreOffsetReady ? hardware?.Controls.GpuVf?.CoreOffsetKhz : null,

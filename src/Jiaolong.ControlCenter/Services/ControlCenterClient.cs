@@ -30,6 +30,7 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
 
     public ControlCenterClient(string? pipeName = null) => this.pipeName = string.IsNullOrWhiteSpace(pipeName) ? PipeName : pipeName;
     internal ControlCenterClient CreatePeer() => new(pipeName);
+    public bool IsConnected { get { lock (stateGate) return pipe is { IsConnected: true }; } }
 
     public async Task ConnectAsync(CancellationToken cancellationToken)
     {

@@ -210,8 +210,27 @@ public sealed partial class PagePresetToolbar : UserControl
     }
     public Task SetDirtyStatusAsync(bool dirty) => dirty ? ShowStatusAsync("有未保存的更改") : HideStatusAsync();
     public Task ShowSavedStatusAsync() => ShowStatusAsync("已保存", autoHide: true);
-    public Task ShowStatusAsync(string text) => ShowStatusAsync(text, autoHide: !text.StartsWith("正在", StringComparison.Ordinal));
+    public Task ShowStatusAsync(string text) => IsFailureFeedback(text)
+        ? ShowFailureDialogAsync(text) : ShowStatusAsync(text, autoHide: !text.StartsWith("正在", StringComparison.Ordinal));
     public Task ShowTransientStatusAsync(string text) => ShowStatusAsync(text, autoHide: true);
+
+    private static bool IsFailureFeedback(string text) =>
+        new[] { "失败", "不可用", "未应用", "未提交", "未发送", "未完成", "未确认", "不支持", "无效", "请求中断", "结果未知", "无法", "超出", "缺少", "不一致" }
+            .Any(text.Contains) && !text.StartsWith("已完成", StringComparison.Ordinal);
+
+    private bool failureDialogOpen;
+    private async Task ShowFailureDialogAsync(string text)
+    {
+        await HideStatusAsync();
+        if (failureDialogOpen || XamlRoot?.IsHostVisible != true) return;
+        failureDialogOpen = true;
+        try
+        {
+            await new ContentDialog { XamlRoot = XamlRoot, Title = "操作未完成", Content = text, CloseButtonText = "知道了" }.ShowAsync();
+        }
+        catch (Exception error) { Jiaolong_ControlCenter.Services.AppRuntimeLog.Write($"Preset operation dialog: {error.Message}\n"); }
+        finally { failureDialogOpen = false; }
+    }
 
     private void OnSelectedKeyChanged(object? sender, PresetKey key) { UpdateContext(); SelectedKeyChanged?.Invoke(this, key); }
     private void OnSaveClick(object sender, RoutedEventArgs e) { if (requestedSaveEnabled) SaveRequested?.Invoke(this, EventArgs.Empty); }

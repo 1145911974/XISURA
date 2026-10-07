@@ -29,9 +29,16 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     private bool initialized;
     private bool msrInitialized;
     private bool disposed;
+    private readonly int physicalCoreCount = 8;
 
     public PawnIoCurveOptimizerTransport() { }
-    internal PawnIoCurveOptimizerTransport(Func<uint, uint, uint> curveCommand) => curveCommandOverride = curveCommand;
+    public PawnIoCurveOptimizerTransport(int physicalCoreCount)
+    {
+        if (physicalCoreCount is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(physicalCoreCount));
+        this.physicalCoreCount = physicalCoreCount;
+    }
+    internal PawnIoCurveOptimizerTransport(Func<uint, uint, uint> curveCommand, int physicalCoreCount = 8)
+        : this(physicalCoreCount) => curveCommandOverride = curveCommand;
 
     public bool TryInitialize()
     {
@@ -90,7 +97,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     private Dictionary<int, int> ReadPerCoreLocked(CancellationToken cancellationToken)
     {
         var values = new Dictionary<int, int>();
-        for (int core = 0; core < 8; core++)
+        for (int core = 0; core < physicalCoreCount; core++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             uint raw = CurveCommand(0xD5, (uint)core << 20);
@@ -129,7 +136,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
 
         try
         {
-            WritePerCore(Enumerable.Range(0, 8).ToDictionary(core => core, _ => value), cancellationToken);
+            WritePerCore(Enumerable.Range(0, physicalCoreCount).ToDictionary(core => core, _ => value), cancellationToken);
             return Task.CompletedTask;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -147,11 +154,11 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public void WritePerCore(IReadOnlyDictionary<int, int> values, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (values.Count is < 1 or > 8)
+        if (values.Count < 1 || values.Count > physicalCoreCount)
             throw new ArgumentException("perCoreCurveRequiresEditedCores", nameof(values));
         foreach (var (core, value) in values)
         {
-            if (core is < 0 or > 7) throw new ArgumentOutOfRangeException(nameof(values), "perCoreIndexUnsupported");
+            if (core < 0 || core >= physicalCoreCount) throw new ArgumentOutOfRangeException(nameof(values), "perCoreIndexUnsupported");
             if (value is < -30 or > 0) throw new ArgumentOutOfRangeException(nameof(values), "perCoreCurveOutOfRange");
         }
         cancellationToken.ThrowIfCancellationRequested();
@@ -192,7 +199,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public void RestorePerCore(IReadOnlyDictionary<int, int> values, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (values.Count != 8 || Enumerable.Range(0, 8).Any(core => !values.TryGetValue(core, out int value) || value is < -30 or > 30))
+        if (values.Count != physicalCoreCount || Enumerable.Range(0, physicalCoreCount).Any(core => !values.TryGetValue(core, out int value) || value is < -30 or > 30))
             throw new ArgumentException("curveOptimizerSnapshotInvalid", nameof(values));
         cancellationToken.ThrowIfCancellationRequested();
         if (!TryInitialize()) throw new InvalidOperationException("curveOptimizerUnavailable");

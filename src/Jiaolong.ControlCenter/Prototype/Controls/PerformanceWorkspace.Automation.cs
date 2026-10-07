@@ -26,12 +26,11 @@ public sealed partial class PerformanceWorkspace
                 ? draft.AdvancedCpuTuning?.CurveOptimizerAll ?? draft.NegativeCurveOptimizer : null;
             var curveCores = curveMode == CpuCurveOptimizerMode.PerCore ? draft.AdvancedCpuTuning?.PerCoreCurveOptimizer : null;
             if (curveMode != CpuCurveOptimizerMode.Bios && (state?.CurveOptimizerVerification != "hardwareReadback" ||
-                state.PerCoreCurveOptimizer is not { Count: 8 } original ||
-                !Enumerable.Range(0, 8).All(core => original.TryGetValue(core, out int value) && value is >= -30 and <= 0) ||
+                !state.HasCompleteCurveValues() || state.PerCoreCurveOptimizer!.Values.Any(value => value > 0) ||
                 curveMode == CpuCurveOptimizerMode.AllCore && curveAll is not (>= -30 and <= 0) ||
                 curveMode == CpuCurveOptimizerMode.PerCore && (curveCores is not { Count: > 0 } ||
-                    curveCores.Any(pair => pair.Key is < 0 or > 7 || pair.Value is < -30 or > 0))))
-                throw new InvalidOperationException("自动预设中的 CO 缺少有效目标或可恢复的八核硬件读回值。");
+                    curveCores.Any(pair => pair.Key < 0 || pair.Key >= state.PerCoreCurveOptimizer!.Count || pair.Value is < -30 or > 0))))
+                throw new InvalidOperationException("自动预设中的 CO 缺少有效目标或完整可恢复的硬件读回值。");
             CpuTuningPlan? plan = state is null ? null
                 : PerformanceCommandFactory.CreateForReadBackOnly(draft, state, true).Plan with
                 {

@@ -18,15 +18,16 @@ public sealed partial class WindowsHomeHardwareProvider
         bool onlyPerCore = values is not null &&
             (plan with { Advanced = null }) == new CpuTuningPlan(null, null, null, null, null, null, null, null) &&
             (plan.Advanced! with { PerCoreCurveOptimizer = null }) == new AdvancedCpuTuningPlan();
-        if (!onlyPerCore || values!.Count is < 1 or > 8 ||
-            values.Any(pair => pair.Key is < 0 or > 7 || pair.Value is < -30 or > 0))
+        if (!onlyPerCore || values!.Count is < 1 or > 16 ||
+            values.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -30 or > 0))
             return Rejected(command.OperationId, ErrorCode.ValidationFailed);
 
         if (compatibilityDecision?.Mode != CompatibilityMode.Writable ||
             compatibilityDecision.Capabilities.Items.Any(item =>
                 item.Key == "cpuTuning:curveOptimizer" && item.State == CapabilityState.Available) != true ||
             curveOptimizer is null ||
-            ReadOptionalCpuField(CpuTuningField.EnabledCoreCount, cancellationToken) is not int cores || cores != 8 ||
+            ReadOptionalCpuField(CpuTuningField.EnabledCoreCount, cancellationToken) is not int cores || cores is < 1 or > 16 ||
+            values.Any(pair => pair.Key >= cores) ||
             SystemPowerStatusReader.Read().AcPowerConnected is not true ||
             ReadTelemetryLocked(cancellationToken).CpuTemperatureC is not double temperature || temperature >= 80)
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);

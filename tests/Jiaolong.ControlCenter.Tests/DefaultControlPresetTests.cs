@@ -30,6 +30,20 @@ public sealed class DefaultControlPresetTests
             Assert.AreEqual("Auto", fan.Strategy);
             Assert.IsNull(fan.MaximumRpm);
             Assert.IsTrue(fan.IsValid());
+            var customized = draft with { SplWatts = 90, SpptWatts = 90,
+                AdvancedCpuTuning = new AdvancedCpuTuningDraft { SlowPptWatts = 82,
+                    CurveOptimizerMode = CpuCurveOptimizerMode.AllCore, CurveOptimizerAll = -30 } };
+            var saved = envelope with { Payload = JsonSerializer.SerializeToElement(customized, new JsonSerializerOptions(JsonSerializerDefaults.Web)) };
+            var restored = SavedPerformancePreset.ReadDraft(saved, key);
+            Assert.AreEqual(90, restored.SplWatts);
+            Assert.AreEqual(-30, restored.AdvancedCpuTuning!.CurveOptimizerAll);
+            var curvePlan = PerformanceCommandFactory.CreatePresetCommands(restored, state with { EnabledCoreCount = 16 }, true, true, true, true, true);
+            Assert.IsNull(curvePlan.Error);
+            var curveStep = curvePlan.Steps.Single(step => step.Label == "全核 Curve Optimizer");
+            Assert.AreEqual(-30, curveStep.Command.Plan.NegativeCurveOptimizer);
+            Assert.IsTrue(curvePlan.Steps.All(step => step.Command.Plan.SplWatts is null && step.Command.Plan.SpptWatts is null));
+            Assert.IsTrue(PerformanceCommandFactory.MatchesReadBack(state with { EnabledCoreCount = 16,
+                PerCoreCurveOptimizer = Enumerable.Range(0, 16).ToDictionary(core => core, _ => -30) }, curveStep.ReadbackPlan!));
         }
     }
 

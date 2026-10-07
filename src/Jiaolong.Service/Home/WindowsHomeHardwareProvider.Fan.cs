@@ -43,7 +43,8 @@ public sealed partial class WindowsHomeHardwareProvider
 
         if (command is SetStrongCoolingCommand strong) return ExecuteStrongCoolingLocked(strong, cancellationToken);
 
-        if (compatibilityDecision?.Mode != CompatibilityMode.Writable || !BldingFanEcTransport.HasVerifiedFiles())
+        if (compatibilityDecision?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) != true ||
+            !BldingFanEcTransport.HasVerifiedFiles())
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
 
         if (ThirdPartyFanWriterRunning())

@@ -499,8 +499,7 @@ public sealed class AdaptiveAutomationWorker(
         plan.Advanced?.CurveOptimizerAll is not null || plan.Advanced?.PerCoreCurveOptimizer is { Count: > 0 };
 
     private static bool HasRestorableCurve(CpuTuningState state) => state.CurveOptimizerVerification == "hardwareReadback" &&
-        state.PerCoreCurveOptimizer is { Count: 8 } cores &&
-        Enumerable.Range(0, 8).All(core => cores.TryGetValue(core, out int value) && value is >= -30 and <= 0);
+        state.HasCompleteCurveValues() && state.PerCoreCurveOptimizer!.Values.All(value => value <= 0);
 
     private async Task<CommandResult> ExecuteCpuPlanAsync(CpuTuningPlan plan, CancellationToken token, long? revision = null)
     {

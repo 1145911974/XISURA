@@ -77,7 +77,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         UpdateFanPresetAvailability();
     }
     private bool FanHardwareAvailable => session?.Status == HomeSessionStatus.Connected &&
-        session.State?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) == true;
+        session.State?.Capabilities.Items.Any(item => item.Key == "fanControl") == true;
 
     private void UpdateFanPresetAvailability()
     {
@@ -448,13 +448,11 @@ public sealed partial class FanWorkspaceV2 : UserControl
                 return false;
             }
             bool succeeded = result.State == CommandState.Applied && result.Error is null;
-            await PresetToolbar.ShowStatusAsync(succeeded
-                ? state.Strategy == "Auto"
+            if (succeeded) await PresetToolbar.ShowStatusAsync(
+                state.Strategy == "Auto"
                     ? automaticCeilingRequested ? $"已设置 EC 自动最大目标转速 {state.MaximumRpm} RPM；实际 RPM 请查看风扇总览" : "已交还 EC 自动控制"
-                    : "指令已下发 · 请查看实际 RPM"
-                : result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.ConflictDetected
-                    ? "二创控制台正在运行，请先退出后重试"
-                    : $"应用失败：{result.Error?.Code}");
+                    : "指令已下发 · 请查看实际 RPM");
+            else if (result.Error is null) session.ReportOperationFailure("风扇设置未确认生效，请重试或导出日志反馈。");
             appliedFanPreset = succeeded && liveState is null ? state : null;
             appliedFanKey = appliedFanPreset is null ? null : key;
             if (succeeded && liveState is null)

@@ -18,9 +18,11 @@ public sealed class ServiceWorker(
         await TryWriteEventAsync(DiagnosticEventNames.ServiceStarted, stoppingToken);
         try
         {
+            // Accept the IPC handshake before slow firmware/driver discovery starts.
+            var pipeTask = pipeHost.RunAsync(stoppingToken);
             try
             {
-                var state = await homeRuntime.InitializeAsync(stoppingToken);
+                var state = await Task.Run(() => homeRuntime.InitializeAsync(stoppingToken), stoppingToken);
                 logger.LogInformation("Homepage hardware state: {state}, reason: {reason}", state.SupportState, state.Reason);
             }
             catch (Exception exception)
@@ -30,7 +32,7 @@ public sealed class ServiceWorker(
 
             await Task.WhenAll(
                 lifetimeCoordinator.RunAsync(stoppingToken),
-                pipeHost.RunAsync(stoppingToken));
+                pipeTask);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {

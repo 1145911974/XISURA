@@ -476,8 +476,8 @@ public static class AdaptiveAutomationConfigurationValidator
             plan.Advanced is { } advanced &&
             ((advanced with { PboScalar = null, CurveOptimizerAll = null, PerCoreCurveOptimizer = null }) != new AdvancedCpuTuningPlan() ||
              advanced.CurveOptimizerAll is < -30 or > 0 ||
-             advanced.PerCoreCurveOptimizer is { } cores && (cores.Count is < 1 or > 8 ||
-                 cores.Any(pair => pair.Key is < 0 or > 7 || pair.Value is < -30 or > 0))))
+             advanced.PerCoreCurveOptimizer is { } cores && (cores.Count is < 1 or > 16 ||
+                 cores.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -30 or > 0))))
             return false;
         if (plan.AcMaxFrequencyMhz.HasValue != plan.DcMaxFrequencyMhz.HasValue ||
             plan.AcMinActiveCoresPercent.HasValue != plan.DcMinActiveCoresPercent.HasValue ||
