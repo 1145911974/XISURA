@@ -17,30 +17,35 @@ public sealed partial class AutomationWorkspaceV2
     public Task<bool> ConfirmAutomationEnabledAsync(bool enabled) =>
         ConfirmAutomationSelectionAsync(selection.Active, activeMap, activePolicy, enabled, changeEnabled: true);
 
+    private async Task WaitForServiceReadyAsync(CancellationToken cancellationToken)
+    {
+        while (automationService!.Status != HomeSessionStatus.Connected || !automationService.ConfigurationRestorationSettled)
+            await Task.Delay(100, cancellationToken);
+    }
+
     private async Task<bool> ConfirmAutomationSelectionAsync(AdaptiveStrategyId strategy,
         AdaptiveTargetMap map, AdaptiveTriggerPolicy policy, bool enabled, bool changeEnabled)
     {
         string action = changeEnabled ? "自适应状态" : "策略";
-        if (automationService?.Status != HomeSessionStatus.Connected ||
-            servicePresetReader is null || serviceClientLifetime.IsCancellationRequested)
+        if (automationService is null || servicePresetReader is null || serviceClientLifetime.IsCancellationRequested)
         {
             ReportStatus($"{action}未切换：系统服务或已保存预设尚未就绪。");
             return false;
         }
-        if (servicePublishBusy)
-        {
-            ReportStatus("正在确认调度配置，请稍后重试。");
-            return false;
-        }
-        var previousEditing = selection.Editing;
-        int revision = ++configurationRevision;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(serviceClientLifetime.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        bool acquired = false;
         bool submitted = false;
-        servicePublishBusy = true;
-        RenderSelection();
+        int revision = configurationRevision;
+        var previousEditing = selection.Editing;
         try
         {
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(serviceClientLifetime.Token);
-            deadline.CancelAfter(TimeSpan.FromSeconds(20));
+            await WaitForServiceReadyAsync(deadline.Token);
+            await serviceConfigurationGate.WaitAsync(deadline.Token);
+            acquired = true;
+            revision = ++configurationRevision;
+            servicePublishBusy = true;
+            RenderSelection();
             var configuration = await BuildServiceConfigurationAsync(strategy, policy, map, enabled, deadline.Token);
             if (revision != configurationRevision) throw new InvalidOperationException("调度设置已更新，请重试");
             submitted = true;
@@ -94,7 +99,11 @@ public sealed partial class AutomationWorkspaceV2
         }
         finally
         {
-            servicePublishBusy = false;
+            if (acquired)
+            {
+                servicePublishBusy = false;
+                serviceConfigurationGate.Release();
+            }
             RenderSelection();
             RefreshServiceStatus();
             RefreshServiceConnection();

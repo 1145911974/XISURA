@@ -163,6 +163,26 @@ public sealed partial class PrototypeWindow : Window
         _ = RefreshTrayPresetCatalogAsync();
     }
 
+    public void StartInTray()
+    {
+        AppWindow.Hide();
+        InitializeBackgroundSession();
+    }
+
+    private void InitializeBackgroundSession()
+    {
+        if (serviceConnectionStarted) return;
+        serviceConnectionStarted = true;
+        InstallSizingHook();
+        var trayRegistered = tray.Show(
+            WinRT.Interop.WindowNative.GetWindowHandle(this),
+            TrayIconAssetCatalog.ResolveAbsolute(AppContext.BaseDirectory, userPreferences.LogoStyle, confirmedControlMode));
+        if (!trayRegistered) Debug.WriteLine("托盘图标注册失败");
+        PublishSystemIcons();
+        StartKeyboardStatePolling();
+        homeSessionTask = StartHomeSessionAsync();
+    }
+
     public void EnsureVisible()
     {
         AppWindow.Show();
@@ -527,16 +547,7 @@ public sealed partial class PrototypeWindow : Window
             ResizeToPrimaryDisplayAtStartup();
         NormalizeClientAspect();
         ReapplyWindowChrome();
-        AppWindow.Show();
-        var startupHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        if (startupHwnd != IntPtr.Zero) ShowWindow(startupHwnd, SwShownormal);
-        Activate();
-        var trayRegistered = tray.Show(
-            WinRT.Interop.WindowNative.GetWindowHandle(this),
-            TrayIconAssetCatalog.ResolveAbsolute(AppContext.BaseDirectory, userPreferences.LogoStyle, confirmedControlMode));
-        if (!trayRegistered)
-            Debug.WriteLine("托盘图标注册失败");
-        PublishSystemIcons();
+        InitializeBackgroundSession();
         // Apply DWM border/corner attributes after the presenter has settled.
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, ReapplyWindowChrome);
         // Startup placement is intentionally independent of the last window position:
@@ -555,10 +566,6 @@ public sealed partial class PrototypeWindow : Window
                     }));
         }
         RefreshBackdropActivity();
-        if (serviceConnectionStarted) return;
-        serviceConnectionStarted = true;
-        StartKeyboardStatePolling();
-        homeSessionTask = StartHomeSessionAsync();
     }
 
     private async void OnWindowClosed(object sender, WindowEventArgs args)
@@ -1705,7 +1712,6 @@ public sealed partial class PrototypeWindow : Window
         trayQuickConsole?.ApplyAdaptiveState(enabled, available: true, pending: true);
         try
         {
-            homeSession.SupersedeAutomaticRestore();
             if (enabled && turboBranch?.ActiveTier is not null)
                 await ExitTurboBranchAsync(lifetimeCancellation.Token);
             if (await PageWorkspace.SetAutomationEnabledConfirmedAsync(enabled))

@@ -54,6 +54,29 @@ public sealed class AppliedConfigurationRestore
         finally { storageGate.Release(); }
     }
 
+    public async Task RecordObservedModeAsync(PerformanceMode mode, CancellationToken cancellationToken, Func<bool>? stillCurrent = null)
+    {
+        if (!Enum.IsDefined(mode)) return;
+        await storageGate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await LoadAsync(cancellationToken);
+            if (stillCurrent is not null && !stillCurrent()) return;
+            if (state.Commands.TryGetValue("mode", out var saved) &&
+                saved is SetPerformanceModeCommand previous && previous.Mode == mode) return;
+            // A physical key or adaptive change also replaces the last mode, without inventing CPU values.
+            foreach (var group in new[] { "cpu", "gpu", "fan" })
+            {
+                state.Commands.Remove(group);
+                state.BlockedGroups.Remove(group);
+            }
+            state.Commands["mode"] = new SetPerformanceModeCommand(Guid.NewGuid(), mode);
+            state.BlockedGroups.Remove("mode");
+            await SaveAsync(state, cancellationToken);
+        }
+        finally { storageGate.Release(); }
+    }
+
     private static bool IsSingleOemCpuLimit(CpuTuningPlan plan)
     {
         int count = (plan.TemperatureLimitC is null ? 0 : 1) +
@@ -90,7 +113,7 @@ public sealed class AppliedConfigurationRestore
                 if (!canContinue()) break;
                 bool tuning = group is "mode" or "cpu" or "gpu" or "fan";
                 if (state.BlockedGroups.Contains(group) ||
-                    (tuning && (adaptiveEnabled || modeDeferred || state.BlockedGroups.Contains("mode"))) ||
+                    (tuning && ((adaptiveEnabled && group != "mode") || modeDeferred || state.BlockedGroups.Contains("mode"))) ||
                     (allowed is not null && !allowed(saved)))
                 {
                     if (group == "mode") modeDeferred = true;

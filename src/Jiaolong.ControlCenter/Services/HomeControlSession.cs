@@ -211,6 +211,12 @@ public sealed class HomeControlSession : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (ConfigurationRestorationSettled && Status == HomeSessionStatus.Connected &&
+            State?.Controls.PerformanceMode is { } mode)
+        {
+            try { await automaticRestore.RecordObservedModeAsync(mode, CancellationToken.None); }
+            catch (Exception error) { AppRuntimeLog.Write($"Shutdown mode persistence: {error.Message}\n"); }
+        }
         lifetime.Cancel();
         if (restoreTask is not null)
         {
@@ -373,6 +379,14 @@ public sealed class HomeControlSession : IAsyncDisposable
             if (readbackVersion != modeReadbackVersion && homeState?.Controls.PerformanceMode is { } latest)
                 updated = updated with { Controls = updated.Controls with { PerformanceMode = latest } };
             homeState = updated;
+        }
+        if (ConfigurationRestorationSettled && updated.Capabilities.SupportState == DeviceSupportState.Ready &&
+            updated.Controls.PerformanceMode is { } observedMode)
+        {
+            try { await automaticRestore.RecordObservedModeAsync(observedMode, cancellationToken,
+                () => readbackVersion == Interlocked.Read(ref modeReadbackVersion) && State?.Controls.PerformanceMode == observedMode); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+            { AppRuntimeLog.Write($"Observed mode persistence: {error.Message}\n"); }
         }
         var previousStatus = Status;
         Status = updated.Capabilities.SupportState switch

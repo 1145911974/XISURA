@@ -15,6 +15,7 @@ public sealed partial class AutomationWorkspaceV2
     private readonly CancellationTokenSource serviceClientLifetime = new();
     private bool servicePublishPending = true;
     private bool servicePublishBusy;
+    private readonly SemaphoreSlim serviceConfigurationGate = new(1, 1);
     private bool contextBusy;
     private bool wasServiceConnected;
     private int configurationRevision;
@@ -52,7 +53,7 @@ public sealed partial class AutomationWorkspaceV2
         if (connected && !wasServiceConnected) servicePublishPending = true;
         wasServiceConnected = connected;
         if (!connected || serviceClientLifetime.IsCancellationRequested) return;
-        if (servicePublishPending && !servicePublishBusy && DateTimeOffset.UtcNow >= serviceRetryAfter && servicePresetReader is not null)
+        if (automationService!.ConfigurationRestorationSettled && servicePublishPending && !servicePublishBusy && DateTimeOffset.UtcNow >= serviceRetryAfter && servicePresetReader is not null)
             _ = PublishServiceConfigurationAsync();
         if (autoEnabled && !contextBusy && DateTimeOffset.UtcNow - lastContextSubmitted >= TimeSpan.FromSeconds(2))
             _ = SendServiceContextAsync();
@@ -61,6 +62,7 @@ public sealed partial class AutomationWorkspaceV2
     private async Task<bool> PublishServiceConfigurationAsync()
     {
         servicePublishBusy = true;
+        await serviceConfigurationGate.WaitAsync(serviceClientLifetime.Token);
         var revision = configurationRevision;
         var policy = activePolicy;
         var map = activeMap;
@@ -88,6 +90,7 @@ public sealed partial class AutomationWorkspaceV2
         finally
         {
             servicePublishBusy = false;
+            serviceConfigurationGate.Release();
             RefreshServiceStatus();
         }
         return false;

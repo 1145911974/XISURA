@@ -111,12 +111,14 @@ public partial class App : Application
             _window = new PrototypeWindow(acceptanceSecondaryDisplay: acceptanceSecondaryDisplay);
 #endif
             Jiaolong_ControlCenter.Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] Calling _window.Activate()\n");
-            _window.Activate();
             if (_window is PrototypeWindow prototype)
             {
-                Jiaolong_ControlCenter.Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] Calling prototype.EnsureVisible()\n");
-                prototype.EnsureVisible();
+                prototype.StartInTray();
+#if DEBUG
+                if (acceptancePage is not null || acceptanceSecondaryDisplay) prototype.EnsureVisible();
+#endif
             }
+            else _window.Activate();
             if (restorePending) RestoreExistingWindow();
             _ = Task.Run(() => new Jiaolong_ControlCenter.Services.StartupRegistrationService().RepairEnabledRegistration());
             Jiaolong_ControlCenter.Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] OnLaunched completed successfully\n");

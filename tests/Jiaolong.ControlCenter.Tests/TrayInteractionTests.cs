@@ -10,6 +10,32 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class TrayInteractionTests
 {
     [TestMethod]
+    public void Initial_launch_initializes_tray_and_session_without_activating_main_window()
+    {
+        var app = ReadSource("src", "Jiaolong.ControlCenter", "App.xaml.cs");
+        var shell = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.xaml.cs");
+        StringAssert.Contains(app, "prototype.StartInTray()");
+        int start = shell.IndexOf("public void StartInTray()", StringComparison.Ordinal);
+        int end = shell.IndexOf("public void EnsureVisible()", start, StringComparison.Ordinal);
+        var startup = shell[start..end];
+        Assert.IsFalse(startup.Contains("Activate()", StringComparison.Ordinal));
+        StringAssert.Contains(startup, "InitializeBackgroundSession()");
+        StringAssert.Contains(startup, "AppWindow.Hide()");
+    }
+
+    [TestMethod]
+    public void Adaptive_configuration_waits_for_startup_restore_and_serializes_user_toggle()
+    {
+        var service = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "AutomationWorkspaceV2.Service.cs");
+        var selection = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "AutomationWorkspaceV2.Selection.cs");
+        StringAssert.Contains(service, "ConfigurationRestorationSettled");
+        StringAssert.Contains(service, "serviceConfigurationGate.WaitAsync");
+        StringAssert.Contains(selection, "serviceConfigurationGate.WaitAsync");
+        StringAssert.Contains(selection, "WaitForServiceReadyAsync");
+        Assert.IsFalse(selection.Contains("if (servicePublishBusy)", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void Shell_selection_keeps_its_monitor_anchor_until_owner_dispatch()
     {
         foreach (var (x, y, notification) in new[] { (2500, 1400, 0x400), (-1800, -40, 0x202), (800, 900, 0x401) })

@@ -196,7 +196,9 @@ public sealed class AutomaticRestoreTests
             new SetLidLogoCommand(Guid.NewGuid(), true) })
             await restore.RecordAppliedAsync(command, Applied(command), Token);
         await restore.RestoreAsync(Send, () => true, true, Token);
-        Assert.IsInstanceOfType<SetLidLogoCommand>(sent.Single());
+        Assert.HasCount(2, sent);
+        Assert.IsInstanceOfType<SetPerformanceModeCommand>(sent[0]);
+        Assert.IsInstanceOfType<SetLidLogoCommand>(sent[1]);
         sent.Clear();
         await restore.RestoreAsync(Send, () => false, false, Token);
         Assert.HasCount(0, sent);
@@ -219,6 +221,31 @@ public sealed class AutomaticRestoreTests
         sent.Clear();
         await Replay(new AppliedConfigurationRestore(paths));
         Assert.HasCount(3, sent);
+    }
+
+    [TestMethod]
+    public async Task Observed_mode_preserves_same_mode_tuning_and_replaces_external_or_adaptive_mode()
+    {
+        var restore = new AppliedConfigurationRestore(paths);
+        var mode = new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced);
+        await restore.RecordAppliedAsync(mode, Applied(mode), Token);
+        var cpu = Cpu(4200, null);
+        await restore.RecordAppliedAsync(cpu, Applied(cpu), Token);
+        await restore.RecordObservedModeAsync(PerformanceMode.Balanced, Token);
+        await Replay(restore);
+        Assert.HasCount(2, sent);
+        sent.Clear();
+        await restore.RecordObservedModeAsync(PerformanceMode.Quiet, Token);
+        await Replay(new AppliedConfigurationRestore(paths));
+        Assert.AreEqual(PerformanceMode.Quiet, ((SetPerformanceModeCommand)sent.Single()).Mode);
+        sent.Clear();
+        await restore.RecordObservedModeAsync(PerformanceMode.Turbo, Token, () => false);
+        await Replay(restore);
+        Assert.AreEqual(PerformanceMode.Quiet, ((SetPerformanceModeCommand)sent.Single()).Mode);
+        sent.Clear();
+        await restore.RecordObservedModeAsync(PerformanceMode.Turbo, Token);
+        await restore.RestoreAsync(Send, () => true, true, Token);
+        Assert.AreEqual(PerformanceMode.Turbo, ((SetPerformanceModeCommand)sent.Single()).Mode);
     }
 
     private string StatePath => Path.Combine(paths.LocalAppDataRoot, "Jiaolong Control Center", "last-applied-controls.json");
