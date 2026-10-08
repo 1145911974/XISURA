@@ -17,8 +17,9 @@
   </ItemGroup>
 
   <Target Name="PublishJiaolongPayloads" Condition="'$(SkipPayloadPublish)' != 'true'">
-    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.Service\Jiaolong.Service.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
-    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.ControlCenter\Jiaolong.ControlCenter.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -p:WindowsPackageType=None -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
+    <!-- Rebuild dependency manifests: test builds may have cached framework-dependent outputs. -->
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.Service\Jiaolong.Service.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -t:Rebuild,Publish -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\src\Jiaolong.ControlCenter\Jiaolong.ControlCenter.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true --no-restore -t:Rebuild,Publish -p:WindowsPackageType=None -p:PublishTrimmed=false -p:PublishReadyToRun=false -o &quot;$(PayloadPublishDir)&quot;" />
   </Target>
 
   <Target Name="ValidateOfflinePayload" BeforeTargets="CoreCompile" DependsOnTargets="PublishJiaolongPayloads">

@@ -9,7 +9,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Foundation;
-using Windows.Storage.Pickers;
+using Microsoft.Windows.Storage.Pickers;
 using SettingsViewModel = Jiaolong_ControlCenter.ViewModels.SettingsViewModel;
 
 namespace Jiaolong_ControlCenter.Prototype.Controls;
@@ -524,13 +524,14 @@ public sealed partial class PrototypePageWorkspace : UserControl
         try
         {
             var owner = ownerWindow ?? throw new InvalidOperationException("主窗口尚未连接。");
-            var picker = new FileSavePicker
+            // The client is elevated; the Windows.Storage picker cannot run at this integrity level.
+            var picker = new FileSavePicker(owner.AppWindow.Id)
             {
                 SuggestedFileName = $"XISURA-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}",
-                SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                DefaultFileExtension = ".zip"
             };
             picker.FileTypeChoices.Add("诊断日志压缩包", new List<string> { ".zip" });
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(owner));
             var destination = await picker.PickSaveFileAsync();
             if (destination is null) return;
             SettingsStatusText.Text = "正在收集诊断日志…";
@@ -557,7 +558,7 @@ public sealed partial class PrototypePageWorkspace : UserControl
                 await using (var archive = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                     await Jiaolong.Diagnostics.SupportDiagnosticBundle.WriteAsync(archive, entries, serviceExport?.FilePath, deadline.Token);
                 await using (var source = new FileStream(temporary, FileMode.Open, FileAccess.Read, FileShare.Read))
-                await using (var target = await destination.OpenStreamForWriteAsync())
+                await using (var target = new FileStream(destination.Path, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
                     target.SetLength(0);
                     await source.CopyToAsync(target, deadline.Token);
@@ -577,8 +578,12 @@ public sealed partial class PrototypePageWorkspace : UserControl
         }
         catch (Exception error)
         {
-            SettingsStatusText.Text = $"导出日志失败：{error.Message}";
+            SettingsStatusText.Visibility = Visibility.Collapsed;
+            var reason = string.IsNullOrWhiteSpace(error.Message) ? "未能打开保存窗口或写入诊断包，请重试并选择可写入的文件夹。" : error.Message;
+            var message = $"导出诊断包失败：{reason}\n错误码：0x{error.HResult:X8}";
             AppRuntimeLog.Write($"Diagnostic export failed: {error}\n");
+            if (session is not null) session.ReportOperationFailure(message);
+            else await ShowOperationFailureAsync(message);
         }
         finally
         {

@@ -82,7 +82,14 @@ public sealed class PrototypeRoughPageContractTests
         StringAssert.Contains(code, "StageDiagnosticsAsync");
         StringAssert.Contains(code, "DeleteStagedDiagnosticsAsync");
         StringAssert.Contains(code, "IPC 未连接；已导出本地诊断");
-        StringAssert.Contains(code, "导出日志失败：");
+        StringAssert.Contains(code, "using Microsoft.Windows.Storage.Pickers;");
+        StringAssert.Contains(code, "new FileSavePicker(owner.AppWindow.Id)");
+        StringAssert.Contains(code, "destination.Path");
+        StringAssert.Contains(code, "DefaultFileExtension = \".zip\"");
+        StringAssert.Contains(code, "error.HResult:X8");
+        StringAssert.Contains(code, "session.ReportOperationFailure");
+        Assert.IsFalse(code.Contains("using Windows.Storage.Pickers;", StringComparison.Ordinal));
+        Assert.IsFalse(code.Contains("InitializeWithWindow.Initialize(picker", StringComparison.Ordinal));
         Assert.IsFalse(code.Contains("诊断摘要已导出", StringComparison.Ordinal));
     }
 

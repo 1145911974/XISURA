@@ -2,8 +2,7 @@ using Jiaolong_ControlCenter.Services;
 using Jiaolong_ControlCenter.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
+using Microsoft.Windows.Storage.Pickers;
 
 namespace Jiaolong_ControlCenter.Pages;
 
@@ -77,18 +76,20 @@ public sealed partial class SettingsPage : Page
         try
         {
             var mainWindow = MainWindow.Instance ?? throw new InvalidOperationException("Main window handle is unavailable.");
-            var picker = new FileSavePicker
+            var picker = new FileSavePicker(mainWindow.AppWindow.Id)
             {
                 SuggestedFileName = $"Jiaolong-diagnostics-{DateTime.UtcNow:yyyyMMdd-HHmmss}",
-                SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                DefaultFileExtension = ".zip"
             };
             picker.FileTypeChoices.Add("诊断压缩包", new List<string> { ".zip" });
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(mainWindow));
             var destination = await picker.PickSaveFileAsync();
             if (destination is null) return;
 
             var export = await ViewModel.ExportDiagnosticsAsync(CancellationToken.None);
-            var copy = await ViewModel.CopyExportToAsync(export, destination, CancellationToken.None);
+            var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(Path.GetDirectoryName(destination.Path)!);
+            var file = await folder.CreateFileAsync(Path.GetFileName(destination.Path), Windows.Storage.CreationCollisionOption.ReplaceExisting);
+            var copy = await ViewModel.CopyExportToAsync(export, file, CancellationToken.None);
             StatusText.Text = copy.StagingCleanupConfirmed
                 ? "诊断包已导出到用户选择的位置。"
                 : "诊断包已导出；服务端暂存副本未能确认清理，请检查硬件服务版本和连接。";
