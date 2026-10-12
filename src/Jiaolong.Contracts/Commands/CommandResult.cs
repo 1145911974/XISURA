@@ -22,6 +22,18 @@ public enum RequiredUserAction
     Restart
 }
 
+public enum HardwareMutation { Unknown, NoMutation, Changed }
+
+public sealed record PerformanceModeEvidence(
+    DateTimeOffset CapturedAtUtc, string Source, int ResponseOffset,
+    string RawResponseHex, byte? RawValue, PerformanceMode? ParsedMode,
+    PerformanceMode? RequestedMode, string VerificationLevel)
+{
+    public IReadOnlyDictionary<string, string> EffectiveState { get; init; } = new Dictionary<string, string>();
+    public string? BeforeRawResponseHex { get; init; }
+    public byte? BeforeRawValue { get; init; }
+}
+
 public sealed record CommandResult(
     Guid OperationId,
     CommandState State,
@@ -30,14 +42,20 @@ public sealed record CommandResult(
     ServiceError? Error,
     bool IsReplay)
 {
-    // Present only when the firmware mode was read back after the write; older services omit it.
+    // Reserved for a profile whose effective-state semantics have independent evidence.
     public PerformanceMode? VerifiedPerformanceMode { get; init; }
+    public PerformanceModeEvidence? ModeEvidence { get; init; }
+    public HardwareMutation Mutation { get; init; } = HardwareMutation.Unknown;
+    public ControlExecutionState? ExecutionState { get; init; }
+    public long? CatalogRevision { get; init; }
 }
 
 public static class CommandValidation
 {
     public static ServiceError? Validate(HardwareCommand command) => command switch
     {
+        ApplyTurboBranchCommand branch when !Enum.IsDefined(branch.Tier) => ServiceError.Create(ErrorCode.ValidationFailed, command.OperationId, false),
+        ReleaseTurboBranchCommand release when release.BranchOperationId == Guid.Empty => ServiceError.Create(ErrorCode.ValidationFailed, command.OperationId, false),
         SetCpuTuningCommand cpu => ValidateCpu(cpu.Plan),
         SetCpuTuningBatchCommand batch => ValidateCpuBatch(batch),
         SetGpuFrequencyLimitCommand gpu => ValidateGpu(gpu.Megahertz),
@@ -80,9 +98,9 @@ public static class CommandValidation
         if (plan.TemperatureLimitC is < 40 or > 110 ||
             plan.SplWatts is < 1 or > 200 ||
             plan.SpptWatts is < 1 or > 250 ||
-            plan.MaxFrequencyMhz is < 500 or > 6000 ||
-            plan.AcMaxFrequencyMhz is < 500 or > 6000 ||
-            plan.DcMaxFrequencyMhz is < 500 or > 6000 ||
+            plan.MaxFrequencyMhz is < 0 or > 6000 || plan.MaxFrequencyMhz is > 0 and < 500 ||
+            plan.AcMaxFrequencyMhz is < 0 or > 6000 || plan.AcMaxFrequencyMhz is > 0 and < 500 ||
+            plan.DcMaxFrequencyMhz is < 0 or > 6000 || plan.DcMaxFrequencyMhz is > 0 and < 500 ||
             plan.AcMinActiveCoresPercent is < 0 or > 100 ||
             plan.DcMinActiveCoresPercent is < 0 or > 100 ||
             plan.AcMinActiveCoresPercent.HasValue != plan.DcMinActiveCoresPercent.HasValue ||

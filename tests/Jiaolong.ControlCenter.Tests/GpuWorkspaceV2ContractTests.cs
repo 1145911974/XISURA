@@ -127,7 +127,9 @@ public sealed class GpuWorkspaceV2ContractTests
         StringAssert.Contains(directSwitch, "RequiredUserAction.Restart");
         StringAssert.Contains(directSwitch, "当前生效：");
         StringAssert.Contains(directSwitch, "重启电脑后生效");
-        Assert.IsFalse(directSwitch.Contains("IsFollowingPreset", StringComparison.Ordinal));
+        Assert.IsFalse(directSwitch.Contains("RecordManualLive", StringComparison.Ordinal));
+        Assert.IsFalse(directSwitch.Contains("SetFollowPreset(false)", StringComparison.Ordinal));
+        Assert.IsFalse(directSwitch.Contains("PublishManualLiveAsync", StringComparison.Ordinal));
         Assert.IsFalse(directSwitch.Contains("SaveGpuPresetAsync", StringComparison.Ordinal));
         Assert.IsFalse(code.Contains("actions.Add((\"输出模式\"", StringComparison.Ordinal));
         Assert.IsFalse(code.Contains("MuxMode = muxDraftMode", StringComparison.Ordinal));
@@ -446,7 +448,7 @@ public sealed class GpuWorkspaceV2ContractTests
         Assert.IsFalse(performance.Contains("PresetStatusHost", StringComparison.Ordinal));
         StringAssert.Contains(toolbar, "x:Name=\"PresetStatusHost\"");
         StringAssert.Contains(toolbarCode, "ShowSavedStatusAsync");
-        StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(2)");
+        StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(3)");
         StringAssert.Contains(toolbarCode, "TransitionAsync(1, 0)");
         Assert.IsFalse(toolbarCode.Contains("PresetPicker.IsEnabled = followPreset;", StringComparison.Ordinal));
         StringAssert.Contains(toolbarCode, "public bool IsEditingPreset");

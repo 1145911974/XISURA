@@ -40,6 +40,7 @@ public sealed partial class WindowsHomeHardwareProvider
 
     private CommandResult ExecuteLightingLocked(SetKeyboardLightingCommand command, CancellationToken token)
     {
+        if (BackgroundWorkPaused) return Rejected(command.OperationId, ErrorCode.CancelledBeforeApply) with { Mutation = HardwareMutation.NoMutation };
         if (CommandValidation.Validate(command) is not null)
             return Rejected(command.OperationId, ErrorCode.ValidationFailed);
         if (compatibilityDecision is null || !compatibilityDecision.Capabilities.Items.Any(
@@ -80,7 +81,8 @@ public sealed partial class WindowsHomeHardwareProvider
             }
             return new(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false);
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        catch (OperationCanceledException error) when (token.IsCancellationRequested &&
+            error.Data["keyboardLightingWriteAttempted"] is not false)
         {
             if (lightingPreview.Original is not null) KeepPreviewRecoveryTimer();
             throw;
@@ -90,6 +92,16 @@ public sealed partial class WindowsHomeHardwareProvider
             logger?.LogWarning(error, "Keyboard lighting apply failed: {OperationId}", command.OperationId);
             lightingError = error.Message;
             if (lightingPreview.Original is not null) KeepPreviewRecoveryTimer();
+            if (error.Data["keyboardLightingWriteAttempted"] is false)
+            {
+                var code = error is OperationCanceledException || error.Message == "hardwareAccessPaused" ? ErrorCode.CancelledBeforeApply : ErrorCode.HardwareWriteFailed;
+                return Rejected(command.OperationId, code) with
+                {
+                    Mutation = HardwareMutation.NoMutation,
+                    Error = ServiceError.Create(code, command.OperationId, false) with
+                    { Details = new() { ["reason"] = error.Message, ["writeAttempted"] = bool.FalseString } }
+                };
+            }
             if (error.Message == "rollbackFailed")
             {
                 appliedLighting = null;
@@ -102,11 +114,12 @@ public sealed partial class WindowsHomeHardwareProvider
 
     private void OnLightingFrame(object? state)
     {
+        if (BackgroundWorkPaused) return;
         // Skip a busy tick rather than queueing stale frames behind telemetry or hardware commands.
         if (!Monitor.TryEnter(gate)) return;
         try
         {
-            if (disposed) return;
+            if (disposed || BackgroundWorkPaused) return;
             if (lightingPreview.Expired(DateTimeOffset.UtcNow))
             {
                 RestoreLightingPreviewLocked(Guid.NewGuid(), CancellationToken.None);

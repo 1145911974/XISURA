@@ -22,7 +22,8 @@ public sealed class DefaultControlPresetTests
             var draft = SavedPerformancePreset.ReadDraft(envelope, key);
             var state = new CpuTuningState(85, 45, 65, 4500, true, null, draft.WindowsPowerSchemeId, null, "verified")
             { AcMaxFrequencyMhz = 4500, DcMaxFrequencyMhz = 3000, AcMinActiveCoresPercent = 100, DcMinActiveCoresPercent = 100 };
-            var plan = PerformanceCommandFactory.CreatePresetCommands(draft, state, true, false, false, false, true);
+            var plan = PerformanceCommandFactory.CreatePresetCommands(draft, state, cpuTuningAvailable: true,
+                smuAvailable: false, pboAvailable: false, curveOptimizerAvailable: true, forceApply: true);
             Assert.IsNull(plan.Error);
             Assert.IsTrue(plan.Steps.All(step => step.Command.Plan.TemperatureLimitC is null &&
                 step.Command.Plan.SplWatts is null && step.Command.Plan.SpptWatts is null && step.Command.Plan.Advanced is null));
@@ -31,14 +32,20 @@ public sealed class DefaultControlPresetTests
             Assert.IsNull(fan.MaximumRpm);
             Assert.IsTrue(fan.IsValid());
             var customized = draft with { SplWatts = 90, SpptWatts = 90,
-                AdvancedCpuTuning = new AdvancedCpuTuningDraft { SlowPptWatts = 82,
+                AdvancedCpuTuning = new AdvancedCpuTuningDraft { SlowPptWatts = 65,
                     CurveOptimizerMode = CpuCurveOptimizerMode.AllCore, CurveOptimizerAll = -30 } };
-            var saved = envelope with { Payload = JsonSerializer.SerializeToElement(customized, new JsonSerializerOptions(JsonSerializerDefaults.Web)) };
+            var saved = envelope with { UserModified = true,
+                Settings = new(envelope.Settings) { ["advancedCpuTuning"] = SettingRequest.Set(customized.AdvancedCpuTuning) },
+                Payload = JsonSerializer.SerializeToElement(customized, new JsonSerializerOptions(JsonSerializerDefaults.Web)) };
             var restored = SavedPerformancePreset.ReadDraft(saved, key);
             Assert.AreEqual(90, restored.SplWatts);
             Assert.AreEqual(-30, restored.AdvancedCpuTuning!.CurveOptimizerAll);
             var curvePlan = PerformanceCommandFactory.CreatePresetCommands(restored, state with { EnabledCoreCount = 16 }, true, true, true, true, true);
             Assert.IsNull(curvePlan.Error);
+            Assert.IsTrue(curvePlan.Steps.Any(step => step.Command.Plan.Advanced?.SlowPptWatts == 65), "Explicit SMU requests are independent of Official OEM limits");
+            var invalidSmu = PerformanceCommandFactory.CreatePresetCommands(restored with { AdvancedCpuTuning = restored.AdvancedCpuTuning with { SlowPptWatts = 82 } }, state, true, true, true, true);
+            Assert.IsNotNull(invalidSmu.Error);
+            Assert.HasCount(0, invalidSmu.Steps, "Invalid explicit SMU must not silently disappear");
             var curveStep = curvePlan.Steps.Single(step => step.Label == "全核 Curve Optimizer");
             Assert.AreEqual(-30, curveStep.Command.Plan.NegativeCurveOptimizer);
             Assert.IsTrue(curvePlan.Steps.All(step => step.Command.Plan.SplWatts is null && step.Command.Plan.SpptWatts is null));
@@ -54,9 +61,9 @@ public sealed class DefaultControlPresetTests
         var factory = DefaultControlPresets.Create(ControlPageId.Performance, key);
         var properties = factory.Payload.EnumerateObject().Where(p => p.Name != "useOfficialCpuPolicy")
             .ToDictionary(p => p.Name, p => p.Value);
-        var legacy = factory with { DisplayName = "保留名称", Payload = JsonSerializer.SerializeToElement(properties) };
+        var legacy = factory with { SchemaVersion = 1, FactoryRevision = "", UserModified = true, DisplayName = "保留名称", Payload = JsonSerializer.SerializeToElement(properties) };
         var upgraded = DefaultControlPresets.Complete(legacy);
-        Assert.IsTrue(upgraded.Payload.GetProperty("useOfficialCpuPolicy").GetBoolean());
+        Assert.AreEqual(legacy.UserModified, upgraded.UserModified);
         Assert.AreEqual(legacy.DisplayName, upgraded.DisplayName);
         properties["temperatureLimitC"] = JsonSerializer.SerializeToElement(81);
         var custom = DefaultControlPresets.Complete(legacy with { Payload = JsonSerializer.SerializeToElement(properties) });
@@ -67,9 +74,40 @@ public sealed class DefaultControlPresetTests
         Assert.IsFalse(DefaultControlPresets.Complete(manual).Payload.GetProperty("useOfficialCpuPolicy").GetBoolean());
         var fan = DefaultControlPresets.Create(ControlPageId.Fan, key);
         var oldFan = fan with { Payload = JsonSerializer.SerializeToElement(fan.Payload.Deserialize<FanCurveState>()! with { Strategy = "Curve" }) };
-        Assert.AreEqual("Auto", DefaultControlPresets.Complete(oldFan).Payload.Deserialize<FanCurveState>()!.Strategy);
+        Assert.AreEqual("Curve", DefaultControlPresets.Complete(oldFan).Payload.Deserialize<FanCurveState>()!.Strategy);
         var customizedFan = oldFan with { Payload = JsonSerializer.SerializeToElement(oldFan.Payload.Deserialize<FanCurveState>()! with { FixedRpm = 3200 }) };
         Assert.AreEqual("Curve", DefaultControlPresets.Complete(customizedFan).Payload.Deserialize<FanCurveState>()!.Strategy);
+        var historical = new PerformanceDraft { Mode = PerformanceMode.Balanced, UseOfficialCpuPolicy = false,
+            TemperatureLimitC = 85, SplWatts = 50, SpptWatts = 60, AcMaxFrequencyMhz = 4800, DcMaxFrequencyMhz = 3300,
+            IsBoostEnabled = true, WindowsPowerSchemeId = new("381b4222-f694-41f0-9685-ff5bb260df2e"),
+            AcMinActiveCoresPercent = 100, DcMinActiveCoresPercent = 17, NegativeCurveOptimizer = null };
+        var historicalEnvelope = new PagePresetEnvelope(1, ControlPageId.Performance, key, "历史名称",
+            JsonSerializer.SerializeToElement(historical, new JsonSerializerOptions(JsonSerializerDefaults.Web)), DateTimeOffset.UtcNow);
+        var migrated = DefaultControlPresets.Complete(historicalEnvelope);
+        Assert.AreEqual(7L, DefaultControlPresets.Complete(historicalEnvelope with { Revision = 7 }).Revision,
+            "Factory migration must retain the service-visible revision");
+        var explicitLegacy = historicalEnvelope with { Revision = 7, Settings = new() { ["temperatureLimitC"] = SettingRequest.Set(85) } };
+        Assert.AreEqual(SettingIntent.Set, DefaultControlPresets.Complete(explicitLegacy).Settings["temperatureLimitC"].Intent,
+            "Explicit saved intents take precedence over numeric factory resemblance");
+        Assert.AreEqual(DefaultPerformancePresets.FactoryRevision, migrated.FactoryRevision);
+        Assert.IsFalse(migrated.UserModified);
+        Assert.AreEqual("历史名称", migrated.DisplayName);
+        foreach (var co in new int?[] { null, -30 })
+        {
+            var edited = historicalEnvelope with { Payload = JsonSerializer.SerializeToElement(historical with
+                { TemperatureLimitC = 86, NegativeCurveOptimizer = co }, new JsonSerializerOptions(JsonSerializerDefaults.Web)) };
+            var preserved = DefaultControlPresets.Complete(edited);
+            Assert.IsTrue(preserved.UserModified);
+            Assert.AreEqual(co, SavedPerformancePreset.ReadDraft(preserved, key).NegativeCurveOptimizer);
+        }
+        var oldGpuKey = PresetKey.Create(ControlModeId.Office, 1);
+        var oldGpu = new PagePresetEnvelope(1, ControlPageId.Gpu, oldGpuKey, "历史GPU", JsonSerializer.SerializeToElement(new
+            { CoreFrequencyLimitMhz = 1200, ResetCoreFrequencyLimit = false, MemoryOffsetKhz = 0, CoreOffsetKhz = 0, VfOffsetsKhz = new int[127] }), DateTimeOffset.UtcNow);
+        var migratedGpu = DefaultControlPresets.Complete(oldGpu);
+        Assert.IsFalse(migratedGpu.UserModified);
+        Assert.AreEqual(SettingIntent.Official, migratedGpu.Settings["coreFrequencyLimitMhz"].Intent);
+        Assert.IsTrue(DefaultControlPresets.Complete(oldGpu with { Payload = JsonSerializer.SerializeToElement(new
+            { CoreFrequencyLimitMhz = 1200, ResetCoreFrequencyLimit = false, MemoryOffsetKhz = (int?)null, CoreOffsetKhz = 0, VfOffsetsKhz = new int[127] }) }).UserModified);
     }
     [TestMethod]
     public async Task Fresh_install_has_72_complete_usable_presets_without_writes()
@@ -86,6 +124,13 @@ public sealed class DefaultControlPresetTests
             Assert.AreEqual(key, preset.Key);
             Assert.AreEqual(page, preset.Page);
             Assert.AreEqual(DateTimeOffset.UnixEpoch, preset.SavedAtUtc);
+            Assert.AreEqual(2, preset.SchemaVersion);
+            Assert.AreEqual(DefaultPerformancePresets.FactoryRevision, preset.FactoryRevision);
+            Assert.IsFalse(preset.UserModified);
+            Assert.IsTrue(preset.Settings.Count > 0);
+            if (page is ControlPageId.Fan or ControlPageId.Lighting)
+                Assert.IsTrue(preset.Settings.Values.All(setting => setting.Intent != SettingIntent.Set),
+                    $"{page}: missing hardware verification must not manufacture required writes");
             switch (page)
             {
                 case ControlPageId.Performance:
@@ -93,7 +138,7 @@ public sealed class DefaultControlPresetTests
                     break;
                 case ControlPageId.Gpu:
                     Assert.IsTrue((bool)gpuValidate.Invoke(null, [JsonSerializer.Deserialize(preset.Payload.GetRawText(), gpuType)])!);
-                    bool reset = key.Slot == 2 || key.Mode is ControlModeId.Turbo or ControlModeId.Custom3 && key.Slot == 3;
+                    bool reset = true;
                     Assert.AreEqual(reset, preset.Payload.GetProperty("ResetCoreFrequencyLimit").GetBoolean());
                     if (reset) Assert.AreEqual(JsonValueKind.Null, preset.Payload.GetProperty("CoreFrequencyLimitMhz").ValueKind);
                     else Assert.IsTrue(preset.Payload.GetProperty("CoreFrequencyLimitMhz").GetInt32() is >= 1200 and <= 2400);
@@ -101,10 +146,12 @@ public sealed class DefaultControlPresetTests
                     Assert.AreEqual(0, preset.Payload.GetProperty("MemoryOffsetKhz").GetInt32());
                     Assert.HasCount(127, preset.Payload.GetProperty("VfOffsetsKhz").EnumerateArray().ToArray());
                     Assert.IsFalse(preset.Payload.TryGetProperty("MuxMode", out _));
+                    Assert.AreEqual(SettingIntent.Keep, preset.Settings["muxMode"].Intent);
                     break;
                 case ControlPageId.Fan:
                     var fan = preset.Payload.Deserialize<FanCurveState>()!;
                     Assert.IsTrue(fan.IsValid());
+                    Assert.AreEqual("Auto", fan.Strategy);
                     Assert.HasCount(0, FanCurveSafety.Assess(fan));
                     Assert.AreEqual(key.Mode is ControlModeId.Office or ControlModeId.Custom1 ? 0 : key.Mode is ControlModeId.Turbo or ControlModeId.Custom3 ? 2 : 1, fan.Profile);
                     break;
@@ -121,11 +168,18 @@ public sealed class DefaultControlPresetTests
     {
         var paths = new RecordingPathProvider();
         var store = new ControlPresetStore(paths);
-        var key = PresetKey.Create(ControlModeId.Turbo, 2);
-        var sibling = PresetKey.Create(ControlModeId.Turbo, 1);
         foreach (var page in Enum.GetValues<ControlPageId>())
+        foreach (var key in PresetKey.All)
         {
-            await store.SaveAsync(DefaultControlPresets.Create(page, key) with { DisplayName = "我的名字", Payload = JsonSerializer.SerializeToElement(new { custom = 1 }) }, CancellationToken.None);
+            var sibling = PresetKey.Create(key.Mode, key.Slot % 3 + 1);
+            var factory = DefaultControlPresets.Create(page, key);
+            var edited = System.Text.Json.Nodes.JsonNode.Parse(factory.Payload.GetRawText())!.AsObject();
+            string field = page switch { ControlPageId.Performance => "temperatureLimitC", ControlPageId.Gpu => "MemoryOffsetKhz", ControlPageId.Fan => "FixedRpm", _ => "Brightness" };
+            edited[field] = page switch { ControlPageId.Performance => 88, ControlPageId.Gpu => 1000, ControlPageId.Fan => 3300, _ => 1 };
+            var settings = new Dictionary<string, SettingRequest>(factory.Settings, StringComparer.OrdinalIgnoreCase);
+            if (settings.TryGetValue(field, out var intent) && intent.Intent == SettingIntent.Set)
+                settings[field] = new(SettingIntent.Set, JsonSerializer.SerializeToElement(edited[field]));
+            await store.SaveAsync(factory with { DisplayName = "我的名字", Payload = JsonSerializer.SerializeToElement(edited), Settings = settings }, CancellationToken.None);
             var originalSibling = await store.LoadAsync(page, sibling, CancellationToken.None);
             var restored = await store.ResetAsync(page, key, CancellationToken.None);
             Assert.AreEqual("我的名字", restored.DisplayName);
@@ -133,7 +187,7 @@ public sealed class DefaultControlPresetTests
             Assert.IsTrue(JsonElement.DeepEquals(originalSibling!.Payload, (await store.LoadAsync(page, sibling, CancellationToken.None))!.Payload));
         }
         var count = paths.WrittenPaths.Count;
-        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => store.ResetAsync(ControlPageId.Gpu, key, new CancellationToken(true)));
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => store.ResetAsync(ControlPageId.Gpu, PresetKey.All[0], new CancellationToken(true)));
         Assert.HasCount(count, paths.WrittenPaths);
     }
 
@@ -183,7 +237,7 @@ public sealed class DefaultControlPresetTests
                     break;
                 case ControlPageId.Gpu:
                     Assert.AreEqual(2280, preset.Payload.GetProperty("CoreFrequencyLimitMhz").GetInt32());
-                    Assert.AreEqual(0, preset.Payload.GetProperty("MemoryOffsetKhz").GetInt32());
+                    Assert.AreEqual(JsonValueKind.Null, preset.Payload.GetProperty("MemoryOffsetKhz").ValueKind);
                     break;
                 case ControlPageId.Fan:
                     var fan = preset.Payload.Deserialize<FanCurveState>()!;
@@ -212,13 +266,15 @@ public sealed class DefaultControlPresetTests
         foreach (var (schema, json) in new[] { (1, "[]"), (99, "{\"CoreFrequencyLimitMhz\":2400}") })
         {
             using var document = JsonDocument.Parse(json);
-            await store.SaveAsync(new(schema, ControlPageId.Gpu, key, "保留名称", document.RootElement.Clone(), DateTimeOffset.UtcNow), CancellationToken.None);
-            var path = paths.WrittenPaths.Last();
+            var path = Path.Combine(paths.LocalAppDataRoot, "Jiaolong Control Center", "control-presets-gpu.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var entry = new PagePresetEnvelope(schema, ControlPageId.Gpu, key, "保留名称", document.RootElement.Clone(), DateTimeOffset.UtcNow);
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new Dictionary<string, PagePresetEnvelope> { [$"{key.Mode}:{key.Slot}"] = entry }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
             var before = await File.ReadAllTextAsync(path);
             var loaded = (await store.LoadAsync(ControlPageId.Gpu, key, CancellationToken.None))!;
-            Assert.AreEqual(1, loaded.SchemaVersion);
+            Assert.AreEqual(schema == 99 ? 99 : 2, loaded.SchemaVersion);
             Assert.AreEqual("保留名称", loaded.DisplayName);
-            Assert.AreEqual(0, loaded.Payload.GetProperty("CoreOffsetKhz").GetInt32());
+            if (schema != 99) Assert.AreEqual(0, loaded.Payload.GetProperty("CoreOffsetKhz").GetInt32());
             Assert.AreEqual(before, await File.ReadAllTextAsync(path));
         }
     }

@@ -7,8 +7,7 @@ public static class QuickMenuCatalog
     public static bool IsLocal(QuickSettingKind kind) => kind is QuickSettingKind.WinKey or QuickSettingKind.NumLock or QuickSettingKind.CapsLock or QuickSettingKind.DisplayOff;
 
     public static bool IsAvailable(QuickMenuItem item, HomeStateSnapshot? snapshot) =>
-        IsLocal(item.Kind) || item.IsAction || snapshot?.Capabilities.Items.Any(capability =>
-            capability.Key == item.CapabilityKey) == true;
+        IsLocal(item.Kind) || item.IsAction || snapshot?.Capabilities.IsAvailable(item.CapabilityKey) == true;
 
     public static IReadOnlyList<QuickMenuItem> CreateDefault() =>
     [

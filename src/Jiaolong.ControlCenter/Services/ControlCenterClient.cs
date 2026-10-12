@@ -31,6 +31,7 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
     public ControlCenterClient(string? pipeName = null) => this.pipeName = string.IsNullOrWhiteSpace(pipeName) ? PipeName : pipeName;
     internal ControlCenterClient CreatePeer() => new(pipeName);
     public bool IsConnected { get { lock (stateGate) return pipe is { IsConnected: true }; } }
+    public ProtocolVersion NegotiatedProtocol { get; private set; }
 
     public async Task ConnectAsync(CancellationToken cancellationToken)
     {
@@ -44,11 +45,12 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
             try
             {
                 await candidate.ConnectAsync(10_000, cancellationToken);
-                var hello = new HelloEnvelope(new ProtocolVersion(1, 0), Guid.NewGuid(), DateTimeOffset.UtcNow, "1.0.0");
+                var hello = new HelloEnvelope(new ProtocolVersion(1, 1), Guid.NewGuid(), DateTimeOffset.UtcNow, "1.0.0");
                 await WriteDirectAsync(candidate, hello, cancellationToken);
                 var response = await ReadDirectAsync(candidate, cancellationToken);
-                if (response is not HelloAckEnvelope { ProtocolVersion.Major: 1 })
+                if (response is not HelloAckEnvelope { ProtocolVersion.Major: 1 } acknowledgement)
                     throw new InvalidDataException("Control service protocol negotiation failed.");
+                NegotiatedProtocol = new(1, Math.Min((ushort)1, acknowledgement.ProtocolVersion.Minor));
 
                 lock (stateGate)
                 {
@@ -123,13 +125,13 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
     {
         await ConnectAsync(cancellationToken);
         var request = new RequestEnvelope(
-            new ProtocolVersion(1, 0),
+            NegotiatedProtocol,
             Guid.NewGuid(),
             DateTimeOffset.UtcNow,
             Guid.Empty,
             "subscribeTelemetry",
             DateTimeOffset.UtcNow.AddSeconds(10),
-            JsonSerializer.SerializeToElement(new { intervalSeconds = 0.5 }, JsonOptions));
+            JsonSerializer.SerializeToElement(new { intervalSeconds = 1.0 }, JsonOptions));
         await WriteMessageAsync(request, cancellationToken);
 
         await foreach (var snapshot in telemetryChannel.Reader.ReadAllAsync(cancellationToken))
@@ -165,7 +167,7 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
         try
         {
             await WriteMessageAsync(new RequestEnvelope(
-                new ProtocolVersion(1, 0),
+                NegotiatedProtocol,
                 messageId,
                 DateTimeOffset.UtcNow,
                 operationId,

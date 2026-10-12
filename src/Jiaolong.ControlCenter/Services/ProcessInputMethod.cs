@@ -12,33 +12,75 @@ internal static class ProcessInputMethod
     private const uint ForProcess = 0x10000000;
     private const uint DontCareCurrentInputLanguage = 0x00000004;
     private const ushort ChineseSimplified = 0x0804;
+    private static readonly object RetryLock = new();
+    private static readonly TimeSpan RetryBackoff = TimeSpan.FromSeconds(15);
+    private static DateTimeOffset retryAfterUtc;
+    private static bool retryPending, retryConsumed;
 
     public static void UseMicrosoftPinyin()
+    {
+        lock (RetryLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (retryConsumed && !retryPending) return;
+            if (retryPending)
+            {
+                if (now < retryAfterUtc) return;
+                retryPending = false;
+                retryConsumed = true;
+            }
+
+            UseMicrosoftPinyinCore();
+        }
+    }
+
+    private static void UseMicrosoftPinyinCore()
     {
         object? instance = null;
         try
         {
             instance = Activator.CreateInstance(Type.GetTypeFromCLSID(ManagerClass, throwOnError: true)!);
             var manager = (IProfileManager)instance!;
-            manager.ReleaseInputProcessor(DoubaoClass, 0);
-            if (manager.GetProfile(1, ChineseSimplified, PinyinClass, PinyinProfile, 0, out var current) == 0 &&
-                (current.Flags & ActiveProfile) != 0) return;
+            var readback = manager.GetProfile(1, ChineseSimplified, PinyinClass, PinyinProfile, 0, out var current);
+            if (readback < 0)
+            {
+                AppRuntimeLog.Write($"[{DateTime.Now:O}] Process input compatibility: stage=targetProfile; result=0x{readback:X8}; targetAvailable=False\n");
+                ScheduleRetry();
+                return;
+            }
+            if ((current.Flags & ActiveProfile) != 0)
+            {
+                retryPending = retryConsumed = false;
+                return;
+            }
 
             // Doubao's OimeTsfNotifyWindow invalidates WinUI's native child tree.
             // Process scope only: never enable profiles or change session/default settings.
+            manager.ReleaseInputProcessor(DoubaoClass, 0);
             var result = manager.ActivateProfile(1, ChineseSimplified, PinyinClass, PinyinProfile, 0,
                 ForProcess | DontCareCurrentInputLanguage);
-            var readback = manager.GetProfile(1, ChineseSimplified, PinyinClass, PinyinProfile, 0, out current);
-            AppRuntimeLog.Write($"[{DateTime.Now:O}] Process input compatibility: activate=0x{result:X8}; readback=0x{readback:X8}; pinyinActive={(current.Flags & ActiveProfile) != 0}\n");
+            readback = manager.GetProfile(1, ChineseSimplified, PinyinClass, PinyinProfile, 0, out current);
+            var active = readback >= 0 && (current.Flags & ActiveProfile) != 0;
+            AppRuntimeLog.Write($"[{DateTime.Now:O}] Process input compatibility: activate=0x{result:X8}; readback=0x{readback:X8}; pinyinActive={active}\n");
+            if (result >= 0 && active) retryPending = retryConsumed = false;
+            else ScheduleRetry();
         }
         catch (Exception error) when (error is COMException or InvalidCastException)
         {
+            ScheduleRetry();
             AppRuntimeLog.Write($"[{DateTime.Now:O}] Process input compatibility unavailable: {error.Message}\n");
         }
         finally
         {
             if (instance is not null && Marshal.IsComObject(instance)) Marshal.ReleaseComObject(instance);
         }
+    }
+
+    private static void ScheduleRetry()
+    {
+        if (retryConsumed) return;
+        retryPending = true;
+        retryAfterUtc = DateTimeOffset.UtcNow + RetryBackoff;
     }
 
     [StructLayout(LayoutKind.Sequential)]

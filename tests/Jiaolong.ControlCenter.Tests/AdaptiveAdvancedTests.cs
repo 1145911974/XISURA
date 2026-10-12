@@ -9,10 +9,75 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class AdaptiveAdvancedTests
 {
     [TestMethod]
+    public void G6_filtered_candidates_missing_signals_and_bounded_game_exit()
+    {
+        var policy = new AdaptiveTriggerPolicy(45, 35, 3, true, 90, 92, 25, 20, 15, 20)
+        { Advanced = new() { CooldownSeconds = 4, MinimumDwellSeconds = 8, CpuTemperatureCeiling = 93, GpuTemperatureCeiling = 82 } };
+        var input = new AdaptiveTrialInput { Current = AdaptiveStage.Office, AcConnected = true, BatterySaver = false,
+            CpuPercent = 5, GpuPercent = 0, CpuTemperature = 60, GpuTemperature = 50 };
+        var start = DateTimeOffset.UnixEpoch;
+        var session = new AdaptiveRuleSession();
+        for (int second = 0; second <= 2; second++) Assert.IsNull(session.Evaluate(policy, input, start.AddSeconds(second)).Target);
+        var fastPolicy = policy with { GameSeconds = 1, Advanced = policy.Advanced with { CooldownSeconds = 1, MinimumDwellSeconds = 1 } };
+        session.Reset();
+        for (int second = 0; second <= 2; second++) session.Evaluate(fastPolicy, input, start.AddSeconds(second));
+        Assert.IsNull(session.Evaluate(fastPolicy, input with { CpuPercent = 75 }, start.AddSeconds(3)).Target);
+        Assert.IsNull(session.Evaluate(fastPolicy, input with { CpuPercent = 75 }, start.AddSeconds(4)).Target,
+            "A raw spike must not satisfy a fast EMA candidate for a full second.");
+        Assert.IsNull(session.Evaluate(fastPolicy, input, start.AddSeconds(5)).Target);
+        session.Reset();
+        AdaptiveTrialResult result = new(null, "");
+        for (int second = 0; second <= 8; second++)
+            result = session.Evaluate(policy, input with { CpuPercent = 95, GpuPercent = double.NaN }, start.AddSeconds(second));
+        Assert.AreEqual(AdaptiveStage.Game, result.Target, "One credible high-load sensor may request Game, never Turbo.");
+        session.Reset();
+        var current = AdaptiveStage.Turbo;
+        for (int second = 0; second <= 40; second++) session.Evaluate(policy, input with { Current = current, CpuPercent = 99, GpuPercent = 99 }, start.AddSeconds(second));
+        int? returnedAt = null;
+        for (int second = 41; second <= 70; second++)
+        {
+            result = session.Evaluate(policy, input with { Current = current }, start.AddSeconds(second));
+            if (result.Target is { } target) current = target;
+            if (current == AdaptiveStage.Office) { returnedAt = second; break; }
+        }
+        Assert.IsNotNull(returnedAt, "Default low load must return from Turbo to Office within30seconds.");
+        session.Reset();
+        for (int second = 0; second <= 3; second++)
+            result = session.Evaluate(policy, input with { Current = AdaptiveStage.Turbo, AcConnected = false, BatteryPercent = null }, start.AddSeconds(second));
+        Assert.AreEqual(AdaptiveStage.Game, result.Target, "Known DC caps Turbo even when battery percent is unavailable.");
+        session.Reset();
+        Assert.AreEqual(AdaptiveStage.Office, session.Evaluate(policy, input with { Current = AdaptiveStage.Turbo,
+            AcConnected = false, BatteryPercent = 12, CpuPercent = null, GpuPercent = null }, start).Target);
+        session.Reset();
+        var busy = input with { CpuPercent = 99, GpuPercent = 99 };
+        session.Evaluate(policy, busy, start);
+        for (int repeat = 0; repeat < 30; repeat++) Assert.IsNull(session.Evaluate(policy, busy, start).Target);
+        Assert.IsNull(session.Evaluate(policy, busy, start.AddSeconds(10)).Target, "A gap restarts warmup rather than accumulating sleep time.");
+        session.Reset();
+        var cached = busy with { CpuObservedAtUtc = start, GpuObservedAtUtc = start };
+        for (int second = 0; second <= 8; second++)
+            Assert.IsNull(session.Evaluate(fastPolicy, cached, start.AddSeconds(second)).Target,
+                "Outer refresh timestamps cannot turn one sensor observation into warmup or sustained load.");
+        session.Reset();
+        for (int second = 0; second < 2; second++)
+            session.Evaluate(fastPolicy, input with { CpuPercent = null, GpuPercent = null }, start.AddSeconds(second));
+        Assert.IsNull(session.Evaluate(fastPolicy, busy, start.AddSeconds(2)).Target);
+        Assert.IsNull(session.Evaluate(fastPolicy, busy, start.AddSeconds(3)).Target, "Invalid observations never count toward the three-sample warmup.");
+        var rules = fastPolicy with { Advanced = fastPolicy.Advanced with { ApplicationSeconds = 3,
+            ApplicationRules = [new("active.exe", true, AdaptiveStage.Turbo), new("idle.exe", true, AdaptiveStage.Game)] } };
+        session.Reset();
+        for (int second = 0; second <= 5; second++)
+            result = session.Evaluate(rules, input with { Executable = "active.exe", Foreground = true, ProcessCpuPercent = 20 }, start.AddSeconds(second));
+        Assert.AreEqual(AdaptiveStage.Turbo, result.Target);
+        Assert.IsNull(session.Evaluate(rules, input with { Executable = "idle.exe", Foreground = true, ProcessCpuPercent = 0 }, start.AddSeconds(6)).Target,
+            "A replacement inactive rule cannot inherit the previous rule's forced Turbo target.");
+    }
+
+    [TestMethod]
     public void Low_load_downshift_survives_hot_sensors_and_foreground_changes()
     {
         var policy = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive) with
-        { OfficeSeconds = 4, Advanced = new() { CooldownSeconds = 1, MinimumDwellSeconds = 1 } };
+        { OfficeSeconds = 4, TurboMinimumDwellSeconds = 1, Advanced = new() { CooldownSeconds = 1, MinimumDwellSeconds = 1 } };
         var sample = new AdaptiveTrialInput { Current = AdaptiveStage.Turbo, AcConnected = true,
             CpuPercent = 3, GpuPercent = 0, CpuTemperature = 92, GpuTemperature = null };
         var session = new AdaptiveRuleSession();
@@ -29,7 +94,7 @@ public sealed class AdaptiveAdvancedTests
     {
         var policy = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive);
         var sample = new AdaptiveTrialInput { Current = AdaptiveStage.Turbo, AcConnected = true,
-            CpuPercent = 25, GpuPercent = 20, CpuTemperature = 90, GpuTemperature = 82,
+            CpuPercent = 25, GpuPercent = 20, CpuTemperature = 70, GpuTemperature = 65,
             ConditionSeconds = 100, SinceSwitchSeconds = 100 };
         Assert.AreEqual(AdaptiveStage.Game, AdaptiveRuleTrial.Evaluate(policy, sample).Target);
         Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { SinceSwitchSeconds = 0 }).Target);
@@ -37,10 +102,10 @@ public sealed class AdaptiveAdvancedTests
         Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { CpuPercent = 82, GpuPercent = 88 }).Target);
         var session = new AdaptiveRuleSession();
         var start = DateTimeOffset.UnixEpoch;
-        for (int second = 0; second <= policy.Advanced.MinimumDwellSeconds; second++)
+        for (int second = 0; second <= policy.TurboMinimumDwellSeconds; second++)
         {
             var result = session.Evaluate(policy, sample with { CpuPercent = second % 2 == 0 ? 25 : 45 }, start.AddSeconds(second));
-            if (second == policy.Advanced.MinimumDwellSeconds) Assert.AreEqual(AdaptiveStage.Game, result.Target);
+            if (second == policy.TurboMinimumDwellSeconds) Assert.AreEqual(AdaptiveStage.Game, result.Target);
             else Assert.IsNull(result.Target);
         }
         foreach (var strategy in Enum.GetValues<AdaptiveStrategyId>())
@@ -97,9 +162,16 @@ public sealed class AdaptiveAdvancedTests
         {
             var key = PresetKey.Create(mode, 3);
             Assert.AreEqual(PerformanceMode.Custom, AdaptiveTargetMap.PerformanceModeFor(key));
-            Assert.AreEqual(PerformanceMode.Turbo, AdaptiveTargetMap.HardwareModeFor(key));
+            Assert.AreEqual(mode switch { ControlModeId.Custom1 => PerformanceMode.Quiet,
+                ControlModeId.Custom2 => PerformanceMode.Balanced, _ => PerformanceMode.Turbo }, AdaptiveTargetMap.HardwareModeFor(key));
+            Assert.AreEqual(PerformanceMode.Balanced, AdaptiveTargetMap.HardwareModeFor(key,
+                new Dictionary<string,string> { [mode.ToString()] = "gaming" }));
+            Assert.AreEqual(AdaptiveTargetMap.HardwareModeFor(key), AdaptiveTargetMap.HardwareModeFor(key,
+                new Dictionary<string,string> { [mode.ToString()] = "unknown-future-mode", ["futureCustom"] = "turbo" }));
             Assert.AreEqual(key, map.WithTarget(AdaptivePowerSource.Ac, AdaptiveStage.Game, key).AcGame);
-            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, key));
+            if (mode == ControlModeId.Custom3)
+                Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, key));
+            else Assert.AreEqual(key, map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, key).DcGame);
         }
     }
 
@@ -176,7 +248,7 @@ public sealed class AdaptiveAdvancedTests
     {
         var policy = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive) with
         { Advanced = new() { ApplicationRules = [new("ffmpeg.exe", false, AdaptiveStage.Game)] } };
-        var sample = new AdaptiveTrialInput { Executable = "FFMPEG.EXE", Foreground = false, CpuPercent = 60, GpuPercent = 5, CpuTemperature = 70, GpuTemperature = 50, AcConnected = true, BatteryPercent = 90, ConditionSeconds = 60, SinceSwitchSeconds = 200, IdleSeconds = 1000 };
+        var sample = new AdaptiveTrialInput { Executable = "FFMPEG.EXE", Foreground = false, CpuPercent = 60, GpuPercent = 5, CpuTemperature = 70, GpuTemperature = 50, AcConnected = true, BatterySaver = false, BatteryPercent = 90, ConditionSeconds = 60, SinceSwitchSeconds = 200, IdleSeconds = 1000 };
         Assert.AreEqual(AdaptiveStage.Game, AdaptiveRuleTrial.Evaluate(policy, sample).Target);
         Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { SinceSwitchSeconds = 0 }).Target);
         Assert.IsNull(AdaptiveRuleTrial.Evaluate(policy, sample with { ConditionSeconds = 0 }).Target);
@@ -196,7 +268,7 @@ public sealed class AdaptiveAdvancedTests
         var sample = new AdaptiveTrialInput
         {
             CpuPercent = 60, GpuPercent = 5, CpuTemperature = 60, GpuTemperature = 60,
-            AcConnected = true, BatteryPercent = 90, Current = AdaptiveStage.Office
+            AcConnected = true, BatteryPercent = 90, BatterySaver = false, Current = AdaptiveStage.Office
         };
         var session = new AdaptiveRuleSession();
         var start = DateTimeOffset.FromUnixTimeSeconds(1_000);
@@ -224,15 +296,16 @@ public sealed class AdaptiveAdvancedTests
         var sample = new AdaptiveTrialInput
         {
             CpuPercent = 60, GpuPercent = 5, CpuTemperature = 60, GpuTemperature = 60,
-            AcConnected = true, BatteryPercent = 90, Current = AdaptiveStage.Office
+            AcConnected = true, BatteryPercent = 90, BatterySaver = false, Current = AdaptiveStage.Office
         };
         var session = new AdaptiveRuleSession();
         var timestamp = DateTimeOffset.FromUnixTimeSeconds(1_000);
 
         Assert.IsNull(session.Evaluate(policy, sample, timestamp).Target);
-        var candidate = session.Evaluate(policy, sample, timestamp.AddSeconds(1));
+        Assert.IsNull(session.Evaluate(policy, sample, timestamp.AddSeconds(1)).Target);
+        var candidate = session.Evaluate(policy, sample, timestamp.AddSeconds(2));
         Assert.AreEqual(AdaptiveStage.Game, candidate.Target);
-        Assert.IsNull(session.Evaluate(policy, sample with { Current = AdaptiveStage.Game }, timestamp.AddSeconds(1)).Target);
+        Assert.IsNull(session.Evaluate(policy, sample with { Current = AdaptiveStage.Game }, timestamp.AddSeconds(2)).Target);
     }
 
     [TestMethod]

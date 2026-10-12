@@ -20,12 +20,14 @@ public enum HomeSessionStatus
 
 public sealed class HomeControlSession : IAsyncDisposable
 {
-    public static readonly TimeSpan ControlStateRefreshInterval = TimeSpan.FromMilliseconds(100);
+    public static readonly TimeSpan ControlStateRefreshInterval = TimeSpan.FromSeconds(1);
 
     private readonly ControlCenterClient client;
     private readonly ControlCenterClient modeClient;
     private readonly SemaphoreSlim modeCommandGate = new(1, 1);
     private long modeReadbackVersion;
+    private long refreshSequence;
+    private long appliedRefreshSequence;
     private readonly IInteractiveRadioController radioController;
     private readonly AppliedConfigurationRestore automaticRestore;
     private readonly UserPreferencesStore preferences = new();
@@ -100,16 +102,69 @@ public sealed class HomeControlSession : IAsyncDisposable
     public Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken) =>
         ExecuteAsync(command, cancellationToken, CancellationToken.None);
 
+    public async Task<CommandResult> PublishPresetsAsync(PagePresetEnvelope[] items, PageSelection[] selections,
+        long expectedRevision, CancellationToken token)
+    {
+        await client.ConnectAsync(token);
+        var operationId = Guid.NewGuid();
+        if (client.NegotiatedProtocol.Minor < 1)
+            return new(operationId, CommandState.Rejected, null, RequiredUserAction.None,
+                ServiceError.Create(ErrorCode.CapabilityUnavailable, operationId, false), false) { Mutation = HardwareMutation.NoMutation };
+        return await client.SendCommandAsync(new PublishPresetCatalogCommand(operationId, expectedRevision, items)
+            { Selections = selections }, token);
+    }
+
+    public async Task<CommandResult> ApplyControlRequestAsync(ControlModeId logicalMode, PerformanceMode nativeMode,
+        PageSelection[] pages, ControlOrigin origin, CancellationToken token)
+    {
+        if (origin is ControlOrigin.Adaptive or ControlOrigin.StartupRestore or ControlOrigin.TurboBranch)
+            throw new ArgumentOutOfRangeException(nameof(origin));
+        long version = Interlocked.Increment(ref manualCommandVersion);
+        await modeClient.ConnectAsync(token);
+        Guid operationId = Guid.NewGuid();
+        if (modeClient.NegotiatedProtocol.Minor < 1)
+            return new(operationId, CommandState.Rejected, null, RequiredUserAction.None,
+                ServiceError.Create(ErrorCode.CapabilityUnavailable, operationId, false), false) { Mutation = HardwareMutation.NoMutation };
+        var command = new ApplyControlRequestCommand(operationId, new(operationId, 0, origin, logicalMode, nativeMode, pages));
+        var result = await modeClient.SendCommandAsync(command, token);
+        if (version != Interlocked.Read(ref manualCommandVersion)) return result;
+        HomeStateSnapshot? submitted;
+        lock (gate)
+        {
+            if (version != Interlocked.Read(ref manualCommandVersion)) return result;
+            submitted = homeState is null ? null : homeState with { Controls = homeState.Controls with
+            {
+                PerformanceMode = result.VerifiedPerformanceMode == nativeMode ? nativeMode : homeState.Controls.PerformanceMode,
+                ExecutionState = result.ExecutionState ?? homeState.Controls.ExecutionState,
+                ModeEvidence = result.ModeEvidence ?? homeState.Controls.ModeEvidence
+            } };
+            homeState = submitted;
+            Interlocked.Increment(ref modeReadbackVersion);
+        }
+        if (submitted is not null) StateChanged?.Invoke(submitted);
+        if (result.VerifiedPerformanceMode == nativeMode)
+        {
+            try { await automaticRestore.RecordAppliedAsync(new SetPerformanceModeCommand(operationId, nativeMode), result, CancellationToken.None,
+                () => version == Interlocked.Read(ref manualCommandVersion)); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
+            { if (version == Interlocked.Read(ref manualCommandVersion)) Notify("模式已确认，但本地恢复记录保存失败；请检查配置目录。"); }
+        }
+        if (result.Error is null || result.Mutation != HardwareMutation.NoMutation) await RefreshStateAsync(token);
+        if (version == Interlocked.Read(ref manualCommandVersion) && result.Error is not null && result.Error.Code != ErrorCode.CancelledBeforeApply)
+            Notify(ErrorText(result.Error));
+        return result;
+    }
+
     public async Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken,
         CancellationToken queueCancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (command is not (SetAdaptiveAutomationConfigurationCommand or UpdateAdaptiveAutomationContextCommand))
+        if (command is not (SetAdaptiveAutomationConfigurationCommand or UpdateAdaptiveAutomationContextCommand or PublishPresetCatalogCommand))
             Interlocked.Increment(ref manualCommandVersion);
         if (command is SetQuickSettingCommand { Setting: QuickSettingKind.Wifi or QuickSettingKind.Bluetooth } radioCommand)
         {
             var radioResult = await ExecuteRadioAsync(radioCommand, cancellationToken);
-            if (radioResult.Error is not null) Notify(ErrorText(radioResult.Error.Code));
+            if (radioResult.Error is not null) Notify(ErrorText(radioResult.Error));
             return radioResult;
         }
 
@@ -134,14 +189,14 @@ public sealed class HomeControlSession : IAsyncDisposable
                     // A late UI cancellation must not lose an already-successful hardware application.
                     await automaticRestore.RecordAppliedAsync(command, result, CancellationToken.None);
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
                 {
                     RestoreWarning?.Invoke("本次应用结果已返回，但自动恢复快照保存失败；已保留原文件，请检查存储后重试");
                 }
                 if (result.Error is not null)
                 {
-                    Notify(ErrorText(result.Error.Code));
-                    await RefreshStateAsync(cancellationToken);
+                    Notify(ErrorText(result.Error));
+                    if (result.Mutation != HardwareMutation.NoMutation) await RefreshStateAsync(cancellationToken);
                 }
                 else
                 {
@@ -161,16 +216,18 @@ public sealed class HomeControlSession : IAsyncDisposable
         {
             throw;
         }
-        catch
+        catch (Exception error)
         {
-            Status = HomeSessionStatus.Disconnected;
-            Notify("硬件服务未连接，已保留当前页面状态");
+            bool disconnected = !client.IsConnected;
+            if (disconnected) Status = HomeSessionStatus.Disconnected;
+            Notify(disconnected ? "硬件服务未连接，已保留当前页面状态" : "本次操作未完成，服务连接仍有效；已保留当前页面状态");
+            AppRuntimeLog.Write($"Command preparation/result processing failed: {error.GetType().Name}: {error.Message}\n");
             return new CommandResult(
                 command.OperationId,
                 CommandState.Rejected,
                 null,
                 RequiredUserAction.None,
-                ServiceError.Create(ErrorCode.ServiceUnavailable, command.OperationId, true),
+                ServiceError.Create(disconnected ? ErrorCode.ServiceUnavailable : ErrorCode.ValidationFailed, command.OperationId, disconnected),
                 false);
         }
     }
@@ -185,13 +242,18 @@ public sealed class HomeControlSession : IAsyncDisposable
             var clock = System.Diagnostics.Stopwatch.StartNew();
             var result = await modeClient.SendCommandAsync(command, token);
             long replyMs = clock.ElapsedMilliseconds;
-            if (result is { State: CommandState.Applied, Error: null } && result.VerifiedPerformanceMode == command.Mode)
+            if (result is { State: CommandState.Applied, Error: null } &&
+                (result.VerifiedPerformanceMode == command.Mode ||
+                 result.ModeEvidence is { VerificationLevel: "InterfaceAcknowledged" } modeEvidence &&
+                 modeEvidence.RequestedMode == command.Mode && modeEvidence.ParsedMode == command.Mode))
             {
                 HomeStateSnapshot? confirmed;
                 lock (gate)
                 {
                     confirmed = homeState is null ? null : homeState with
-                    { Controls = homeState.Controls with { PerformanceMode = command.Mode } };
+                    { Controls = homeState.Controls with { PerformanceMode = result.VerifiedPerformanceMode == command.Mode
+                        ? command.Mode : homeState.Controls.PerformanceMode, ModeEvidence = result.ModeEvidence,
+                        ExecutionState = result.ExecutionState ?? homeState.Controls.ExecutionState } };
                     homeState = confirmed;
                     Interlocked.Increment(ref modeReadbackVersion);
                 }
@@ -199,11 +261,11 @@ public sealed class HomeControlSession : IAsyncDisposable
             }
             else
             {
-                if (result.Error is not null) Notify(ErrorText(result.Error.Code));
+                if (result.Error is not null) Notify(ErrorText(result.Error));
                 await RefreshStateAsync(token); // Compatibility with services lacking mode readback.
             }
             try { await automaticRestore.RecordAppliedAsync(command, result, CancellationToken.None); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
             { RestoreWarning?.Invoke("模式已返回，但自动恢复快照保存失败；请检查存储后重试"); }
             AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Mode command timing: {command.Mode}; serviceMs={replyMs}; totalMs={clock.ElapsedMilliseconds}; state={result.State}\n");
             return result;
@@ -221,9 +283,10 @@ public sealed class HomeControlSession : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (ConfigurationRestorationSettled && Status == HomeSessionStatus.Connected &&
-            State?.Controls.PerformanceMode is { } mode)
+            State?.Controls.ExecutionState is { NativeModeApplyState: ApplyState.Confirmed } confirmed &&
+            State.Controls.PerformanceMode is { } mode && confirmed.NativeMode == mode)
         {
-            try { await automaticRestore.RecordObservedModeAsync(mode, CancellationToken.None); }
+            try { await automaticRestore.RecordObservedModeAsync(mode, CancellationToken.None, independentlyConfirmed: true); }
             catch (Exception error) { AppRuntimeLog.Write($"Shutdown mode persistence: {error.Message}\n"); }
         }
         lifetime.Cancel();
@@ -314,10 +377,11 @@ public sealed class HomeControlSession : IAsyncDisposable
                 if (Status != HomeSessionStatus.Connected) return;
                 var report = await automaticRestore.RestoreAsync(client.SendCommandAsync,
                     () => version == Interlocked.Read(ref manualCommandVersion),
-                    preferences.Load().AdaptiveModeEnabled, cancellationToken, IsRestoreAllowed);
+                    State?.Controls.AdaptiveAutomation?.Enabled == true, cancellationToken,
+                    command => State?.Controls.AdaptiveAutomation?.Enabled != true && command is SetPerformanceModeCommand && IsRestoreAllowed(command));
                 if (report.Warning is not null) RestoreWarning?.Invoke(report.Warning);
-                else if (report.Skipped > 0 && !report.BlockedPreviously && !preferences.Load().AdaptiveModeEnabled)
-                    RestoreWarning?.Invoke("部分参数因当前供电或硬件能力暂未恢复；原配置已保留");
+                else if (report.Skipped > 0)
+                    AppRuntimeLog.Write($"Legacy restore intentionally deferred: skipped={report.Skipped}; blockedPreviously={report.BlockedPreviously}; saved state retained");
                 if (report.Applied > 0) await RefreshStateAsync(cancellationToken);
             }
             finally { controlStateGate.Release(); }
@@ -344,7 +408,7 @@ public sealed class HomeControlSession : IAsyncDisposable
             SetLidLogoCommand or SetQuickSettingCommand { Setting: QuickSettingKind.LidLogo } => "quickSetting:lidLogo",
             _ => command.GetType().Name
         };
-        return snapshot.Capabilities.Items.Any(item => item.Key == key && item.State == CapabilityState.Available);
+        return snapshot.Capabilities.IsAvailable(key);
     }
 
     private async Task ConnectAndRefreshAsync(CancellationToken cancellationToken, bool notifyFailure)
@@ -378,37 +442,41 @@ public sealed class HomeControlSession : IAsyncDisposable
 
     private async Task RefreshStateAsync(CancellationToken cancellationToken)
     {
+        long sequence = Interlocked.Increment(ref refreshSequence);
         long readbackVersion = Interlocked.Read(ref modeReadbackVersion);
         var updated = await client.GetHomeStateAsync(cancellationToken);
         HomeStateSnapshot? previous;
         lock (gate)
         {
+            if (sequence <= appliedRefreshSequence || readbackVersion != modeReadbackVersion) return;
+            appliedRefreshSequence = sequence;
             previous = homeState;
-            // A poll started before a newer firmware acknowledgement cannot undo that acknowledgement.
-            if (readbackVersion != modeReadbackVersion && homeState?.Controls.PerformanceMode is { } latest)
-                updated = updated with { Controls = updated.Controls with { PerformanceMode = latest } };
             homeState = updated;
         }
         if (ConfigurationRestorationSettled && updated.Capabilities.SupportState == DeviceSupportState.Ready &&
-            updated.Controls.PerformanceMode is { } observedMode)
+            updated.Controls.ExecutionState is { NativeModeApplyState: ApplyState.Confirmed } confirmed &&
+            updated.Controls.PerformanceMode is { } observedMode && confirmed.NativeMode == observedMode)
         {
             try { await automaticRestore.RecordObservedModeAsync(observedMode, cancellationToken,
-                () => readbackVersion == Interlocked.Read(ref modeReadbackVersion) && State?.Controls.PerformanceMode == observedMode); }
+                () => sequence == Interlocked.Read(ref appliedRefreshSequence) &&
+                    readbackVersion == Interlocked.Read(ref modeReadbackVersion) && State?.Controls.PerformanceMode == observedMode,
+                independentlyConfirmed: true); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
             { AppRuntimeLog.Write($"Observed mode persistence: {error.Message}\n"); }
         }
-        var previousStatus = Status;
-        Status = updated.Capabilities.SupportState switch
-        {
-            DeviceSupportState.Ready => HomeSessionStatus.Connected,
-            DeviceSupportState.RepairRequired => HomeSessionStatus.RepairRequired,
-            _ => HomeSessionStatus.ReadOnly
-        };
-        if (previous is null || previousStatus != Status || !HomeStateEquivalence.HaveSameControls(previous, updated))
-            StateChanged?.Invoke(updated);
-        var shouldNotify = false;
         lock (gate)
         {
+            if (sequence != appliedRefreshSequence || readbackVersion != modeReadbackVersion) return;
+            var previousStatus = Status;
+            Status = updated.Capabilities.SupportState switch
+            {
+                DeviceSupportState.Ready => HomeSessionStatus.Connected,
+                DeviceSupportState.RepairRequired => HomeSessionStatus.RepairRequired,
+                _ => HomeSessionStatus.ReadOnly
+            };
+            if (previous is null || previousStatus != Status || !HomeStateEquivalence.HaveSameControls(previous, updated))
+                StateChanged?.Invoke(updated);
+            bool shouldNotify = false;
             if (Status is HomeSessionStatus.ReadOnly or HomeSessionStatus.RepairRequired)
             {
                 shouldNotify = lastNotifiedUnavailableStatus != Status;
@@ -418,9 +486,8 @@ public sealed class HomeControlSession : IAsyncDisposable
             {
                 lastNotifiedUnavailableStatus = null;
             }
+            if (shouldNotify) Notify(HomeSessionMessages.ReadOnlyMode);
         }
-        if (shouldNotify)
-            Notify(HomeSessionMessages.ReadOnlyMode);
     }
 
     private async Task ConsumeControlStateAsync(CancellationToken cancellationToken)
@@ -607,4 +674,40 @@ public sealed class HomeControlSession : IAsyncDisposable
         ErrorCode.ServiceUnavailable => "硬件服务暂不可用",
         _ => "本次设置未完成，请重试或导出日志反馈。"
     };
+
+    private static string ErrorText(ServiceError error)
+    {
+        if (error.Details.GetValueOrDefault("reason") is { } reason)
+        {
+            if (reason == "gpuPersistedRecoveryRequired")
+                return "GPU 存在尚未验证恢复的设置，本次未写入。请导出诊断，完成恢复验证后再重试。";
+            if (reason is "gpuRecoveryJournalUnavailable" or "gpuRecoveryAdmissionMissing" or "gpuRecoveryAdmissionMismatch" or
+                "gpuRecoveryAdmissionRevoked" or "gpuRecoveryBaselineInvalid" or "gpuRecoveryIdentityChanged" or "gpuAdapterIdentityUnavailable")
+                return "GPU 恢复记录或设备身份未能核实，本次未写入。请导出诊断反馈。";
+            if (reason == "controlJournalUnreadable")
+                return "控制记录暂不可读取，本次未写入。请导出诊断反馈。";
+            if (reason == "gpuRecoveryPersistenceFailed" || reason.StartsWith("Control journal exceeds its size limit", StringComparison.Ordinal))
+                return "GPU 写入前的恢复记录未能保存，本次未写入。请导出诊断反馈。";
+        }
+        if (error.Details.GetValueOrDefault("stage") != "Preflight" ||
+            error.Details.GetValueOrDefault("cause") is not { } cause) return ErrorText(error.Code);
+        var parts = cause.Split(':', 2);
+        string field = parts.ElementAtOrDefault(1) switch
+        {
+            "temperatureLimitC" => "CPU 温度上限", "splWatts" => "CPU 持续功耗", "spptWatts" => "CPU 短时功耗",
+            "acMaxFrequencyMhz" => "CPU 接电频率上限", "dcMaxFrequencyMhz" => "CPU 电池频率上限",
+            "negativeCurveOptimizer" => "CPU 曲线优化", "pboScalar" => "PBO",
+            "coreFrequencyLimitMhz" => "GPU 频率上限", "coreOffsetKhz" => "GPU 核心偏移",
+            "memoryOffsetKhz" => "GPU 显存偏移", "vfOffsetsKhz" => "GPU 电压频率曲线",
+            "strategy" => "风扇策略", "fixedRpm" => "风扇固定转速", _ => "预设字段"
+        };
+        return parts[0] switch
+        {
+            "conflictingAdvancedField" => $"此预设的{field}包含冲突目标，模式与预设均未应用。请在管理预设中检查该项。",
+            "fieldNotWritable" or "nativeModeSideEffectUnverified" => $"此预设要求的{field}尚无可靠写入验证，模式与预设均未应用。可关闭对应页“随模式应用”后单独切换模式。",
+            "fieldOutOfRange" => $"此预设的{field}超出当前接口范围，模式与预设均未应用。请检查该项。",
+            "cpuExactBaselineUnreadable" or "curveOptimizerBaselineUnreadable" => $"无法读取{field}的可靠恢复原值，模式与预设均未应用。",
+            _ => ErrorText(error.Code)
+        };
+    }
 }

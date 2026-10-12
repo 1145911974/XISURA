@@ -32,19 +32,41 @@ public sealed partial class WindowsHomeHardwareProvider
             ReadTelemetryLocked(cancellationToken).CpuTemperatureC is not double temperature || temperature >= 80)
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
 
+        return ExecutePerCoreCurveTransaction(command.OperationId, values, cancellationToken);
+    }
+
+    internal CommandResult ExecutePerCoreCurveTransaction(Guid operationId, IReadOnlyDictionary<int, int> values,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            curveOptimizer.WritePerCore(values, cancellationToken);
-            return new(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false);
+            curveOptimizer!.WritePerCore(values, cancellationToken);
+            return new(operationId, CommandState.Applied, null, RequiredUserAction.None, null, false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested &&
+            exception.Data["curveOptimizerWriteAttempted"] is not bool) { throw; }
         catch (Exception exception)
         {
             logger?.LogError(exception, "Per-core curve optimizer transaction failed");
+            bool noMutation = exception.Data["curveOptimizerWriteAttempted"] is false;
             bool rollbackFailed = exception.Data["curveOptimizerRollbackFailed"] is not false;
-            return new(command.OperationId, rollbackFailed ? CommandState.RecoveryRequired : CommandState.RolledBack,
-                null, RequiredUserAction.None,
-                ServiceError.Create(rollbackFailed ? ErrorCode.RollbackFailed : ErrorCode.HardwareWriteFailed, command.OperationId, false), false);
+            var code = noMutation
+                ? exception is OperationCanceledException || exception.Message == "hardwareAccessPaused"
+                    ? ErrorCode.CancelledBeforeApply : exception is ArgumentException
+                        ? ErrorCode.ValidationFailed : ErrorCode.HardwareReadFailed
+                : rollbackFailed ? ErrorCode.RollbackFailed : ErrorCode.HardwareWriteFailed;
+            var error = ServiceError.Create(code, operationId, false) with
+            {
+                Details = new()
+                {
+                    ["reason"] = exception.Message,
+                    ["writeAttempted"] = (!noMutation).ToString(),
+                    ["rollbackConfirmed"] = (!noMutation && !rollbackFailed).ToString()
+                }
+            };
+            return new CommandResult(operationId, noMutation ? CommandState.Rejected : rollbackFailed
+                ? CommandState.RecoveryRequired : CommandState.RolledBack, null, RequiredUserAction.None, error, false)
+            { Mutation = noMutation ? HardwareMutation.NoMutation : HardwareMutation.Unknown };
         }
     }
 }

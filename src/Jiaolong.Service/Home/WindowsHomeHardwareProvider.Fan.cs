@@ -18,6 +18,9 @@ public sealed partial class WindowsHomeHardwareProvider
     private FanEcControlState? fanLastEcState;
     private readonly AutomaticFanCeiling automaticFanCeiling = new();
 
+    private BldingFanEcTransport CreateFanTransport() => new(
+        hardwareAccessAllowed: () => !BackgroundWorkPaused, hardwareReadAllowed: () => CpuHardwareReadAllowed);
+
     private FanEcControlState? ReadFanEcControlLocked()
     {
         if (fanTransport is null) return fanLastEcState;
@@ -43,46 +46,37 @@ public sealed partial class WindowsHomeHardwareProvider
 
         if (command is SetStrongCoolingCommand strong) return ExecuteStrongCoolingLocked(strong, cancellationToken);
 
+        if (command is not SetFanControlCommand requested || !requested.RiskConfirmed ||
+            CommandValidation.Validate(requested) is not null)
+            return Rejected(command.OperationId, ErrorCode.ValidationFailed) with { Mutation = HardwareMutation.NoMutation };
+        var plan = requested.Plan;
+
         if (compatibilityDecision?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) != true ||
             !BldingFanEcTransport.HasVerifiedFiles())
-            return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
+            return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
 
         if (ThirdPartyFanWriterRunning())
-            return Rejected(command.OperationId, ErrorCode.ConflictDetected);
-        if (strongCoolingActive)
-        {
-            try { ReleaseFanLocked(); }
-            catch { return FanRecoveryRequired(command.OperationId); }
-        }
-        if (activeFanPlan is null && (fanTouched || fanPreviousStrongCooling is not null))
+            return Rejected(command.OperationId, ErrorCode.ConflictDetected) with { Mutation = HardwareMutation.NoMutation };
+        if (!strongCoolingActive && activeFanPlan is null && (fanTouched || fanPreviousStrongCooling is not null))
             return FanRecoveryRequired(command.OperationId);
-
-        FanControlPlan plan;
-        if (command is SetFanControlCommand requested)
-        {
-            if (!requested.RiskConfirmed || CommandValidation.Validate(requested) is not null)
-                return Rejected(command.OperationId, ErrorCode.ValidationFailed);
-            plan = requested.Plan;
-        }
-        else return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
-
-        if (activeFanPlan is not null && (activeFanPlan.Strategy == "Auto" || plan.Strategy == "Auto"))
-        {
-            try { ReleaseFanLocked(); }
-            catch { return FanRecoveryRequired(command.OperationId); }
-        }
 
         var telemetry = ReadTelemetryLocked(cancellationToken);
         if (!TryTargets(plan, telemetry, out var cpu, out var gpu))
-            return Rejected(command.OperationId, ErrorCode.HardwareReadFailed);
+            return Rejected(command.OperationId, ErrorCode.HardwareReadFailed) with { Mutation = HardwareMutation.NoMutation };
         if (telemetry.CpuTemperatureC >= 95 || telemetry.GpuTemperatureC >= 87 ||
             (telemetry.CpuTemperatureC >= 85 || telemetry.GpuTemperatureC >= 80) && (cpu < 50 || gpu < 50))
-            return Rejected(command.OperationId, ErrorCode.ValidationFailed);
+            return Rejected(command.OperationId, ErrorCode.ValidationFailed) with { Mutation = HardwareMutation.NoMutation };
+
+        if (strongCoolingActive || activeFanPlan is not null && (activeFanPlan.Strategy == "Auto" || plan.Strategy == "Auto"))
+        {
+            try { ReleaseFanLocked(); }
+            catch { return FanRecoveryRequired(command.OperationId); }
+        }
 
         try
         {
             PrepareFanStrongCoolingLocked(cancellationToken);
-            fanTransport ??= new BldingFanEcTransport();
+            fanTransport ??= CreateFanTransport();
             fanTransport.Open();
             if (plan.Strategy == "Auto") ApplyAutomaticCeilingLocked(plan, telemetry, cpu, gpu);
             else fanTransport.SetTargets(cpu, gpu);
@@ -109,10 +103,11 @@ public sealed partial class WindowsHomeHardwareProvider
 
     private void FanTick()
     {
+        if (BackgroundWorkPaused) return;
         if (!Monitor.TryEnter(gate)) return;
         try
         {
-            if (disposed) return;
+            if (disposed || BackgroundWorkPaused) return;
             if (strongCoolingActive)
             {
                 if (fanTransport is null || ThirdPartyFanWriterRunning() ||
@@ -170,6 +165,7 @@ public sealed partial class WindowsHomeHardwareProvider
 
     private void ReleaseFanLocked()
     {
+        if (BackgroundWorkPaused) throw new IOException("hardwareAccessPaused");
         fanTouched |= fanTransport?.HasWritten == true;
         activeFanPlan = null;
         strongCoolingActive = false;
@@ -179,7 +175,7 @@ public sealed partial class WindowsHomeHardwareProvider
         {
             if (fanTouched && fanTransport is null)
             {
-                fanTransport = new BldingFanEcTransport();
+                fanTransport = CreateFanTransport();
                 fanTransport.Open();
             }
             if (fanTouched)
@@ -271,8 +267,14 @@ public sealed partial class WindowsHomeHardwareProvider
         return points[^1].Percent;
     }
 
-    private static bool ThirdPartyFanWriterRunning()
+    private readonly Func<bool>? thirdPartyFanWriterProbe;
+
+    internal WindowsHomeHardwareProvider(Func<bool> thirdPartyFanWriterProbe) : this() =>
+        this.thirdPartyFanWriterProbe = thirdPartyFanWriterProbe;
+
+    private bool ThirdPartyFanWriterRunning()
     {
+        if (thirdPartyFanWriterProbe is not null) return thirdPartyFanWriterProbe();
         try
         {
             foreach (string name in new[] { "第三方蛟龙游戏控制中心", "JiaoLongControl", "JiaoLongControl.Server" })

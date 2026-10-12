@@ -69,8 +69,8 @@ public sealed class FanWorkspaceV2ContractTests
         StringAssert.Contains(code, "RiskConfirmed: true");
         StringAssert.Contains(code, "session.ExecuteAsync(command");
         string use = code[code.IndexOf("private async void OnUsePreset", StringComparison.Ordinal)..];
-        StringAssert.Contains(use, "if (warnings.Count > 0 && await dialog.ShowAsync()");
-        int confirmation = use.IndexOf("await dialog.ShowAsync() != ContentDialogResult.Primary", StringComparison.Ordinal);
+        StringAssert.Contains(use, "if (warnings.Count > 0 && await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog)");
+        int confirmation = use.IndexOf("await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog) != ContentDialogResult.Primary", StringComparison.Ordinal);
         Assert.IsTrue(confirmation >= 0 && confirmation < use.IndexOf("session.ExecuteAsync(command", StringComparison.Ordinal));
         StringAssert.Contains(use, "DefaultButton = ContentDialogButton.Close");
         StringAssert.Contains(use, "bool succeeded = result.State == CommandState.Applied && result.Error is null;");

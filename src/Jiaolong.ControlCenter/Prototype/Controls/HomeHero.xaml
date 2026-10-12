@@ -85,7 +85,6 @@
             IsHitTestVisible="False" AutomationProperties.AutomationId="HeroBrandWordmark"
             AutomationProperties.Name="XISURA">
             <Image Source="ms-appx:///Assets/Brand/XisuraWordmark.svg" Width="218" Height="40" VerticalAlignment="Top" Stretch="Uniform" />
-            <Path Data="M 0,0 L 26,0 L 30,-3" Stroke="{StaticResource ModeAccentBrush}" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Bottom" Opacity="0.85" />
         </Grid>
 
         <StackPanel Canvas.Left="72" Canvas.Top="518" Width="465" HorizontalAlignment="Center" Spacing="8">

@@ -4,7 +4,8 @@ public sealed record FanCurveState(int Profile, bool IsShared, CurvePoint[] Cpu,
     string Strategy = "Curve", int FixedRpm = 3000)
 {
     public int? MaximumRpm { get; init; }
-    public bool IsValid() => Profile is >= 0 and <= 2 && Valid(Cpu) && Valid(Gpu) && Valid(Shared)
+    public bool IsValid() => Jiaolong.Contracts.Models.PresetValidation.ValidatePayload(Jiaolong.Contracts.Models.ControlPageId.Fan,
+        System.Text.Json.JsonSerializer.SerializeToElement(this)).IsValid && Profile is >= 0 and <= 2 && Valid(Cpu) && Valid(Gpu) && Valid(Shared)
         && Strategy is "Auto" or "Fixed" or "Curve" && FixedRpm is >= 1800 and <= 5800
         && MaximumRpm is not (< 1800 or > 5800);
     private static bool Valid(CurvePoint[]? points) => points is { Length: >= 2 and <= 71 }

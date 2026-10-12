@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text.Json;
 using Jiaolong_ControlCenter.Services;
 using Jiaolong.Contracts.Commands;
@@ -13,6 +13,7 @@ namespace Jiaolong_ControlCenter.Prototype.Controls;
 
 public sealed partial class FanWorkspaceV2 : UserControl
 {
+    public PresetCatalogController? Catalog { get; set; }
     private readonly UISettings uiSettings = new();
     private double? targetCpuRpm;
     private double? targetGpuRpm;
@@ -41,7 +42,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private bool syncingStrongCooling;
     public event Action<bool>? StrongCoolingRequested;
     public void SetPageActive(bool active) { pageActive = active; UpdateMotionState(); }
-    private readonly ControlPresetStore presetStore = new();
+    private readonly ControlPresetStore presetStore;
     private readonly Dictionary<PresetKey, FanCurveState> curveDrafts = [];
     private PresetKey editingKey = PresetKey.Create(ControlModeId.Gaming, 1);
     private int presetLoadVersion;
@@ -59,11 +60,15 @@ public sealed partial class FanWorkspaceV2 : UserControl
         session = value;
         if (value.State is { } state) ApplyControlState(state);
     }
+    private string? lastFanReadback;
     public void ApplyControlState(HomeStateSnapshot state)
     {
         UpdateFanActiveBadge(state);
+        string signature = JsonSerializer.Serialize(state.Controls.ActiveFanControlPlan);
         if (!PresetToolbar.IsEditingPreset && !applyingPreset && !liveFanQueued &&
-            !fanSliderPointerHeld && !FanCurveWorkspace.IsInteracting) RestoreLiveFanState(state);
+            !fanSliderPointerHeld && !FanCurveWorkspace.IsInteracting && !FixedTarget.IsInputPending && !MaximumRpmTarget.IsInputPending &&
+            lastFanReadback != signature)
+        { RestoreLiveFanState(state); lastFanReadback = signature; }
         maximumRpmAvailable = state.Controls.FanAutomaticCeilingAvailable;
         automaticCeilingActive = state.Controls.FanAutomaticCeilingActive;
         if (StrategyHelp is not null)
@@ -77,7 +82,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         UpdateFanPresetAvailability();
     }
     private bool FanHardwareAvailable => session?.Status == HomeSessionStatus.Connected &&
-        session.State?.Capabilities.Items.Any(item => item.Key == "fanControl") == true;
+        session.State?.Capabilities.IsAvailable("fanControl") == true;
 
     private void UpdateFanPresetAvailability()
     {
@@ -92,7 +97,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     {
         Strategy = AutoStrategy.IsChecked == true ? "Auto" : FixedStrategy.IsChecked == true ? "Fixed" : "Curve",
         FixedRpm = (int)FixedTarget.Value,
-        MaximumRpm = AutoStrategy.IsChecked == true && MaximumRpmToggle.IsOn ? (int)MaximumRpmTarget.Value : null
+        MaximumRpm = MaximumRpmToggle.IsOn ? (int)MaximumRpmTarget.Value : null
     };
     private void RestoreDraft(FanCurveState state)
     {
@@ -101,8 +106,8 @@ public sealed partial class FanWorkspaceV2 : UserControl
         FanCurveWorkspace.Import(state);
         (state.Strategy == "Auto" ? AutoStrategy : state.Strategy == "Fixed" ? FixedStrategy : CurveStrategy).IsChecked = true;
         FixedTarget.Value = state.FixedRpm;
-        MaximumRpmToggle.IsOn = state.Strategy == "Auto" && state.MaximumRpm.HasValue;
-        MaximumRpmTarget.Value = state.Strategy == "Auto" ? state.MaximumRpm ?? 5800 : 5800;
+        MaximumRpmToggle.IsOn = state.MaximumRpm.HasValue;
+        MaximumRpmTarget.Value = state.MaximumRpm ?? 5800;
         UpdateStrategyPanels();
         UpdateMaximumRpmAvailability();
         importingPreset = false;
@@ -114,6 +119,15 @@ public sealed partial class FanWorkspaceV2 : UserControl
         if (!PresetToolbar.IsEditingPreset) { PresetToolbar.SetCurrentSettingsModified(); QueueLiveFanChange(); return; }
         draftRevision++;
         dirtyPresets.Add(editingKey);
+        var key = editingKey;
+        var snapshot = CaptureDraft();
+        int capturedRevision = draftRevision;
+        Catalog?.ScheduleSave(ControlPageId.Fan, key, PresetToolbar.DisplayNameFor(key),
+            JsonSerializer.SerializeToElement(snapshot), () =>
+            {
+                if (editingKey == key && draftRevision == capturedRevision)
+                { savedPresets.Add(key); dirtyPresets.Remove(key); PresetToolbar.SetEditingState(key, false, true); _ = PresetToolbar.ShowSavedStatusAsync(); }
+            });
         PresetToolbar.SetEditingState(editingKey, true, false);
         UpdateFanPresetAvailability();
         _ = PresetToolbar.SetDirtyStatusAsync(true);
@@ -121,7 +135,13 @@ public sealed partial class FanWorkspaceV2 : UserControl
 
     public FanWorkspaceV2()
     {
+        presetStore = new(capabilities: () => session?.State?.Capabilities);
         InitializeComponent();
+        PresetToolbar.PresetRenamed += async (_, key) =>
+        {
+            try { if (Catalog is not null) await Catalog.RenameAsync(key); }
+            catch (Exception error) { AppRuntimeLog.Write($"Preset rename: {error}"); await PresetToolbar.ShowStatusAsync("名称保存未完成，请重试"); }
+        };
         IsFollowingPreset = followPreferences.Load().FanFollowPreset;
         PresetToolbar.ConfigureFollowPreset(IsFollowingPreset);
         PresetToolbar.FollowPresetChanged += OnFollowPresetChanged;
@@ -165,6 +185,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     {
         if (!PresetToolbar.IsEditingPreset) return;
         if (preserve && !fanEditorLoading) curveDrafts[editingKey] = CaptureDraft();
+        await (Catalog?.FlushAsync() ?? Task.CompletedTask);
         draftRevision++;
         int version = ++presetLoadVersion;
         fanEditorLoading = true;
@@ -199,7 +220,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
             if (saved is not null)
             {
                 var state = saved.Payload.Deserialize<FanCurveState>();
-                if (saved.SchemaVersion == 1 && state?.IsValid() == true && state.Profile == profile)
+                if (saved.SchemaVersion is >= 1 and <= PagePresetEnvelope.CurrentSchemaVersion && state?.IsValid() == true && state.Profile == profile)
                 {
                     RestoreDraft(state);
                     savedPresets.Add(key);
@@ -238,7 +259,9 @@ public sealed partial class FanWorkspaceV2 : UserControl
         PresetToolbar.SetActionAvailability(false, false);
         try
         {
+            await (Catalog?.FlushAsync() ?? Task.CompletedTask);
             var envelope = await presetStore.ResetAsync(ControlPageId.Fan, key, CancellationToken.None);
+            if (Catalog is not null && session?.IsServiceConnected == true) await Catalog.PublishAsync(Catalog.CurrentLogicalMode(), CancellationToken.None);
             curveDrafts.Remove(key);
             dirtyPresets.Remove(key);
             savedPresets.Add(key);
@@ -297,10 +320,12 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     CloseButtonText = "继续修改",
                     DefaultButton = ContentDialogButton.Close
                 };
-                if (await dialog.ShowAsync() != ContentDialogResult.Primary) return false;
+                if (await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog) != ContentDialogResult.Primary) return false;
             }
-            await presetStore.SaveAsync(new PagePresetEnvelope(1, ControlPageId.Fan, key,
-                PresetToolbar.DisplayNameFor(key), JsonSerializer.SerializeToElement(state), DateTimeOffset.UtcNow), CancellationToken.None);
+            if (Catalog is null) return false;
+            await Catalog.FlushAsync();
+            await Catalog.SavePayloadAsync(ControlPageId.Fan, key, PresetToolbar.DisplayNameFor(key),
+                JsonSerializer.SerializeToElement(state), CancellationToken.None, copyCurrent: !PresetToolbar.IsEditingPreset);
             if (appliedFanKey == key && (appliedFanPreset is not { } applied ||
                 applied.Profile != state.Profile || applied.IsShared != state.IsShared || applied.Strategy != state.Strategy ||
                 applied.FixedRpm != state.FixedRpm || applied.MaximumRpm != state.MaximumRpm ||
@@ -356,6 +381,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private async void OnFanEditingModeChanged(object? sender, bool editing)
     {
         ++liveFanRevision; liveFanQueued = false; ++presetLoadVersion;
+        await (Catalog?.FlushAsync() ?? Task.CompletedTask);
         if (editing) await SelectPresetAsync(PresetToolbar.SelectedKey, preserve: false);
         else
         {
@@ -373,6 +399,20 @@ public sealed partial class FanWorkspaceV2 : UserControl
 
     private async Task<bool> ApplyFanStateAsync(FanCurveState? liveState = null, bool preserveStrongCooling = false)
     {
+        if (liveState is null && Catalog is not null)
+        {
+            var result = await Catalog.ApplyAsync(editingKey.Mode, Catalog.NativeModeFor(editingKey), ControlOrigin.PresetUse,
+                ControlPageId.Fan, editingKey);
+            if (result is not { State: CommandState.Applied, Error: null }) return false;
+            var page = result.ExecutionState?.Pages.FirstOrDefault(p => p.Page == ControlPageId.Fan);
+            if (page?.State == Jiaolong.Contracts.Models.ApplyState.Confirmed) PresetToolbar.SetCurrentPreset(editingKey);
+            else if (page?.State == Jiaolong.Contracts.Models.ApplyState.SubmittedUnverified)
+            {
+                PresetToolbar.SetSubmittedPreset(editingKey);
+                await PresetToolbar.ShowTransientStatusAsync("已提交，实际生效未确认");
+            }
+            return true;
+        }
         if (applyingPreset || savingPreset || fanEditorLoading || session is null) return false;
         if (!FanHardwareAvailable)
         {
@@ -386,7 +426,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         try
         {
             var saved = liveState is null ? await presetStore.LoadAsync(ControlPageId.Fan, key, CancellationToken.None) : null;
-            var state = liveState ?? (saved?.SchemaVersion == 1 ? saved.Payload.Deserialize<FanCurveState>() : null);
+            var state = liveState ?? (saved?.SchemaVersion is >= 1 and <= PagePresetEnvelope.CurrentSchemaVersion ? saved.Payload.Deserialize<FanCurveState>() : null);
             int profile = key.Mode == ControlModeId.Office ? 0 : key.Mode == ControlModeId.Turbo ? 2 : 1;
             if (state?.IsValid() != true || liveState is null && state.Profile != profile)
             {
@@ -418,7 +458,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
                 CloseButtonText = warnings.Count > 0 ? "继续修改" : "取消",
                 DefaultButton = ContentDialogButton.Close
             };
-            if (warnings.Count > 0 && await dialog.ShowAsync() != ContentDialogResult.Primary)
+            if (warnings.Count > 0 && await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog) != ContentDialogResult.Primary)
             {
                 await PresetToolbar.ShowStatusAsync("已取消；没有提交命令");
                 return false;
@@ -441,7 +481,11 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     MaximumRpm = automaticCeilingRequested ? state.MaximumRpm : null
                 }, RiskConfirmed: true) { PreserveStrongCooling = preserveStrongCooling };
             if (!preserveStrongCooling) pendingFanFollowTarget = null;
+            Catalog?.RecordManualLive(ControlPageId.Fan);
+            IsFollowingPreset = false;
+            PresetToolbar.SetFollowPreset(false);
             var result = await session.ExecuteAsync(command, CancellationToken.None);
+            if (Catalog is not null) await Catalog.PublishManualLiveAsync();
             if (preserveStrongCooling && result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.CommandInProgress)
             {
                 pendingFanFollowTarget = key;

@@ -39,15 +39,13 @@ else
     builder.Services.AddSingleton<ServiceLifetimeCoordinator>();
     builder.Services.AddSingleton<WindowsHomeHardwareProvider>();
     builder.Services.AddSingleton<AdaptiveAutomationStateStore>();
+    builder.Services.AddSingleton<ControlExecutionJournal>();
     builder.Services.AddSingleton<AdaptiveAutomationHardwareProvider>(services => new AdaptiveAutomationHardwareProvider(
         services.GetRequiredService<WindowsHomeHardwareProvider>(),
         services.GetRequiredService<AdaptiveAutomationStateStore>()));
     builder.Services.AddSingleton<IHomeHardwareProvider>(services => services.GetRequiredService<AdaptiveAutomationHardwareProvider>());
     builder.Services.AddSingleton(_ => new TelemetryRingBuffer(120));
-    var logDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "JiaolongControlCenter", "Diagnostics", "Logs");
-    builder.Services.AddSingleton(_ => new LocalJsonLogSink(logDirectory, maxBytes: 4L * 1024 * 1024));
+    builder.Services.AddSingleton(_ => new LocalJsonLogSink(DiagnosticPaths.ServiceLogsDirectory, maxBytes: 4L * 1024 * 1024));
     builder.Services.AddSingleton<IDiagnosticEventWriter>(services => services.GetRequiredService<LocalJsonLogSink>());
     builder.Services.AddSingleton<IDiagnosticEventReader>(services => services.GetRequiredService<LocalJsonLogSink>());
     builder.Services.AddSingleton<IDiagnosticBundleBuilder, DiagnosticBundleBuilder>();

@@ -16,10 +16,13 @@ public sealed class PerformancePresetStoreTests
             ["office"] = [new()
             {
                 TemperatureLimitC = 76,
-                SplWatts = 36,
+                SplWatts = 45,
                 SpptWatts = 46,
                 MaxFrequencyMhz = 3800,
                 IsBoostEnabled = false,
+                NegativeCurveOptimizer = -30,
+                AcMinActiveCoresPercent = 17,
+                DcMinActiveCoresPercent = 33,
                 WindowsPowerSchemeId = Guid.Parse("381b4222-f694-41f0-9685-ff5bb260df2e")
             }]
         };
@@ -28,6 +31,12 @@ public sealed class PerformancePresetStoreTests
         var actual = await store.LoadAsync(CancellationToken.None);
 
         Assert.AreEqual(expected["office"][0], actual["office"][0]);
+        int writes = paths.WrittenPaths.Count;
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => store.SaveAsync(
+            new Dictionary<string, IReadOnlyList<PerformanceDraft>> { ["office"] = [expected["office"][0] with { SplWatts = 44 }] }, CancellationToken.None));
+        Assert.HasCount(writes, paths.WrittenPaths);
+        await store.SaveAsync(expected, CancellationToken.None);
+        Assert.IsTrue(File.Exists(paths.WrittenPaths.Last() + ".bak"));
     }
 
     [TestMethod]
@@ -39,8 +48,8 @@ public sealed class PerformancePresetStoreTests
         {
             ["office"] =
             [
-                new() { SplWatts = 30 },
                 new() { SplWatts = 45 },
+                new() { SplWatts = 50 },
                 new() { SplWatts = 60 }
             ]
         };
@@ -49,8 +58,8 @@ public sealed class PerformancePresetStoreTests
         var actual = await store.LoadAsync(CancellationToken.None);
 
         Assert.AreEqual(3, actual["office"].Count);
-        Assert.AreEqual(30, actual["office"][0].SplWatts);
-        Assert.AreEqual(45, actual["office"][1].SplWatts);
+        Assert.AreEqual(45, actual["office"][0].SplWatts);
+        Assert.AreEqual(50, actual["office"][1].SplWatts);
         Assert.AreEqual(60, actual["office"][2].SplWatts);
     }
 

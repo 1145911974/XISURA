@@ -13,25 +13,150 @@ internal sealed class NvapiVfInterop : IDisposable
     private const int DeltaBase = 100;
     private const int DeltaStride = 36;
     private const int DeltaOffset = 24;
-    private readonly IntPtr library;
-    private readonly QueryInterface query;
+    private IntPtr library;
+    private QueryInterface? query;
+    private readonly Func<uint, Func<IntPtr, byte[], int>>? gpuCall;
+    private readonly Func<IntPtr[]>? enumerateGpus;
+    private readonly Func<IntPtr, GpuAdapterIdentity>? adapterIdentityReader;
+    private readonly Func<bool>? hardwareAccessAllowed;
+    private readonly Func<bool>? hardwareReadAllowed;
+    internal sealed record LifetimeHooks(Func<int> Initialize, Func<int> Unload, Action FreeLibrary);
+    private readonly LifetimeHooks? lifetimeHooks;
+    private bool initialized;
+    private bool libraryLoaded;
+    private bool initializationUncertain;
+    private bool unloadUncertain;
+    private bool libraryReleaseUncertain;
+    private bool disposed;
+    public bool IsDisposed => disposed;
+    public bool DisposalRequested { get; private set; }
+    public Exception? CleanupError { get; private set; }
+    public bool InitializationUncertain => initializationUncertain;
+    public bool UnloadUncertain => unloadUncertain;
+    public bool LibraryReleaseUncertain => libraryReleaseUncertain;
+    public bool WriteAttempted { get; private set; }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr QueryInterface(uint id);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Initialize();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int EnumGpus([Out] IntPtr[] handles, out int count);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int GpuData(IntPtr gpu, IntPtr data);
 
-    public NvapiVfInterop()
+    public NvapiVfInterop(Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null)
     {
-        library = NativeLibrary.Load("nvapi64.dll");
-        query = Marshal.GetDelegateForFunctionPointer<QueryInterface>(NativeLibrary.GetExport(library, "nvapi_QueryInterface"));
-        Check(Get<Initialize>(22079528u)(), "NvAPI_Initialize");
+        this.hardwareAccessAllowed = hardwareAccessAllowed;
+        this.hardwareReadAllowed = hardwareReadAllowed;
+    }
+
+    internal NvapiVfInterop(Func<uint, Func<IntPtr, byte[], int>> gpuCall, Func<IntPtr[]> enumerateGpus,
+        Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null, LifetimeHooks? lifetimeHooks = null,
+        Func<IntPtr, GpuAdapterIdentity>? adapterIdentityReader = null)
+    {
+        this.gpuCall = gpuCall;
+        this.enumerateGpus = enumerateGpus;
+        this.hardwareAccessAllowed = hardwareAccessAllowed;
+        this.hardwareReadAllowed = hardwareReadAllowed;
+        this.lifetimeHooks = lifetimeHooks;
+        this.adapterIdentityReader = adapterIdentityReader;
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int PciIdentifiers(IntPtr gpu,
+        out uint deviceId, out uint subsystemId, out uint revisionId, out uint externalDeviceId);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int GpuScalar(IntPtr gpu, out uint value);
+
+    internal GpuAdapterIdentity ReadAdapterIdentity(IntPtr gpu)
+    {
+        EnsureAccess(readOnly: true);
+        EnsureInitialized();
+        GpuAdapterIdentity identity;
+        try
+        {
+            if (gpuCall is not null)
+            {
+                EnsureAccess(readOnly: true);
+                identity = adapterIdentityReader?.Invoke(gpu) ?? throw new IOException("gpuAdapterIdentityUnavailable");
+            }
+            else
+            {
+                // Documented scalar read APIs; retain raw IDs, never persist an ephemeral GPU handle.
+                var pci = Get<PciIdentifiers>(0x2DDFB66E);
+                EnsureAccess(readOnly: true);
+                Check(pci(gpu, out uint device, out uint subsystem, out uint revision, out uint external), "GetPCIIdentifiers");
+                EnsureAccess(readOnly: true);
+                var readBus = Get<GpuScalar>(0x1BE0B8E5);
+                EnsureAccess(readOnly: true);
+                Check(readBus(gpu, out uint bus), "GetBusId");
+                EnsureAccess(readOnly: true);
+                var readSlot = Get<GpuScalar>(0x2A0A350F);
+                EnsureAccess(readOnly: true);
+                Check(readSlot(gpu, out uint slot), "GetBusSlotId");
+                identity = new(device, subsystem, revision, external, bus, slot);
+            }
+        }
+        finally { EnsureAccess(readOnly: true); }
+        if (!ControlExecutionJournal.ValidGpuAdapter(identity)) throw new InvalidDataException("gpuAdapterIdentityUnavailable");
+        return identity;
+    }
+
+    private void EnsureInitialized()
+    {
+        if (initializationUncertain) throw new IOException("nvapiInitializationRecoveryRequired");
+        if (disposed || DisposalRequested) throw new ObjectDisposedException(nameof(NvapiVfInterop));
+        if (initialized) return;
+        EnsureAccess(readOnly: true);
+        if (!libraryLoaded)
+        {
+            try
+            {
+                if (gpuCall is null) library = NativeLibrary.Load("nvapi64.dll");
+                libraryLoaded = true;
+            }
+            finally { EnsureAccess(readOnly: true); }
+        }
+        Func<int> initialize;
+        if (gpuCall is not null) initialize = lifetimeHooks?.Initialize ?? (() => 0);
+        else
+        {
+            query ??= Marshal.GetDelegateForFunctionPointer<QueryInterface>(NativeLibrary.GetExport(library, "nvapi_QueryInterface"));
+            initialize = Get<Initialize>(0x0150E828).Invoke;
+        }
+        EnsureAccess(readOnly: true);
+        // Only confirmed success owns a ref-counter increment. An ambiguous failure must not unload another client.
+        initializationUncertain = true;
+        try
+        {
+            Check(initialize(), "NvAPI_Initialize");
+            initialized = true;
+            initializationUncertain = false;
+        }
+        catch (Exception error) { CleanupError = error; throw; }
+        finally { EnsureAccess(readOnly: true); }
+    }
+
+    private bool IsAccessAllowed(bool readOnly) =>
+        (readOnly ? hardwareReadAllowed ?? hardwareAccessAllowed : hardwareAccessAllowed)?.Invoke() ?? true;
+
+    private void EnsureAccess(bool readOnly)
+    {
+        if (!IsAccessAllowed(readOnly)) throw new IOException("hardwareAccessPaused");
     }
 
     public (IntPtr Gpu, byte[] Mask) OpenSingleGpu()
     {
+        EnsureAccess(readOnly: true);
+        EnsureInitialized();
         var handles = new IntPtr[64];
-        Check(Get<EnumGpus>(3853292063u)(handles, out var count), "EnumPhysicalGPUs");
+        int count;
+        try
+        {
+            if (enumerateGpus is not null) { handles = enumerateGpus(); count = handles.Length; }
+            else
+            {
+                var enumerate = Get<EnumGpus>(3853292063u);
+                EnsureAccess(readOnly: true);
+                Check(enumerate(handles, out count), "EnumPhysicalGPUs");
+            }
+        }
+        finally { EnsureAccess(readOnly: true); }
         if (count != 1) throw new InvalidOperationException($"Expected one NVIDIA GPU, found {count}");
         return (handles[0], ReadRaw(handles[0], 1350257497u, MaskSize, [])[4..36]);
     }
@@ -83,10 +208,18 @@ internal sealed class NvapiVfInterop : IDisposable
             throw new ArgumentOutOfRangeException(nameof(milliPercent));
         var bytes = before.Status.ToArray();
         BitConverter.GetBytes(milliPercent).CopyTo(bytes, 16);
-        Call(gpu, 0xAD95F5ED, bytes);
+        Call(gpu, 0xAD95F5ED, bytes, write: true);
     }
 
-    public bool HasPowerPolicySetter => query(0xAD95F5ED) != IntPtr.Zero;
+    public bool HasPowerPolicySetter
+    {
+        get
+        {
+            EnsureAccess(readOnly: true);
+            try { EnsureInitialized(); return gpuCall is not null || query!(0xAD95F5ED) != IntPtr.Zero; }
+            finally { EnsureAccess(readOnly: true); }
+        }
+    }
 
     public void SetPowerPolicyWithoutReadback(IntPtr gpu, uint milliPercent)
     {
@@ -97,7 +230,7 @@ internal sealed class NvapiVfInterop : IDisposable
         BitConverter.GetBytes((uint)(72 | 1 << 16)).CopyTo(bytes, 0);
         BitConverter.GetBytes(1u).CopyTo(bytes, 4);
         BitConverter.GetBytes(milliPercent).CopyTo(bytes, 16);
-        Call(gpu, 0xAD95F5ED, bytes);
+        Call(gpu, 0xAD95F5ED, bytes, write: true);
     }
 
     public (int MinimumKhz, int MaximumKhz)? ReadGraphicsDeltaRange(IntPtr gpu)
@@ -114,8 +247,8 @@ internal sealed class NvapiVfInterop : IDisposable
         const int stateStride = 456;
         const int clockStride = 44;
         var bytes = ReadRaw(gpu, 1878528531u, 20 + 16 * stateStride, []);
-        int states = Math.Min(BitConverter.ToInt32(bytes, 8), 16);
-        int clocks = Math.Min(BitConverter.ToInt32(bytes, 12), 8);
+        int states = BitConverter.ToInt32(bytes, 8);
+        int clocks = BitConverter.ToInt32(bytes, 12);
         if (states is < 1 or > 16 || clocks is < 1 or > 8) throw new InvalidDataException("Unexpected PStates20 header");
         for (int state = 0; state < states; state++)
         {
@@ -161,44 +294,64 @@ internal sealed class NvapiVfInterop : IDisposable
         BitConverter.GetBytes(memoryKhz).CopyTo(bytes, memory + 12);
         int coreVoltage = graphics + 8 * clockStride;
         BitConverter.GetBytes(before.CoreVoltageDeltaUv).CopyTo(bytes, coreVoltage + 12);
-        Call(gpu, 256749163u, bytes);
+        Call(gpu, 256749163u, bytes, write: true);
     }
 
     public void WriteDeltas(IntPtr gpu, byte[] mask, int[] deltas)
     {
+        EnsureAccess(readOnly: false);
         if (deltas.Length != 127) throw new ArgumentOutOfRangeException(nameof(deltas));
-        var bytes = ReadRaw(gpu, 603042099u, TableSize, mask);
+        var bytes = ReadRaw(gpu, 603042099u, TableSize, mask, readOnly: false);
         for (int index = 1; index < deltas.Length; index++)
             BitConverter.GetBytes(deltas[index]).CopyTo(bytes, DeltaBase + (index - 1) * DeltaStride + DeltaOffset);
         BitConverter.GetBytes(TableSize | (1 << 16)).CopyTo(bytes, 0);
         mask.CopyTo(bytes, 4);
-        Call(gpu, 120840201u, bytes);
+        Call(gpu, 120840201u, bytes, write: true);
     }
 
-    private byte[] ReadRaw(IntPtr gpu, uint function, int size, byte[] mask)
+    private byte[] ReadRaw(IntPtr gpu, uint function, int size, byte[] mask, bool readOnly = true)
     {
         var bytes = new byte[size];
         BitConverter.GetBytes(size | (1 << 16)).CopyTo(bytes, 0);
         mask.CopyTo(bytes, 4);
-        Call(gpu, function, bytes);
+        Call(gpu, function, bytes, requireWriteAccess: !readOnly);
         return bytes;
     }
 
-    private void Call(IntPtr gpu, uint function, byte[] bytes)
+    private void Call(IntPtr gpu, uint function, byte[] bytes, bool write = false, bool requireWriteAccess = false)
     {
+        bool readOnly = !write && !requireWriteAccess;
+        EnsureAccess(readOnly);
+        EnsureInitialized();
+        if (gpuCall is not null)
+        {
+            try
+            {
+                var call = gpuCall(function);
+                EnsureAccess(readOnly);
+                if (write) WriteAttempted = true;
+                Check(call(gpu, bytes), $"NVAPI 0x{function:X8}");
+            }
+            finally { EnsureAccess(readOnly); }
+            return;
+        }
         IntPtr memory = Marshal.AllocHGlobal(bytes.Length);
         try
         {
             Marshal.Copy(bytes, 0, memory, bytes.Length);
-            Check(Get<GpuData>(function)(gpu, memory), $"NVAPI 0x{function:X8}");
+            var call = Get<GpuData>(function);
+            EnsureAccess(readOnly);
+            if (write) WriteAttempted = true;
+            try { Check(call(gpu, memory), $"NVAPI 0x{function:X8}"); }
+            finally { EnsureAccess(readOnly); }
             Marshal.Copy(memory, bytes, 0, bytes.Length);
         }
-        finally { Marshal.FreeHGlobal(memory); }
+        finally { try { Marshal.FreeHGlobal(memory); } finally { EnsureAccess(readOnly); } }
     }
 
     private T Get<T>(uint id) where T : Delegate
     {
-        IntPtr address = query(id);
+        IntPtr address = query!(id);
         if (address == IntPtr.Zero) throw new InvalidOperationException($"NVAPI function unavailable: 0x{id:X8}");
         return Marshal.GetDelegateForFunctionPointer<T>(address);
     }
@@ -208,7 +361,45 @@ internal sealed class NvapiVfInterop : IDisposable
         if (status != 0) throw new NvapiCallException(status, operation);
     }
 
-    public void Dispose() => NativeLibrary.Free(library);
+    internal void RequestDisposal() => DisposalRequested = true;
+    internal bool TryDispose()
+    {
+        DisposalRequested = true;
+        if (disposed) return true;
+        if (initializationUncertain || unloadUncertain || libraryReleaseUncertain) return false;
+        try
+        {
+            EnsureAccess(readOnly: false);
+            if (initialized)
+            {
+                Func<int> unload = gpuCall is not null ? lifetimeHooks?.Unload ?? (() => 0)
+                    : Get<Initialize>(0xD22BDD7E).Invoke;
+                EnsureAccess(readOnly: false);
+                unloadUncertain = true;
+                int status = unload();
+                unloadUncertain = false;
+                Check(status, "NvAPI_Unload");
+                // Record completed unload before checking permission again; it must not decrement twice.
+                initialized = false;
+                EnsureAccess(readOnly: false);
+            }
+            if (libraryLoaded)
+            {
+                EnsureAccess(readOnly: false);
+                libraryReleaseUncertain = true;
+                if (gpuCall is not null) lifetimeHooks?.FreeLibrary();
+                else NativeLibrary.Free(library);
+                library = IntPtr.Zero;
+                libraryLoaded = false;
+                libraryReleaseUncertain = false;
+            }
+            disposed = true;
+            CleanupError = null;
+            return true;
+        }
+        catch (Exception error) { CleanupError = error; return false; }
+    }
+    public void Dispose() => TryDispose();
 }
 
 internal sealed class NvapiCallException(int status, string operation) : InvalidOperationException($"{operation} status={status}")

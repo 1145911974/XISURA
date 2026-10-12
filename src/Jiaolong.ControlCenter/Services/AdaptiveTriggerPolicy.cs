@@ -14,11 +14,16 @@ public sealed record AdaptiveTriggerPolicy(
     int OfficeSeconds)
 {
     public AdaptiveAdvancedSettings Advanced { get; init; } = new();
+    public int TurboExitCpuPercent { get; init; } = 70;
+    public int TurboExitGpuPercent { get; init; } = 75;
+    public int TurboExitSeconds { get; init; } = 12;
+    public int TurboMinimumDwellSeconds { get; init; } = 12;
     public static AdaptiveTriggerPolicy Recommended(AdaptiveStrategyId strategy) => strategy switch
     {
-        AdaptiveStrategyId.QuietFirst => new(55, 45, 15, false, 85, 90, 30, 20, 15, 30),
-        AdaptiveStrategyId.BalancedAdaptive => new(40, 35, 8, true, 85, 90, 30, 20, 15, 20),
-        AdaptiveStrategyId.ResponseFirst => new(30, 25, 4, true, 75, 85, 15, 15, 10, 15),
+        AdaptiveStrategyId.QuietFirst => new(60, 45, 6, false, 90, 92, 25, 20, 15, 15) { TurboExitSeconds = 3 },
+        AdaptiveStrategyId.BalancedAdaptive => new(45, 35, 3, true, 90, 92, 25, 20, 15, 20),
+        AdaptiveStrategyId.ResponseFirst => new(30, 25, 2, true, 85, 85, 12, 15, 10, 30)
+            { TurboExitCpuPercent = 65, TurboExitGpuPercent = 70, TurboExitSeconds = 20 },
         _ => throw new ArgumentOutOfRangeException(nameof(strategy))
     };
 
@@ -41,6 +46,9 @@ public sealed record AdaptiveTriggerPolicy(
     {
         if (Advanced is null) throw new ArgumentException("高级条件不能为空。");
         Advanced.Validate();
+        if (TurboExitCpuPercent is < 1 or > 100 || TurboExitGpuPercent is < 1 or > 100 ||
+            TurboExitSeconds is < 1 or > 3600 || TurboMinimumDwellSeconds is < 1 or > 3600)
+            throw new ArgumentException("狂飙退出阈值和驻留时间无效。");
         foreach (var percent in new[] { GameCpuPercent, GameGpuPercent, TurboCpuPercent, TurboGpuPercent, OfficeCpuPercent, OfficeGpuPercent })
             if (percent is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(percent), "负载阈值必须在 1% 至 100% 之间。");
 

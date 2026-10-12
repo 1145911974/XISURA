@@ -20,6 +20,10 @@ public sealed class WindowPlacementTests
     [TestMethod]
     public void Startup_position_centers_the_client_inside_the_primary_work_area()
     {
+        Assert.IsTrue(Jiaolong_ControlCenter.Prototype.PrototypeWindowChrome.PreferSecondaryDisplay("Candidate"));
+        Assert.IsFalse(Jiaolong_ControlCenter.Prototype.PrototypeWindowChrome.PreferSecondaryDisplay("Stable"));
+        Assert.IsFalse(Jiaolong_ControlCenter.Prototype.PrototypeWindowChrome.PreferSecondaryDisplay(null));
+        Assert.IsTrue(Jiaolong_ControlCenter.Prototype.PrototypeWindowChrome.PreferSecondaryDisplay("Stable", true));
         var position = WindowPlacement.CenterClient(
             new WindowWorkArea(0, 0, 2560, 1600),
             new SizeInt32(1966, 1229),

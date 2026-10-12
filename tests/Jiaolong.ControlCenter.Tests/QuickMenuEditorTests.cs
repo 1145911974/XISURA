@@ -16,6 +16,15 @@ public sealed class QuickMenuEditorTests
         }
     }
     [TestMethod]
+    public void Present_but_unavailable_hardware_shortcuts_remain_disabled()
+    {
+        var item = QuickMenuCatalog.CreateDefault().Single(value => value.Kind == QuickSettingKind.StrongCooling);
+        var unavailable = new HomeStateSnapshot(
+            new CapabilitySnapshot([new("strongCooling", CapabilityState.Unavailable, "dependencyMissing")]),
+            null, null!);
+        Assert.IsFalse(QuickMenuCatalog.IsAvailable(item, unavailable));
+    }
+    [TestMethod]
     public void Catalog_contains_the_eight_selected_shortcuts_and_two_editable_actions()
     {
         var items = QuickMenuCatalog.CreateDefault();

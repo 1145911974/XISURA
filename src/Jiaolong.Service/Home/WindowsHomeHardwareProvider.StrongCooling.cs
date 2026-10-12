@@ -54,22 +54,41 @@ public sealed partial class WindowsHomeHardwareProvider
 
     private CommandResult ExecuteStrongCoolingLocked(SetStrongCoolingCommand command, CancellationToken token)
     {
-        if (ThirdPartyFanWriterRunning()) return Rejected(command.OperationId, ErrorCode.ConflictDetected);
+        if (BackgroundWorkPaused) return Rejected(command.OperationId, ErrorCode.CancelledBeforeApply) with { Mutation = HardwareMutation.NoMutation };
+        if (ThirdPartyFanWriterRunning()) return Rejected(command.OperationId, ErrorCode.ConflictDetected) with { Mutation = HardwareMutation.NoMutation };
+        try
+        {
+            if (!TryReadControlByte(StrongCoolingBinding(), out var before, token) || before > 1)
+                return Rejected(command.OperationId, ErrorCode.HardwareReadFailed) with { Mutation = HardwareMutation.NoMutation };
+        }
+        catch (Exception error)
+        {
+            var code = error is OperationCanceledException || error.Message == "hardwareAccessPaused" ? ErrorCode.CancelledBeforeApply : ErrorCode.HardwareReadFailed;
+            return Rejected(command.OperationId, code) with
+            {
+                Mutation = HardwareMutation.NoMutation,
+                Error = ServiceError.Create(code, command.OperationId, false) with
+                { Details = new() { ["reason"] = error.Message, ["writeAttempted"] = bool.FalseString } }
+            };
+        }
+        if (command.Enabled)
+        {
+            if (!HasSafeFanTelemetry(ReadTelemetryLocked(token)))
+                return Rejected(command.OperationId, ErrorCode.ValidationFailed) with { Mutation = HardwareMutation.NoMutation };
+            // Open modifies the EC initialization bit; dependency preflight must remain read-only.
+            if (fanTransport is null && !BldingFanEcTransport.HasVerifiedFiles())
+                return Rejected(command.OperationId, ErrorCode.DependencyMissing) with { Mutation = HardwareMutation.NoMutation };
+        }
         try
         {
             // Replace an earlier fan owner before claiming both EC channels for full cooling.
             if (activeFanPlan is not null || fanTouched || strongCoolingActive || fanTransport is not null) ReleaseFanLocked();
-            if (!TryReadControlByte(StrongCoolingBinding(), out var before, token) || before > 1)
-                return Rejected(command.OperationId, ErrorCode.HardwareReadFailed);
             if (command.Enabled)
             {
-                var telemetry = ReadTelemetryLocked(token);
-                if (!HasSafeFanTelemetry(telemetry))
-                    return Rejected(command.OperationId, ErrorCode.ValidationFailed);
                 // The firmware strong flag clamps Quiet mode near 3500 RPM on MRID6-23.
                 // Use the verified EC targets independently of the performance preset.
                 PrepareFanStrongCoolingLocked(token);
-                fanTransport ??= new BldingFanEcTransport();
+                fanTransport ??= CreateFanTransport();
                 fanTransport.Open();
                 fanTouched |= fanTransport.HasWritten;
                 fanTransport.SetTargets(68, 68);

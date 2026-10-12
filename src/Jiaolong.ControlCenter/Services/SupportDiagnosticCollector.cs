@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using Jiaolong.Contracts.Models;
 using Jiaolong.Diagnostics;
@@ -27,10 +28,11 @@ internal static class SupportDiagnosticCollector
             ["README.txt"] = "XISURA 诊断日志。support.json 记录版本、连接与设备状态；service-status.txt 记录 Windows 服务注册/启动状态；service-events.xml 记录最近两天的相关服务事件；client.log 和 service-*.ndjson 为最近日志。服务已连接时附加 service/ 诊断。读取失败也保留错误原因。导出自动脱敏个人路径、SID 和凭据；不包含预设文件、个人文档或完整进程列表。"
         };
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var shared = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
         entries["client.log"] = SupportDiagnosticBundle.ReadLogTail(Path.Combine(local, "Jiaolong Control Center", "logs", "application.log"));
         foreach (var name in new[] { "events.ndjson", "command-journal.ndjson" })
-            entries["service-" + name] = SupportDiagnosticBundle.ReadLogTail(Path.Combine(shared, "JiaolongControlCenter", "Diagnostics", "Logs", name));
+            entries["service-" + name] = ipcConnected
+                ? "[included in service/logs.ndjson when IPC export succeeds]"
+                : ReadServiceLogFallback(name);
         entries["device.json"] = await Task.Run(ReadDevice, token);
         var status = new List<string>();
         foreach (var operation in new[] { "queryex", "qc", "qfailure" })
@@ -39,6 +41,39 @@ internal static class SupportDiagnosticCollector
         const string query = "*[System[Provider[@Name='Service Control Manager'] and TimeCreated[timediff(@SystemTime) <= 172800000]] and EventData[Data='JiaolongControlService' or Data='XISURA Control Service' or Data='Jiaolong Control Service']]";
         entries["service-events.xml"] = await ReadToolAsync("wevtutil.exe", ["qe", "System", "/q:" + query, "/rd:true", "/c:30", "/f:xml"], token);
         return entries;
+    }
+
+    internal static void AddServiceLogFallback(IDictionary<string, string> entries)
+    {
+        foreach (var name in new[] { "events.ndjson", "command-journal.ndjson" })
+            entries["service-" + name] = ReadServiceLogFallback(name);
+    }
+
+    private static string ReadServiceLogFallback(string name)
+    {
+        var current = Path.Combine(DiagnosticPaths.ServiceLogsDirectory, name);
+        var legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "System32", "config", "systemprofile", "AppData", "Local", "JiaolongControlCenter", "Diagnostics", "Logs", name);
+        foreach (var path in new[] { current, legacy }.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) return "[unsafe reparse point]";
+                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                var offset = Math.Max(0, file.Length - 512 * 1024);
+                file.Position = offset;
+                var bytes = new byte[(int)Math.Min(512 * 1024, file.Length)];
+                var count = file.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
+                var text = Encoding.UTF8.GetString(bytes, 0, count);
+                return text.Length == 0 ? "[empty]" : offset == 0 ? text : "[truncated to recent log tail]\n" + text;
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+            catch (UnauthorizedAccessException) { return "[access denied]"; }
+            catch (IOException error) { return $"[read failed: {error.HResult:X8}]"; }
+        }
+        return "[missing: current and legacy service log paths]";
     }
 
     private static string ReadFileVersion(string path)

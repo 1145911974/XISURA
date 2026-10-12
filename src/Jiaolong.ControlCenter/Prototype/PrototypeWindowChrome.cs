@@ -59,6 +59,16 @@ public sealed class WindowChromeSubscription
 
 public static class PrototypeWindowChrome
 {
+    public static bool PreferSecondaryDisplay(string? buildChannel, bool explicitlyRequested = false) =>
+        explicitlyRequested || string.Equals(buildChannel, "Candidate", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsCandidateBuild => PreferSecondaryDisplay(typeof(PrototypeWindowChrome).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+        .Cast<System.Reflection.AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "XisuraBuildChannel")?.Value);
+
+    public static RectInt32? CandidateWorkArea() => IsCandidateBuild
+        ? PrototypeWindow.SecondaryDisplayWorkArea() : null;
+
     public const uint ReferenceDpi = 144;
     public const int DesignWidth = 1672;
     public const int DesignHeight = 1045;

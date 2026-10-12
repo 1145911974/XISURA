@@ -37,6 +37,7 @@ public sealed partial class AutomationWorkspaceV2
         servicePresetReader = reader;
         RequestServiceConfiguration();
     }
+    public void RefreshFollowConfiguration() => RequestServiceConfiguration();
 
     private void RequestServiceConfiguration()
     {
@@ -50,7 +51,13 @@ public sealed partial class AutomationWorkspaceV2
     private void RefreshServiceConnection()
     {
         var connected = automationService?.Status == HomeSessionStatus.Connected;
-        if (connected && !wasServiceConnected) servicePublishPending = true;
+        if (connected && !wasServiceConnected)
+        {
+            serviceAutomationStatus = automationService?.State?.Controls.AdaptiveAutomation;
+            autoEnabled = serviceAutomationStatus?.Enabled == true;
+            // Reconnection observes the persisted service switch; it never reenables stale UI preferences.
+            servicePublishPending = false;
+        }
         wasServiceConnected = connected;
         if (!connected || serviceClientLifetime.IsCancellationRequested) return;
         if (automationService!.ConfigurationRestorationSettled && servicePublishPending && !servicePublishBusy && DateTimeOffset.UtcNow >= serviceRetryAfter && servicePresetReader is not null)
@@ -111,19 +118,23 @@ public sealed partial class AutomationWorkspaceV2
                 advanced.CpuTemperatureCeiling, advanced.GpuTemperatureCeiling, advanced.CooldownSeconds,
                 advanced.MinimumDwellSeconds, advanced.ApplicationSeconds, advanced.IdleReturnEnabled,
                 advanced.IdleSeconds, advanced.ApplicationRules.Select(rule => new AdaptiveAutomationApplicationRule(
-                    rule.Executable, rule.ForegroundOnly, (AdaptiveAutomationStageId)rule.Target)).ToArray()),
+                    rule.Executable, rule.ForegroundOnly, (AdaptiveAutomationStageId)rule.Target) { RequireActivity = rule.RequireActivity }).ToArray())
+            { TurboExitCpuPercent = policy.TurboExitCpuPercent, TurboExitGpuPercent = policy.TurboExitGpuPercent,
+                TurboExitSeconds = policy.TurboExitSeconds, TurboMinimumDwellSeconds = policy.TurboMinimumDwellSeconds },
             new(map.AcOffice, map.AcGame, map.AcTurbo, map.DcOffice, map.DcGame), presets);
     }
 
-    private async Task ConfirmServiceConfigurationAsync(AdaptiveAutomationConfiguration configuration, CancellationToken cancellationToken)
+    private async Task ConfirmServiceConfigurationAsync(AdaptiveAutomationConfiguration configuration, CancellationToken cancellationToken,
+        AutomationConfigurationIntent intent = AutomationConfigurationIntent.Update)
     {
         var result = await automationService!.ExecuteAsync(
-            new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration), cancellationToken);
+            new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration)
+            { ExpectedRevision = automationService.State?.Controls.AdaptiveAutomation?.Revision ?? 0, Intent = intent }, cancellationToken);
         if (result.State != CommandState.Applied || result.Error is not null)
             throw new InvalidOperationException(result.Error?.Code.ToString() ?? "服务未确认调度配置");
         var actual = automationService.State?.Controls.AdaptiveAutomation;
         string identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(configuration)))[..16];
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(configuration with { Revision = 0 })))[..16];
         if (actual?.OwnerConfigurationIdentity != identity || actual.Enabled != configuration.Enabled)
             throw new InvalidOperationException("调度配置读回不一致");
         serviceAutomationStatus = actual;

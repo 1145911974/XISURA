@@ -34,7 +34,8 @@ public sealed partial class GpuWorkspaceV2
 
         if (!available || state is null)
         {
-            SetGpuHelpState(CoreFrequencyHelp, "驱动限频不可用");
+            SetGpuHelpState(CoreFrequencyHelp, state is { Error: null, MaximumMhz: > 0 }
+                ? "当前锁频无法独立读回，已暂停写入" : "驱动限频不可用");
             return;
         }
         if (CoreRail.Minimum != state.MinimumMhz || CoreRail.Maximum != state.MaximumMhz || !clockInitialized)

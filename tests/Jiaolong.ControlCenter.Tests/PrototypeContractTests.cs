@@ -427,20 +427,23 @@ public sealed class PrototypeContractTests
         Assert.IsFalse(shell.Contains("BatteryStatusText", StringComparison.Ordinal));
         Assert.IsFalse(code.Contains("SetServiceStatus", StringComparison.Ordinal));
         StringAssert.Contains(code, "PrototypeModeCommandCoordinator");
-        StringAssert.Contains(code, "outcome.Applied");
-        StringAssert.Contains(code, "homeSession.ExecuteAsync(command, cancellationToken)");
+        StringAssert.Contains(code, "await presetCatalog.ApplyAsync(logical, native");
+        StringAssert.Contains(code, "ControlOrigin.ManualMode : ControlOrigin.PresetUse");
         Assert.IsFalse(code.Contains("HomeModeBar.IsEnabled = false", StringComparison.Ordinal));
         StringAssert.Contains(code, "homeSessionTask = StartHomeSessionAsync()");
-        StringAssert.Contains(code, "modeCommandTask = ApplyPendingModesAsync()");
+        StringAssert.Contains(code, "modeCommandTask = ApplyCatalogModeAsync(logical, revision)");
         StringAssert.Contains(code, "await Task.WhenAll(pendingTasks)");
-
-        var visualCommit = code.IndexOf("state.Mode = request.Mode;", StringComparison.Ordinal);
-        var hardwareAwait = code.IndexOf("await modeCommands.ApplyAsync", StringComparison.Ordinal);
-        Assert.IsTrue(hardwareAwait >= 0 && visualCommit > hardwareAwait,
-            "Mode visuals must commit only after command success and hardware confirmation.");
+        int applyStart = code.IndexOf("private async Task<bool> ApplyCatalogModeAsync", StringComparison.Ordinal);
+        string apply = code[applyStart..code.IndexOf("private void PreviewModeVisuals", applyStart, StringComparison.Ordinal)];
+        int hardwareAwait = apply.IndexOf("await presetCatalog.ApplyAsync", StringComparison.Ordinal);
+        int confirmation = apply.IndexOf("result.VerifiedPerformanceMode == native", StringComparison.Ordinal);
+        int visualCommit = apply.IndexOf("state.Mode = PrototypeModeCommandCoordinator.Map", StringComparison.Ordinal);
+        Assert.IsTrue(hardwareAwait >= 0 && confirmation > hardwareAwait && visualCommit > confirmation,
+            "Mode visuals commit only after the unified request returns independent native confirmation.");
+        StringAssert.Contains(apply, "NativeModeApplyState: Jiaolong.Contracts.Models.ApplyState.Confirmed");
+        StringAssert.Contains(apply, "SetSubmittedPreset(submitted)");
         Assert.IsFalse(code.Contains("state.Mode = mode;", StringComparison.Ordinal));
         StringAssert.Contains(code, "!isModeCommandPending && snapshot.Controls.PerformanceMode");
-        StringAssert.Contains(code, "confirmed.Controls.PerformanceMode == outcome.ContractMode");
     }
 
     [TestMethod]
@@ -582,6 +585,7 @@ public sealed class PrototypeContractTests
 
         StringAssert.Contains(hero, "Source=\"ms-appx:///Assets/Brand/XisuraWordmark.svg\"");
         StringAssert.Contains(hero, "AutomationProperties.AutomationId=\"HeroBrandWordmark\"");
+        Assert.IsFalse(hero.Contains("M 0,0 L 26,0 L 30,-3", StringComparison.Ordinal));
         StringAssert.Contains(hero, "AutomationProperties.Name=\"XISURA\"");
         StringAssert.Contains(hero, "Canvas.Left=\"72\"");
         StringAssert.Contains(hero, "Canvas.Top=\"460\"");
@@ -738,7 +742,7 @@ public sealed class PrototypeContractTests
         StringAssert.Contains(panel, "<StackPanel Grid.Column=\"0\" Spacing=\"8\" VerticalAlignment=\"Center\">");
         StringAssert.Contains(panel, "<StackPanel Grid.Column=\"1\" Spacing=\"6\" VerticalAlignment=\"Center\">");
         StringAssert.Contains(panel, "x:Name=\"TemperatureStatus\" Text=\"温度未知\" Foreground=\"#B8FFFFFF\" FontSize=\"14\" FontWeight=\"SemiBold\"");
-        StringAssert.Contains(panel, "x:Name=\"TemperaturePeak\" Typography.NumeralAlignment=\"Tabular\" Text=\"最高 --°C\" Foreground=\"#B8FFFFFF\" FontSize=\"14\" FontWeight=\"SemiBold\"");
+        StringAssert.Contains(panel, "x:Name=\"TemperaturePeak\" ToolTipService.ToolTip=\"当前模式的界面参考温度，不代表硬件温控上限或实测最高温度。\" Typography.NumeralAlignment=\"Tabular\" Text=\"参考 --°C\" Foreground=\"#B8FFFFFF\" FontSize=\"14\" FontWeight=\"SemiBold\"");
         StringAssert.Contains(panel, "<Grid x:Name=\"MetricCapsule\" Grid.Row=\"3\"");
         StringAssert.Contains(panel, "BorderThickness=\"1,0,0,0\"");
         Assert.IsFalse(panel.Contains("x:Name=\"MetricCapsule\" Grid.Row=\"3\" Background=", StringComparison.Ordinal));

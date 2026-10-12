@@ -7,6 +7,33 @@ namespace Jiaolong.Service.Tests;
 public sealed class LightingPreviewLeaseTests
 {
     [TestMethod]
+    public void Paused_background_callbacks_keep_pending_recovery_and_do_not_restart_timers()
+    {
+        using var provider = new WindowsHomeHardwareProvider();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var type = provider.GetType();
+        var lease = (LightingPreviewLease)type.GetField("lightingPreview", flags)!.GetValue(provider)!;
+        var cooling = type.GetField("strongCoolingActive", flags)!;
+        lease.Begin(new("Fixed", 50), DateTimeOffset.UtcNow.AddMinutes(-1));
+        cooling.SetValue(provider, true); // No transport, EC ownership or firmware restore baseline is injected.
+        try
+        {
+            ((IHomeHardwareProvider)provider).SetBackgroundWorkPaused(true);
+            type.GetMethod("FanTick", flags)!.Invoke(provider, null);
+            Assert.AreEqual(true, cooling.GetValue(provider), "A paused callback must not enter its recovery path.");
+            type.GetMethod("OnLightingFrame", flags)!.Invoke(provider, [null]);
+            Assert.IsNotNull(lease.Original);
+            Assert.IsNull(type.GetField("lightingTimer", flags)!.GetValue(provider), "Expired preview recovery must wait for resume.");
+            Assert.IsNull(type.GetField("fanTransport", flags)!.GetValue(provider));
+        }
+        finally
+        {
+            lease.Complete();
+            cooling.SetValue(provider, false);
+        }
+    }
+
+    [TestMethod]
     public void Preview_preserves_first_original_and_expires_after_last_heartbeat()
     {
         var original = new KeyboardLightingPlan("Cycle", 67) { Red = 12, Green = 34, Blue = 56, Speed = 2, LogoEnabled = true };

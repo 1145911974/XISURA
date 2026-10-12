@@ -50,4 +50,12 @@ public sealed record PagePresetEnvelope(
     PresetKey Key,
     string DisplayName,
     JsonElement Payload,
-    DateTimeOffset SavedAtUtc);
+    DateTimeOffset SavedAtUtc)
+{
+    public const int CurrentSchemaVersion = 2;
+    public string FactoryRevision { get; init; } = "";
+    // Unversioned input has unknown provenance and must never be treated as factory data.
+    public bool UserModified { get; init; } = true;
+    public long Revision { get; init; }
+    public Dictionary<string, SettingRequest> Settings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+}

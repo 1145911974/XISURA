@@ -23,7 +23,14 @@ public sealed record AdaptiveAutomationStoreSnapshot(
     AdaptiveAutomationRecovery? Recovery,
     AdaptiveAutomationStatus? Status,
     bool ManualModeChanged,
-    long Revision);
+    long Revision)
+{
+    public string? OwnerSid { get; init; }
+}
+public sealed record AdaptiveDecisionRecord(DateTimeOffset RecordedAtUtc, double MonotonicSeconds, long ConfigurationRevision,
+    long HardwareEpoch, PerformanceMode? NativeMode, AdaptiveStage? Candidate,
+    AdaptiveFilterEvidence Evidence, double? CpuSampleAgeSeconds, double? GpuSampleAgeSeconds,
+    string Reason, Guid? OperationId = null, PageApplyResult[]? Pages = null);
 
 public sealed class AdaptiveAutomationStateStore
 {
@@ -33,6 +40,7 @@ public sealed class AdaptiveAutomationStateStore
     private readonly SemaphoreSlim gate = new(1, 1);
     private AtomicJsonStore? jsonStore;
     private AdaptiveAutomationConfiguration? configuration;
+    private string? configurationOwnerSid;
     private AdaptiveAutomationRecovery? recovery;
     private AdaptiveAutomationClientContext? clientContext;
     private DateTimeOffset? manualOverrideUntilUtc;
@@ -41,6 +49,40 @@ public sealed class AdaptiveAutomationStateStore
     private long revision;
     private bool loaded;
     private string? loadFailure;
+    private readonly Queue<AdaptiveDecisionRecord> decisions = new();
+    public void RecordDecision(AdaptiveDecisionRecord decision)
+    {
+        lock (decisions)
+        {
+            decisions.Enqueue(decision);
+            while (decisions.Count > 600) decisions.Dequeue();
+        }
+    }
+    public AdaptiveDecisionRecord[] ReadDecisions() { lock (decisions) return decisions.ToArray(); }
+    public async Task<object> ReadDiagnosticsAsync(CancellationToken token, string? requestingSid = null)
+    {
+        var saved = await ReadAsync(token);
+        // Machine diagnostics contain control policy, never another console's executable names or preset payloads.
+        bool ownsConfiguration = requestingSid is not null && requestingSid == saved.OwnerSid;
+        var configuration = ownsConfiguration ? saved.Configuration : null;
+        return new { configuration = configuration is null ? null : new
+            { configuration.Enabled, configuration.Strategy, configuration.Revision, configuration.CatalogRevision,
+              policy = configuration.Policy with { ApplicationRules = [] },
+              applicationRules = configuration.Policy.ApplicationRules.Select(rule => new { rule.ForegroundOnly, rule.Target, rule.RequireActivity }),
+              configuration.TargetMap,
+              presets = configuration.Presets.Select(preset => new { preset.Key, preset.PerformanceMode,
+                  preset.Selections, pages = preset.Pages.Select(page => new { page.Page, page.Key, page.Revision }) }) },
+            configurationRestricted = saved.Configuration is not null && !ownsConfiguration,
+            saved.Revision, status = saved.Status is null ? null : saved.Status with { Reason = DiagnosticReason(saved.Status.Reason) },
+            recoveryRetained = saved.Recovery is not null, saved.ManualModeChanged,
+            saved.ManualOverrideUntilUtc, loadFailure,
+            decisions = ReadDecisions().Where(decision => ownsConfiguration && decision.ConfigurationRevision == saved.Revision)
+                .Select(decision => decision with { Reason = DiagnosticReason(decision.Reason)! }) };
+    }
+
+    internal static string? DiagnosticReason(string? reason) => reason is null ? null :
+        System.Text.RegularExpressions.Regex.Replace(reason, @"[^\s\""'，。；：、()（）]+\.exe", "<application>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(50));
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -55,22 +97,35 @@ public sealed class AdaptiveAutomationStateStore
         try
         {
             await EnsureLoadedLockedAsync(cancellationToken);
-            return new(configuration, clientContext, manualOverrideUntilUtc, recovery, status, manualModeChanged, revision);
+            return new(configuration, clientContext, manualOverrideUntilUtc, recovery, status, manualModeChanged, revision)
+                { OwnerSid = configurationOwnerSid };
         }
         finally { gate.Release(); }
     }
 
-    public async Task SetConfigurationAsync(AdaptiveAutomationConfiguration value, CancellationToken cancellationToken)
+    public async Task SetConfigurationAsync(AdaptiveAutomationConfiguration value, CancellationToken cancellationToken,
+        long? expectedRevision = null, AutomationConfigurationIntent? intent = null, string? ownerSid = null)
     {
         AdaptiveAutomationConfigurationValidator.Validate(value);
         await gate.WaitAsync(cancellationToken);
         try
         {
             await EnsureLoadedLockedAsync(cancellationToken);
+            if (expectedRevision is long expected && revision != expected)
+                throw new InvalidOperationException("adaptiveRevisionConflict");
             var prior = configuration;
+            var priorOwner = configurationOwnerSid;
             var priorOverride = manualOverrideUntilUtc;
             bool priorManualModeChanged = manualModeChanged;
-            configuration = AdaptiveAutomationConfigurationValidator.Clone(value);
+            bool enabled = intent switch
+            {
+                AutomationConfigurationIntent.Enable => true,
+                AutomationConfigurationIntent.Disable => false,
+                AutomationConfigurationIntent.Update => prior?.Enabled == true,
+                _ => value.Enabled
+            };
+            configuration = AdaptiveAutomationConfigurationValidator.Clone(value with { Enabled = enabled, Revision = revision + 1 });
+            configurationOwnerSid = ownerSid;
             if (configuration.Enabled && prior?.Enabled != true)
             {
                 manualOverrideUntilUtc = null;
@@ -80,6 +135,7 @@ public sealed class AdaptiveAutomationStateStore
             catch
             {
                 configuration = prior;
+                configurationOwnerSid = priorOwner;
                 manualOverrideUntilUtc = priorOverride;
                 manualModeChanged = priorManualModeChanged;
                 throw;
@@ -91,7 +147,7 @@ public sealed class AdaptiveAutomationStateStore
             status = new AdaptiveAutomationStatus(configuration.Enabled, false, null,
                 configuration.Enabled ? "调度配置已保存，等待服务判定。" : "自动调度已关闭。",
                 status?.LastEvaluationUtc, status?.LastApplyUtc, null,
-                AdaptiveAutomationConfigurationValidator.Identity(configuration));
+                AdaptiveAutomationConfigurationValidator.Identity(configuration)) { Revision = revision };
         }
         finally { gate.Release(); }
     }
@@ -154,12 +210,25 @@ public sealed class AdaptiveAutomationStateStore
         try
         {
             await EnsureLoadedLockedAsync(cancellationToken);
-            var dwell = configuration?.Policy.MinimumDwellSeconds ?? 90;
-            manualOverrideUntilUtc = now.AddSeconds(Math.Clamp(dwell, 1, 3600));
-            manualModeChanged = modeChanged;
-            recovery = null;
-            await SaveLockedAsync(cancellationToken);
+            if (configuration?.Enabled != true && manualOverrideUntilUtc == DateTimeOffset.MaxValue && (!modeChanged || manualModeChanged)) return;
+            var priorConfiguration = configuration;
+            var priorOverride = manualOverrideUntilUtc;
+            bool priorModeChanged = manualModeChanged;
+            if (configuration is not null) configuration = configuration with { Enabled = false, Revision = revision + 1 };
+            // Legacy recovery readers also honor this persisted fence; it has no timed expiry.
+            manualOverrideUntilUtc = DateTimeOffset.MaxValue;
+            manualModeChanged |= modeChanged;
+            try { await SaveLockedAsync(cancellationToken); }
+            catch
+            {
+                configuration = priorConfiguration;
+                manualOverrideUntilUtc = priorOverride;
+                manualModeChanged = priorModeChanged;
+                throw;
+            }
             revision++;
+            status = new(false, false, null, "手动操作已关闭自动调度。", status?.LastEvaluationUtc,
+                status?.LastApplyUtc, null, configuration is null ? null : AdaptiveAutomationConfigurationValidator.Identity(configuration)) { Revision = revision };
         }
         finally { gate.Release(); }
     }
@@ -206,7 +275,7 @@ public sealed class AdaptiveAutomationStateStore
             await EnsureLoadedLockedAsync(cancellationToken);
             string? currentIdentity = configuration is null ? null : AdaptiveAutomationConfigurationValidator.Identity(configuration);
             if (value.OwnerConfigurationIdentity != currentIdentity || value.Enabled != (configuration?.Enabled == true)) return;
-            status = value with { LastError = loadFailure ?? value.LastError };
+            status = value with { LastError = loadFailure ?? value.LastError, Revision = revision };
         }
         finally { gate.Release(); }
     }
@@ -232,8 +301,13 @@ public sealed class AdaptiveAutomationStateStore
                     if (saved.Configuration is not null) AdaptiveAutomationConfigurationValidator.Validate(saved.Configuration);
                     ValidateRecovery(saved.Recovery);
                     configuration = saved.Configuration;
+                    configurationOwnerSid = saved.OwnerSid;
                     recovery = saved.Recovery;
                     manualOverrideUntilUtc = saved.ManualOverrideUntilUtc;
+                    revision = saved.Revision;
+                    status = configuration is null ? null : new(configuration.Enabled, false, null,
+                        configuration.Enabled ? "等待新鲜遥测暖机。" : "自动调度已关闭。", null, null, null,
+                        AdaptiveAutomationConfigurationValidator.Identity(configuration)) { Revision = revision };
                 }
             }
         }
@@ -249,7 +323,8 @@ public sealed class AdaptiveAutomationStateStore
 
     private async Task SaveLockedAsync(CancellationToken cancellationToken)
     {
-        var saved = new PersistedState(configuration, recovery, manualOverrideUntilUtc);
+        var saved = new PersistedState(configuration, recovery, manualOverrideUntilUtc, configuration?.Revision ?? revision)
+            { OwnerSid = configurationOwnerSid };
         if (JsonSerializer.SerializeToUtf8Bytes(saved, JsonOptions).Length > MaximumBytes)
             throw new InvalidDataException("Adaptive automation state exceeds 256 KB.");
         await jsonStore!.WriteAsync(saved, cancellationToken);
@@ -280,7 +355,11 @@ public sealed class AdaptiveAutomationStateStore
     private sealed record PersistedState(
         AdaptiveAutomationConfiguration? Configuration,
         AdaptiveAutomationRecovery? Recovery,
-        DateTimeOffset? ManualOverrideUntilUtc);
+        DateTimeOffset? ManualOverrideUntilUtc,
+        long Revision = 0)
+    {
+        public string? OwnerSid { get; init; }
+    }
 }
 
 public sealed class AdaptiveAutomationHardwareProvider(
@@ -292,6 +371,46 @@ public sealed class AdaptiveAutomationHardwareProvider(
     private readonly ConcurrentDictionary<Guid, long> automaticOperations = new();
     private readonly SemaphoreSlim cpuModeCommandGate = new(1, 1);
     private readonly SemaphoreSlim automationCycleGate = new(1, 1);
+    public bool IsAutomaticOperation(Guid operationId) => automaticOperations.ContainsKey(operationId);
+    public Task<object> ReadDiagnosticsAsync(CancellationToken token, string? requestingSid = null) => store.ReadDiagnosticsAsync(token, requestingSid);
+    public async Task<long?> ReadAutomaticConfigurationRevisionAsync(Guid operationId, CancellationToken token)
+    {
+        if (!automaticOperations.TryGetValue(operationId, out long expected)) return null;
+        var state = await store.ReadAsync(token);
+        return state.Configuration?.Enabled == true && (expected < 0 || state.Revision == expected)
+            ? state.Revision : null;
+    }
+
+    public Task PrepareManualCommandAsync(HardwareCommand command, CancellationToken token) =>
+        ControlExecutionCoordinator.IsManaged(command) && !automaticOperations.ContainsKey(command.OperationId)
+            ? store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow,
+                command is SetPerformanceModeCommand or ApplyControlRequestCommand or ApplyTurboBranchCommand or ReleaseTurboBranchCommand or SetCpuTuningBatchCommand { NativeMode: not null }, token)
+            : Task.CompletedTask;
+
+    public async Task<CommandResult> ExecuteCoordinatedAsync(HardwareCommand command, CancellationToken token, string? ownerSid = null)
+    {
+        // The runtime already owns the hardware gate. Never wait for a worker cycle that may queue there.
+        if (command is SetAdaptiveAutomationConfigurationCommand set)
+        {
+            try { await store.SetConfigurationAsync(set.Configuration, token, set.ExpectedRevision, set.Intent, ownerSid); return Applied(command.OperationId); }
+            catch (Exception error) when (error is ArgumentException or InvalidDataException)
+            { return Rejected(command.OperationId, ErrorCode.ValidationFailed) with { Mutation = HardwareMutation.NoMutation }; }
+            catch (InvalidOperationException)
+            { return Rejected(command.OperationId, ErrorCode.IdempotencyConflict) with { Mutation = HardwareMutation.NoMutation }; }
+        }
+        if (command is UpdateAdaptiveAutomationContextCommand context)
+        {
+            await store.SetClientContextAsync(context.Context, token);
+            return Applied(command.OperationId);
+        }
+        if (automaticOperations.TryGetValue(command.OperationId, out long expected))
+        {
+            var current = await store.ReadAsync(token);
+            if (current.Configuration?.Enabled != true || expected >= 0 && current.Revision != expected)
+                return Rejected(command.OperationId, ErrorCode.CancelledBeforeApply) with { Mutation = HardwareMutation.NoMutation };
+        }
+        return await inner.ExecuteAsync(command, token);
+    }
 
     public async Task RunAutomationCycleAsync(Func<CancellationToken, Task> cycle, CancellationToken token)
     {
@@ -307,6 +426,15 @@ public sealed class AdaptiveAutomationHardwareProvider(
         AddAutomationCapabilities(await inner.ReinitializeAsync(cancellationToken));
 
     public Task<HardwareSnapshot> ReadTelemetryAsync(CancellationToken cancellationToken) => inner.ReadTelemetryAsync(cancellationToken);
+    public void SetBackgroundWorkPaused(bool paused) => inner.SetBackgroundWorkPaused(paused);
+    public void SetBackgroundWorkState(PowerLifecycleState lifecycle) => inner.SetBackgroundWorkState(lifecycle);
+    public Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false) =>
+        inner.ReadControlBaselineAsync(token, includeCpuAdvanced);
+    public Task<CommandResult> RestoreCpuFieldAsync(Guid id, string field, CpuFieldRestorationValue baseline,
+        CpuFieldRestorationValue expected, CancellationToken token) => inner.RestoreCpuFieldAsync(id, field, baseline, expected, token);
+
+    public Task<PerformanceModeEvidence?> ReadModeEvidenceAsync(CancellationToken cancellationToken) =>
+        inner.ReadModeEvidenceAsync(cancellationToken);
 
     public async Task<HomeControlState> ReadControlsAsync(CancellationToken cancellationToken)
     {
@@ -353,7 +481,22 @@ public sealed class AdaptiveAutomationHardwareProvider(
 
         bool serialize = command is SetPerformanceModeCommand or SetCpuTuningCommand or SetCpuTuningBatchCommand;
         bool manual = serialize && !automaticOperations.ContainsKey(command.OperationId);
-        if (manual) await automationCycleGate.WaitAsync(cancellationToken);
+        if (manual)
+        {
+            if (CommandValidation.Validate(command) is { } validation)
+                return Rejected(command.OperationId, validation.Code) with { Mutation = HardwareMutation.NoMutation };
+            // Publish takeover before waiting for a driver call already in flight.
+            try
+            {
+                await store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow,
+                    command is SetPerformanceModeCommand or SetCpuTuningBatchCommand { NativeMode: not null }, cancellationToken);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return Rejected(command.OperationId, ErrorCode.ServiceUnavailable) with { Mutation = HardwareMutation.NoMutation };
+            }
+            await automationCycleGate.WaitAsync(cancellationToken);
+        }
         try
         {
             if (serialize) await cpuModeCommandGate.WaitAsync(cancellationToken);
@@ -368,10 +511,6 @@ public sealed class AdaptiveAutomationHardwareProvider(
                         return Rejected(command.OperationId, ErrorCode.CommandInProgress);
                 }
                 var result = await inner.ExecuteAsync(command, cancellationToken);
-                if (serialize && result.State == CommandState.Applied && result.Error is null &&
-                    !automaticOperations.ContainsKey(command.OperationId))
-                    await store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow,
-                        command is SetPerformanceModeCommand or SetCpuTuningBatchCommand { NativeMode: not null }, CancellationToken.None);
                 return result;
             }
             finally { if (serialize) cpuModeCommandGate.Release(); }
@@ -393,7 +532,7 @@ public sealed class AdaptiveAutomationHardwareProvider(
             return new(command.OperationId, CommandState.Rejected, null, RequiredUserAction.None,
                 ServiceError.Create(ErrorCode.CommandInProgress, command.OperationId, true), false);
         automaticOperations.TryAdd(command.OperationId, expectedConfigurationRevision ?? -1);
-        try { return await runtime.ExecuteAsync(command, cancellationToken); }
+        try { return await runtime.ExecuteAsync(command, cancellationToken, userSid: state.OwnerSid); }
         finally { automaticOperations.TryRemove(command.OperationId, out _); }
     }
 
@@ -438,35 +577,33 @@ public static class AdaptiveAutomationConfigurationValidator
         map.WithTarget(AdaptivePowerSource.Ac, AdaptiveStage.Turbo, map.AcTurbo);
         if (configuration.Enabled)
         {
-            map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Office, map.DcOffice);
-            map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, map.DcGame);
+            PresetKey.Create(map.DcOffice.Mode, map.DcOffice.Slot);
+            PresetKey.Create(map.DcGame.Mode, map.DcGame.Slot);
         }
         var required = new[] { map.AcOffice, map.AcGame, map.AcTurbo, map.DcOffice, map.DcGame };
         foreach (var key in required) PresetKey.Create(key.Mode, key.Slot);
         var profiles = configuration.Presets.ToDictionary(preset => PresetKey.Create(preset.Key.Mode, preset.Key.Slot));
         if (configuration.Enabled && required.Any(key => !profiles.ContainsKey(key)))
             throw new ArgumentException("Every automatic target must reference a saved preset snapshot.");
+        if (configuration.Enabled && (profiles[map.DcOffice].PerformanceMode == PerformanceMode.Turbo ||
+            profiles[map.DcGame].PerformanceMode == PerformanceMode.Turbo))
+            throw new ArgumentOutOfRangeException(nameof(configuration), "Battery targets cannot resolve to native Turbo.");
         foreach (var preset in configuration.Presets)
         {
             PresetKey.Create(preset.Key.Mode, preset.Key.Slot);
             var expectedMode = AdaptiveTargetMap.HardwareModeFor(preset.Key);
-            if (preset.PerformanceMode != expectedMode || preset.CpuWindowsTuning is { } cpu && !IsSafeRestorableCpuPlan(cpu))
+            bool custom = preset.Key.Mode is ControlModeId.Custom1 or ControlModeId.Custom2 or ControlModeId.Custom3;
+            if ((!custom && preset.PerformanceMode != expectedMode || custom &&
+                preset.PerformanceMode is not (PerformanceMode.Quiet or PerformanceMode.Balanced or PerformanceMode.Turbo)) ||
+                preset.CpuWindowsTuning is { } cpu && !IsSafeRestorableCpuPlan(cpu))
                 throw new ArgumentException("Preset snapshots may contain only the saved mode, restorable Windows CPU tuning, PBO Scalar and CO.");
         }
     }
 
-    public static AdaptiveAutomationConfiguration Clone(AdaptiveAutomationConfiguration configuration) => configuration with
-    {
-        Policy = configuration.Policy with { ApplicationRules = configuration.Policy.ApplicationRules.ToArray() },
-        Presets = configuration.Presets.Select(preset => preset with
-        {
-            CpuWindowsTuning = preset.CpuWindowsTuning is { } cpu ? cpu with {
-                Advanced = cpu.Advanced is { } advanced ? advanced with {
-                    PerCoreCurveOptimizer = advanced.PerCoreCurveOptimizer is { } cores ? new Dictionary<int,int>(cores) : null
-                } : null
-            } : null
-        }).ToArray()
-    };
+    public static AdaptiveAutomationConfiguration Clone(AdaptiveAutomationConfiguration configuration) =>
+        JsonSerializer.Deserialize(JsonSerializer.Serialize(configuration,
+            Jiaolong.Contracts.Protocol.ProtocolJsonContext.Default.AdaptiveAutomationConfiguration),
+            Jiaolong.Contracts.Protocol.ProtocolJsonContext.Default.AdaptiveAutomationConfiguration)!;
 
     public static bool IsSafeRestorableCpuPlan(CpuTuningPlan plan)
     {
@@ -497,6 +634,10 @@ public static class AdaptiveAutomationConfigurationValidator
             p.TurboEnabled, p.TurboCpuPercent, p.TurboGpuPercent, p.TurboSeconds,
             p.OfficeCpuPercent, p.OfficeGpuPercent, p.OfficeSeconds)
         {
+            TurboExitCpuPercent = p.TurboExitCpuPercent,
+            TurboExitGpuPercent = p.TurboExitGpuPercent,
+            TurboExitSeconds = p.TurboExitSeconds,
+            TurboMinimumDwellSeconds = p.TurboMinimumDwellSeconds,
             Advanced = new AdaptiveAdvancedSettings
             {
                 LowBatteryPercent = p.LowBatteryPercent,
@@ -510,7 +651,7 @@ public static class AdaptiveAutomationConfigurationValidator
                 IdleReturnEnabled = p.IdleReturnEnabled,
                 IdleSeconds = p.IdleSeconds,
                 ApplicationRules = p.ApplicationRules.Select(rule => new AdaptiveApplicationRule(
-                    rule.Executable, rule.ForegroundOnly, ToStage(rule.Target))).ToArray()
+                    rule.Executable, rule.ForegroundOnly, ToStage(rule.Target)) { RequireActivity = rule.RequireActivity }).ToArray()
             }
         };
     }
@@ -519,7 +660,7 @@ public static class AdaptiveAutomationConfigurationValidator
         map.AcOffice, map.AcGame, map.AcTurbo, map.DcOffice, map.DcGame);
 
     public static string Identity(AdaptiveAutomationConfiguration configuration) =>
-        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(configuration)))[..16];
+        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(configuration with { Revision = 0 })))[..16];
 
     public static AdaptiveStage ToStage(AdaptiveAutomationStageId stage) => stage switch
     {

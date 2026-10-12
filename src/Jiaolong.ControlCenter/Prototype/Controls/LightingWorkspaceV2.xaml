@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="Jiaolong_ControlCenter.Prototype.Controls.LightingWorkspaceV2"
+<UserControl x:Class="Jiaolong_ControlCenter.Prototype.Controls.LightingWorkspaceV2"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="using:Jiaolong_ControlCenter.Prototype.Controls" xmlns:shared="using:Jiaolong_ControlCenter.Controls">
  <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
@@ -35,7 +35,7 @@
  </Grid></Border>
  <Border Grid.Column="1" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="18">
  <Grid RowSpacing="12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
- <Grid><TextBlock Text="灯光颜色" FontSize="22" FontWeight="SemiBold"/><Button Content="恢复默认" HorizontalAlignment="Right" Padding="10,3" FontSize="12" Click="OnResetClick" ToolTipService.ToolTip="管理预设时恢复编辑默认值；日常页面恢复默认灯光并直接生效"/></Grid>
+ <Grid><TextBlock Text="灯光颜色" FontSize="22" FontWeight="SemiBold"/><Button Content="恢复默认" HorizontalAlignment="Right" Padding="10,3" FontSize="12" Click="OnResetClick" ToolTipService.ToolTip="恢复当前编辑预设的默认值并保存"/></Grid>
  <ContentControl Grid.Row="1" x:Name="ColorEditorHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><Grid x:Name="ColorEditor" ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1*"/></Grid.ColumnDefinitions>
  <local:LightingColorWheel x:Name="ColorWheel" Height="216" VerticalAlignment="Center" AutomationProperties.Name="色环与饱和度明度选区；也可使用右侧 HEX 和 RGB 输入"/>
  <StackPanel Grid.Column="1" Spacing="16" VerticalAlignment="Center">

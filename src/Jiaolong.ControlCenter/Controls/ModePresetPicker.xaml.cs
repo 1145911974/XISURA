@@ -20,6 +20,7 @@ public sealed partial class ModePresetPicker : UserControl
     private event EventHandler<PresetKey>? ResetRequested;
     private bool closingWithAnimation;
     private bool allowClose;
+    private bool renameInProgress;
     private PresetKey? confirmedActiveKey;
     private static readonly IReadOnlyDictionary<ControlModeId, string> ModeLabels = new Dictionary<ControlModeId, string>
     {
@@ -48,6 +49,7 @@ public sealed partial class ModePresetPicker : UserControl
     public static readonly DependencyProperty SelectedKeyProperty = DependencyProperty.Register(nameof(SelectedKey), typeof(PresetKey), typeof(ModePresetPicker), new PropertyMetadata(PresetKey.Create(ControlModeId.Office, 1), OnSelectedKeyChanged));
     public event EventHandler<PresetKey>? SelectedKeyChanged;
     public event EventHandler<PresetKey>? PresetInvoked;
+    public event EventHandler<PresetKey>? PresetRenamed;
     private bool editingPreset;
     public string DisplayNameFor(PresetKey key) => $"{ModeLabels[key.Mode]} · {PresetNameCatalog.GetName(names, key)}";
     public void SetManagementMode(bool editing)
@@ -250,48 +252,54 @@ public sealed partial class ModePresetPicker : UserControl
 
     private async void OnRenameIconClick(object sender, RoutedEventArgs args)
     {
-        if (sender is not Button { Tag: string tag } || !int.TryParse(tag, out var slot)) return;
-        var key = PresetKey.Create(SelectedKey.Mode, slot);
-        var root = XamlRoot;
-        var closed = new TaskCompletionSource();
-        void OnClosed(object? flyoutSender, object eventArgs)
-        {
-            PresetFlyout.Closed -= OnClosed;
-            closed.TrySetResult();
-        }
-        PresetFlyout.Closed += OnClosed;
-        PresetFlyout.Hide();
-        await closed.Task;
-
-        var input = new TextBox { Text = PresetNameCatalog.GetName(names, key), MaxLength = 16 };
-        AutomationProperties.SetName(input, "预设名称");
-        input.Loaded += (_, _) => { input.Focus(FocusState.Programmatic); input.SelectAll(); };
-        var dialog = new ContentDialog
-        {
-            XamlRoot = root,
-            Title = $"重命名{ModeLabels[key.Mode]}预设 {key.Slot}",
-            Content = input,
-            PrimaryButtonText = "保存",
-            SecondaryButtonText = "恢复默认名称",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary
-        };
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.None) return;
+        if (renameInProgress || sender is not Button { Tag: string tag } || !int.TryParse(tag, out var slot)) return;
+        renameInProgress = true;
         try
         {
-            preferences.Update(current =>
+            var key = PresetKey.Create(SelectedKey.Mode, slot);
+            var root = XamlRoot;
+            var closed = new TaskCompletionSource();
+            void OnClosed(object? flyoutSender, object eventArgs)
             {
-                var renamed = new Dictionary<string, string>(current.PresetNames ?? [], StringComparer.Ordinal);
-                PresetNameCatalog.SetName(renamed, key, result == ContentDialogResult.Secondary ? "" : input.Text);
-                return current with { PresetNames = renamed };
-            });
-            NamesChanged?.Invoke(this, EventArgs.Empty);
+                PresetFlyout.Closed -= OnClosed;
+                closed.TrySetResult();
+            }
+            PresetFlyout.Closed += OnClosed;
+            PresetFlyout.Hide();
+            await closed.Task;
+
+            var input = new TextBox { Text = PresetNameCatalog.GetName(names, key), MaxLength = 16 };
+            AutomationProperties.SetName(input, "预设名称");
+            input.Loaded += (_, _) => { input.Focus(FocusState.Programmatic); input.SelectAll(); };
+            var dialog = new ContentDialog
+            {
+                XamlRoot = root,
+                Title = $"重命名{ModeLabels[key.Mode]}预设 {key.Slot}",
+                Content = input,
+                PrimaryButtonText = "保存",
+                SecondaryButtonText = "恢复默认名称",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary
+            };
+            var result = await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog);
+            if (result == ContentDialogResult.None) return;
+            try
+            {
+                preferences.Update(current =>
+                {
+                    var renamed = new Dictionary<string, string>(current.PresetNames ?? [], StringComparer.Ordinal);
+                    PresetNameCatalog.SetName(renamed, key, result == ContentDialogResult.Secondary ? "" : input.Text);
+                    return current with { PresetNames = renamed };
+                });
+                NamesChanged?.Invoke(this, EventArgs.Empty);
+                PresetRenamed?.Invoke(this, key);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(new ContentDialog { XamlRoot = root, Title = "保存失败", Content = "预设名称未更改，请重试。", CloseButtonText = "关闭" });
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            await new ContentDialog { XamlRoot = root, Title = "保存失败", Content = "预设名称未更改，请重试。", CloseButtonText = "关闭" }.ShowAsync();
-        }
+        finally { renameInProgress = false; }
     }
 
     private void UpdateSlotStates()

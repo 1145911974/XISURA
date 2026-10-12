@@ -47,6 +47,8 @@ public sealed class RequestDispatcher : IRequestDispatcher
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (request.ProtocolVersion.Major != 1 || request.ProtocolVersion.Minor > 1)
+            return Task.FromResult(Error(request, ErrorCode.InvalidFrame));
         var now = DateTimeOffset.UtcNow;
         if (!ClientIdentityVerifier.IsAuthorized(client))
         {
@@ -121,8 +123,12 @@ public sealed class RequestDispatcher : IRequestDispatcher
             true,
             request.DeadlineUtc,
             request.OperationId);
+        if (command.OperationId != request.OperationId || command is ApplyControlRequestCommand apply &&
+            (request.ProtocolVersion.Minor < 1 || apply.Request is null || apply.Request.OperationId != command.OperationId ||
+             apply.Request.Origin is ControlOrigin.Adaptive or ControlOrigin.StartupRestore or ControlOrigin.TurboBranch))
+            return Error(request, ErrorCode.UnauthorizedClient);
         var result = homeRuntime is not null
-            ? await homeRuntime.ExecuteAsync(command, cancellationToken, client.ConnectionId)
+            ? await homeRuntime.ExecuteAsync(command, cancellationToken, client.ConnectionId, client.UserSid)
             : await commandOrchestrator!.ExecuteAsync(command, context, cancellationToken);
         return new ResponseEnvelope(
             request.ProtocolVersion,
@@ -152,12 +158,33 @@ public sealed class RequestDispatcher : IRequestDispatcher
                 .Where(snapshot => snapshot.CapturedAtUtc >= cutoff)
                 .ToArray() ?? [];
             if (telemetry.Length == 0 && state.Telemetry is not null) telemetry = [state.Telemetry];
+            var ordered = telemetry.OrderBy(sample => sample.CapturedAtUtc).ToArray();
+            var gapsMs = ordered.Zip(ordered.Skip(1), (left, right) =>
+                (right.CapturedAtUtc - left.CapturedAtUtc).TotalMilliseconds).ToArray();
 
             var content = new DiagnosticBundleContent(
                 JsonSerializer.Serialize(new { service = typeof(RequestDispatcher).Assembly.GetName().Version?.ToString(), runtime = Environment.Version.ToString() }),
                 JsonSerializer.Serialize(state.Identity),
                 JsonSerializer.Serialize(state.Capabilities),
-                JsonSerializer.Serialize(new { state.SupportState, state.Reason, capturedAtUtc = DateTimeOffset.UtcNow }),
+                JsonSerializer.Serialize(new
+                {
+                    state.SupportState, state.Reason, capturedAtUtc = DateTimeOffset.UtcNow,
+                    controls = state.Controls with { ExecutionState = null, AdaptiveAutomation = state.Controls.AdaptiveAutomation is { } automatic
+                        ? automatic with { Reason = AdaptiveAutomationStateStore.DiagnosticReason(automatic.Reason) } : null },
+                    controlPipeline = await homeRuntime.ReadControlDiagnosticsAsync(cancellationToken, client.UserSid),
+                    telemetryCoverage = new
+                    {
+                        requestedSeconds = 60, sampleCount = ordered.Length,
+                        startUtc = ordered.FirstOrDefault()?.CapturedAtUtc, endUtc = ordered.LastOrDefault()?.CapturedAtUtc,
+                        actualSeconds = ordered.Length < 2 ? 0 : (ordered[^1].CapturedAtUtc - ordered[0].CapturedAtUtc).TotalSeconds,
+                        maximumGapMs = gapsMs.Length == 0 ? 0 : gapsMs.Max(),
+                        gapsOverTwoSeconds = gapsMs.Count(gap => gap > 2000),
+                        latestSampleAgeMs = ordered.LastOrDefault() is { } last
+                            ? (DateTimeOffset.UtcNow - last.CapturedAtUtc).TotalMilliseconds : (double?)null,
+                        latestGpuPowerAgeMs = ordered.LastOrDefault()?.GpuPowerObservedAtUtc is { } gpuAt
+                            ? (DateTimeOffset.UtcNow - gpuAt).TotalMilliseconds : (double?)null
+                    }
+                }),
                 JsonSerializer.Serialize(telemetry),
                 diagnosticEventReader is null
                     ? string.Empty

@@ -49,6 +49,8 @@ public sealed partial class TrayQuickConsoleWindow : Window
     private bool configured;
     private bool isVisible;
     private bool isClosing;
+    private bool allowWindowClose;
+    private bool windowClosed;
     private int warmupFrames;
     private double visibilityProgress;
     private double transitionFrom;
@@ -68,7 +70,13 @@ public sealed partial class TrayQuickConsoleWindow : Window
         PopulateQuickMenu();
         ConfigureWindow();
         freshnessTimer.Tick += (_, _) => RefreshTelemetry();
-        Closed += (_, _) => { freshnessTimer.Stop(); StopEntrance(); themeTransition?.Stop(); themeTransition = null; StopSelectorTransition(); StopPaletteTransition(); themeIconTransition?.Stop(); themeIconTransition = null; };
+        AppWindow.Closing += (_, args) =>
+        {
+            if (allowWindowClose) return;
+            args.Cancel = true;
+            HideImmediately();
+        };
+        Closed += (_, _) => { windowClosed = true; isVisible = false; freshnessTimer.Stop(); StopEntrance(); themeTransition?.Stop(); themeTransition = null; StopSelectorTransition(); StopPaletteTransition(); themeIconTransition?.Stop(); themeIconTransition = null; };
         ConsoleSurface.SizeChanged += (_, _) =>
         {
             SelectorPanel.MaxHeight = Math.Max(40, ConsoleSurface.ActualHeight - 145);
@@ -179,6 +187,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
 
     private void RefreshTelemetry()
     {
+        RefreshModeReadbackText();
         var snapshot = latestTelemetry;
         var now = DateTimeOffset.UtcNow;
         bool fresh = snapshot is not null && snapshot.CapturedAtUtc <= now.AddSeconds(2) && now - snapshot.CapturedAtUtc <= TimeSpan.FromSeconds(10);
@@ -193,11 +202,22 @@ public sealed partial class TrayQuickConsoleWindow : Window
 
     public void ApplyState(HomeStateSnapshot snapshot)
     {
+        ApplyModeReadback(snapshot.Controls);
         var catalog = QuickMenuCatalog.CreateDefault();
         availableQuickSettings = catalog.Where(item => QuickMenuCatalog.IsAvailable(item, snapshot)).Select(item => item.Kind).ToHashSet();
         SetQuickSettingState(QuickSettingKind.StrongCooling, snapshot.Controls.StrongCooling);
         foreach (var setting in snapshot.Controls.QuickSettings) SetQuickSettingState(setting.Setting, setting.Enabled);
         if (snapshot.Telemetry is { } telemetry) ApplyTelemetry(telemetry);
+    }
+
+    public void ApplyModeReadback(HomeControlState? controls)
+    {
+        observedControls = controls;
+        var evidence = controls?.ModeEvidence;
+        observedMode = TrayIconAssetCatalog.DisplayMode(controls, true, evidence?.CapturedAtUtc ?? DateTimeOffset.UtcNow, confirmedMode);
+        observedModeAt = evidence?.CapturedAtUtc ?? DateTimeOffset.MinValue;
+        observedModeUnverified = !TrayIconAssetCatalog.ReadbackConfirmed(controls);
+        RefreshModeReadbackText();
     }
 
     public void ApplyQuickSettingState(QuickSettingKind setting, bool? enabled) => SetQuickSettingState(setting, enabled);
@@ -255,6 +275,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
     public bool IsModalActionPending { get; set; }
     public void CloseForExit()
     {
+        allowWindowClose = true;
         isVisible = false;
         freshnessTimer.Stop();
         StopEntrance();
@@ -325,8 +346,9 @@ public sealed partial class TrayQuickConsoleWindow : Window
     public void ShowDocked(PointInt32? anchor = null)
     {
         GetCursorPos(out var cursor);
-        var displayArea = DisplayArea.GetFromPoint(anchor ?? new PointInt32(cursor.X, cursor.Y), DisplayAreaFallback.Nearest);
-        var workArea = displayArea?.WorkArea ?? new RectInt32(0, 0, 1920, 1080);
+        var workArea = PrototypeWindowChrome.CandidateWorkArea() ??
+            DisplayArea.GetFromPoint(anchor ?? new PointInt32(cursor.X, cursor.Y), DisplayAreaFallback.Nearest)?.WorkArea ??
+            new RectInt32(0, 0, 1920, 1080);
         bool changingDisplay = !dockWorkArea.Equals(workArea);
         // Shell can deliver both button-up and selection for the same gesture.
         if (isVisible && !isClosing && !changingDisplay) return;
@@ -374,6 +396,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
 
     public void HideImmediately()
     {
+        if (windowClosed) return;
         StopEntrance();
         freshnessTimer.Stop();
         CloseSelector(false);
@@ -452,6 +475,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
 
     private void OnEntranceFrame(object? sender, object args)
     {
+        if (windowClosed || !entranceClock.IsRunning) return;
         if (ReducedMotion || !new UISettings().AnimationsEnabled)
         {
             if (isClosing) HideImmediately(); else { StopEntrance(); visibilityProgress = 1; ApplyMotionFrame(); }

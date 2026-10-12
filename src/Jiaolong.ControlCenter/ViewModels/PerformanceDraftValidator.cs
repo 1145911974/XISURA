@@ -1,3 +1,5 @@
+using Jiaolong.Contracts.Models;
+
 namespace Jiaolong_ControlCenter.ViewModels;
 
 public sealed record ValidationSummary(bool IsValid, IReadOnlyList<string> Errors)
@@ -9,7 +11,9 @@ public static class PerformanceDraftValidator
 {
     public static ValidationSummary Validate(PerformanceDraft draft)
     {
-        var errors = new List<string>();
+        ArgumentNullException.ThrowIfNull(draft);
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(draft, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        var errors = PresetValidation.ValidatePayload(ControlPageId.Performance, payload).Errors.ToList();
         if (!PerformanceCapabilities.TemperatureWallC.Contains(draft.TemperatureLimitC)) errors.Add("温度墙必须在 45–100°C 之间");
         if (!PerformanceCapabilities.SplWatts.Contains(draft.SplWatts)) errors.Add("SPL 必须在 20–105W 之间");
         if (!PerformanceCapabilities.SpptWatts.Contains(draft.SpptWatts)) errors.Add("SPPT 必须在 20–120W 之间");

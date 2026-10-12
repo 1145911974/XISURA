@@ -27,6 +27,7 @@ public sealed partial class PagePresetToolbar : UserControl
         {
             if (!IsEditingPreset) PresetUseRequested?.Invoke(this, key);
         };
+        PresetPicker.PresetRenamed += (_, key) => PresetRenamed?.Invoke(this, key);
         ApplyActionAvailability();
         EditingActionsHost.SizeChanged += (_, _) => EditingActionsClip.Rect = new(0, 0, EditingActionsHost.ActualWidth, 52);
         Unloaded += (_, _) =>
@@ -55,6 +56,7 @@ public sealed partial class PagePresetToolbar : UserControl
     public event EventHandler<bool>? EditingModeChanged;
     public event EventHandler<PresetKey>? PresetUseRequested;
     public event EventHandler<PresetKey>? SaveAsRequested;
+    public event EventHandler<PresetKey>? PresetRenamed;
     public bool IsEditingPreset { get; private set; }
     public PresetKey? CurrentSourceKey { get; private set; }
     private bool currentModified;
@@ -209,7 +211,7 @@ public sealed partial class PagePresetToolbar : UserControl
         storyboard.Begin();
     }
     public Task SetDirtyStatusAsync(bool dirty) => dirty ? ShowStatusAsync("有未保存的更改") : HideStatusAsync();
-    public Task ShowSavedStatusAsync() => ShowStatusAsync("已保存", autoHide: true);
+    public Task ShowSavedStatusAsync() => ShowStatusAsync("已保存，但未使用", autoHide: true);
     public Task ShowStatusAsync(string text) => IsFailureFeedback(text)
         ? ShowFailureDialogAsync(text) : ShowStatusAsync(text, autoHide: !text.StartsWith("正在", StringComparison.Ordinal));
     public Task ShowTransientStatusAsync(string text) => ShowStatusAsync(text, autoHide: true);
@@ -226,7 +228,7 @@ public sealed partial class PagePresetToolbar : UserControl
         failureDialogOpen = true;
         try
         {
-            await new ContentDialog { XamlRoot = XamlRoot, Title = "操作未完成", Content = text, CloseButtonText = "知道了" }.ShowAsync();
+            await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "操作未完成", Content = text, CloseButtonText = "知道了" });
         }
         catch (Exception error) { Jiaolong_ControlCenter.Services.AppRuntimeLog.Write($"Preset operation dialog: {error.Message}\n"); }
         finally { failureDialogOpen = false; }
@@ -247,7 +249,7 @@ public sealed partial class PagePresetToolbar : UserControl
             XamlRoot = XamlRoot, Title = "另存为预设", PrimaryButtonText = "保存", CloseButtonText = "取消",
             Content = new StackPanel { Spacing = 12, Children = { new TextBlock { Text = "选择保存位置。已有配置会被替换，电脑当前设置保持不变。", TextWrapping = TextWrapping.Wrap }, picker } }
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && picker.SelectedItem is ComboBoxItem { Tag: PresetKey chosenKey })
+        if (await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog) == ContentDialogResult.Primary && picker.SelectedItem is ComboBoxItem { Tag: PresetKey chosenKey })
             SaveAsRequested?.Invoke(this, chosenKey);
     }
 
@@ -278,7 +280,7 @@ public sealed partial class PagePresetToolbar : UserControl
 
     private async Task HideStatusAfterDelayAsync(int version)
     {
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        await Task.Delay(TimeSpan.FromSeconds(3));
         if (version == statusVersion) await HideStatusAsync(version);
     }
 

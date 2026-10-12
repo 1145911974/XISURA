@@ -1,4 +1,5 @@
 using Jiaolong.Contracts.Models;
+using System.Text.Json;
 using Jiaolong_ControlCenter.Services;
 
 namespace Jiaolong_ControlCenter.Prototype.Controls;
@@ -10,7 +11,6 @@ public sealed partial class GpuWorkspaceV2
     private int liveGpuRevision;
     private bool liveGpuQueued;
     private bool gpuRailPointerHeld;
-    private bool gpuFollowSelecting;
     private int gpuPresetLoadVersion;
     private readonly Dictionary<PresetKey, GpuWorkspacePreset> gpuEditorDrafts = [];
     private PresetKey? gpuEditingKey;
@@ -18,24 +18,30 @@ public sealed partial class GpuWorkspaceV2
     private PresetKey? pendingGpuFollowTarget;
     private PresetKey? appliedGpuKey;
     private GpuWorkspacePreset? appliedGpuPreset;
-    private bool gpuFollowingSuspended;
-    private int gpuFollowOperations;
+    private long appliedGpuRevision = -1;
 
     public async Task PausePresetFollowingAsync(CancellationToken token)
     {
-        gpuFollowingSuspended = true;
-        while (gpuFollowOperations > 0 || GpuWritePending)
+        while (GpuWritePending)
             await Task.Delay(40, token);
     }
 
-    public void ResumePresetFollowing() => gpuFollowingSuspended = false;
+    public void ResumePresetFollowing() { }
 
-    private GpuWorkspacePreset CaptureGpuEditor(bool changedOnly) => new(
-        clockReady && (!changedOnly || clockDirty) && !gpuEditorResetClock ? (int)Math.Round(CoreValueBox.Value) : null,
-        memoryReady && (!changedOnly || memoryDraftDirty) ? (int)Math.Round(MemoryValueBox.Value * 1000) : null,
-        coreOffsetReady && (!changedOnly || coreOffsetDirty) ? (int)Math.Round(CoreOffsetValueBox.Value * 1000) : null,
-        gpuVfDirty ? gpuVfDraft?.ToArray() : changedOnly ? null : lastGpuVf?.Nodes.Select(node => node.OffsetKhz).ToArray())
-        { ResetCoreFrequencyLimit = gpuEditorResetClock && (!changedOnly || clockDirty) };
+    private GpuWorkspacePreset CaptureGpuEditor(bool changedOnly)
+    {
+        bool editing = PresetToolbar.IsEditingPreset;
+        return new(
+            editing && !clockReady ? selectedGpuPreset?.CoreFrequencyLimitMhz :
+                clockReady && (!changedOnly || clockDirty) && !gpuEditorResetClock ? (int)Math.Round(CoreValueBox.Value) : null,
+            editing && !memoryReady ? selectedGpuPreset?.MemoryOffsetKhz :
+                memoryReady && (!changedOnly || memoryDraftDirty) ? (int)Math.Round(MemoryValueBox.Value * 1000) : null,
+            editing && !coreOffsetReady ? selectedGpuPreset?.CoreOffsetKhz :
+                coreOffsetReady && (!changedOnly || coreOffsetDirty) ? (int)Math.Round(CoreOffsetValueBox.Value * 1000) : null,
+            editing ? (gpuVfDirty ? gpuVfDraft : selectedGpuPreset?.VfOffsetsKhz)?.ToArray() :
+                gpuVfDirty ? gpuVfDraft?.ToArray() : changedOnly ? null : lastGpuVf?.Nodes.Select(node => node.OffsetKhz).ToArray())
+            { ResetCoreFrequencyLimit = gpuEditorResetClock && (!changedOnly || clockDirty) };
+    }
 
     private async void OnFollowPresetChanged(object? sender, bool enabled)
     {
@@ -44,38 +50,19 @@ public sealed partial class GpuWorkspaceV2
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { PresetToolbar.SetFollowPreset(IsFollowingPreset); await PresetToolbar.ShowStatusAsync("保存跟随设置失败"); return; }
         IsFollowingPreset = enabled;
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(enabled);
     }
 
     public async void SetFollowPresetTarget(PresetKey key)
     {
-        if (gpuFollowingSuspended) return;
-        gpuFollowOperations++;
-        try
+        await Task.CompletedTask;
+        // State notifications update presentation only; service owns the followed plan.
+        followGpuTarget = key;
+        if (session?.State?.Controls.ExecutionState?.Pages.FirstOrDefault(p => p.Page == ControlPageId.Gpu) is { } page)
         {
-            var slots = followPreferences.Load().GpuPresetSlots;
-            key = PresetKey.Create(key.Mode, slots.TryGetValue(key.Mode.ToString(), out int slot) && slot is >= 1 and <= 3 ? slot : 2);
-            if (followGpuTarget?.Mode == key.Mode) return;
-            followGpuTarget = key;
-            if (!IsFollowingPreset || session is null) return;
-            if (PresetToolbar.IsEditingPreset) { pendingGpuFollowTarget = key; return; }
-            while (GpuWritePending || gpuEditorLoading)
-            {
-                await Task.Delay(40);
-                if (gpuFollowingSuspended || !IsFollowingPreset || followGpuTarget != key) return;
-                if (PresetToolbar.IsEditingPreset) { pendingGpuFollowTarget = key; return; }
-            }
-            gpuFollowSelecting = true;
-            PresetToolbar.SelectedKey = key;
-            gpuFollowSelecting = false;
-            await LoadGpuPresetAsync(key, restoreEditor: false);
-            if (!gpuFollowingSuspended && IsFollowingPreset && followGpuTarget == key && selectedGpuPreset is not null && !gpuPresetDirty)
-                await ApplyGpuPresetAsync(automatic: true);
+            if (page.State == Jiaolong.Contracts.Models.ApplyState.Confirmed) PresetToolbar.SetCurrentPreset(page.Key);
+            else if (page.Key is { } submitted) PresetToolbar.SetSubmittedPreset(submitted);
         }
-        catch (Exception error)
-        {
-            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] GPU preset follow: {error}\n");
-        }
-        finally { gpuFollowOperations--; }
     }
 
     private void RestoreLiveGpuState()
@@ -109,10 +96,31 @@ public sealed partial class GpuWorkspaceV2
         }
     }
 
-    private void UpdateGpuActiveBadge(HomeStateSnapshot? state)
+    private async void UpdateGpuActiveBadge(HomeStateSnapshot? state)
     {
         if (liveGpuQueued || gpuVfDirty && !PresetToolbar.IsEditingPreset) return;
-        PresetToolbar.SetConfirmedActivePreset(appliedGpuPreset is { } preset && GpuPresetMatchesReadback(preset, state) ? appliedGpuKey : null);
+        if (state?.Controls.ExecutionState is { } execution && execution.Pages.FirstOrDefault(p => p.Page == ControlPageId.Gpu) is { Key: { } key } page)
+        {
+            if (page.State != Jiaolong.Contracts.Models.ApplyState.Confirmed)
+            { PresetToolbar.SetSubmittedPreset(key); PresetToolbar.SetConfirmedActivePreset(null); return; }
+            if (appliedGpuKey != key || appliedGpuRevision != page.Revision)
+            {
+                appliedGpuKey = key; appliedGpuRevision = page.Revision; appliedGpuPreset = null;
+                try
+                {
+                    var saved = await presetStore.LoadAsync(ControlPageId.Gpu, key, CancellationToken.None);
+                    if (appliedGpuKey != key || appliedGpuRevision != page.Revision) return;
+                    if (session?.State?.Controls.ExecutionState?.Pages.Any(p => p.Page == ControlPageId.Gpu &&
+                        p.Key == key && p.Revision == page.Revision && p.State == Jiaolong.Contracts.Models.ApplyState.Confirmed) != true)
+                    { appliedGpuRevision = -1; return; }
+                    if (saved is { SchemaVersion: PagePresetEnvelope.CurrentSchemaVersion } && saved.Revision == page.Revision)
+                        appliedGpuPreset = saved.Payload.Deserialize<GpuWorkspacePreset>();
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+                { AppRuntimeLog.Write($"GPU applied preset read: {error.Message}"); }
+            }
+        }
+        PresetToolbar.SetConfirmedActivePreset(appliedGpuPreset is { } preset && GpuPresetMatchesReadback(preset, session?.State ?? state) ? appliedGpuKey : null);
     }
 
     private static bool GpuPresetMatchesReadback(GpuWorkspacePreset preset, HomeStateSnapshot? state)

@@ -166,6 +166,10 @@ internal sealed class MsiFixture : IDisposable
     public bool TableContainsValue(string table, string value) =>
         QueryTable(table).Any(row => row.Any(item => item.Contains(value, StringComparison.OrdinalIgnoreCase)));
 
+    public string SequenceCondition(string action) =>
+        QueryTable("InstallExecuteSequence")
+            .First(row => row.Count >= 2 && string.Equals(row[0], action, StringComparison.Ordinal))[1];
+
     public static bool IsOemBinary(string fileName) =>
         fileName.Contains("ControlCenterX", StringComparison.OrdinalIgnoreCase) ||
         fileName.Contains("Mechrevo", StringComparison.OrdinalIgnoreCase) ||

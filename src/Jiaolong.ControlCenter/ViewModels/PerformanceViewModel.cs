@@ -13,6 +13,8 @@ public sealed record PerformanceDraft
 
     public PerformanceMode Mode { get; set; } = PerformanceMode.Balanced;
     public bool UseOfficialCpuPolicy { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Dictionary<string, SettingRequest>? SettingRequests { get; set; }
     public int TemperatureLimitC { get; set; } = 95;
     public int SplWatts { get; set; } = 45;
     public int SpptWatts { get; set; } = 65;
@@ -43,6 +45,10 @@ public sealed record PerformanceDraft
     public int? DcMinActiveCoresPercent { get; set; }
     public int? NegativeCurveOptimizer { get; set; } = -15;
     public AdvancedCpuTuningDraft? AdvancedCpuTuning { get; set; }
+
+    public PerformanceDraft CaptureCurrentPbo(int? scalar) => scalar is >= 1 and <= 10
+        ? this with { AdvancedCpuTuning = (AdvancedCpuTuning ?? new AdvancedCpuTuningDraft()) with { PboScalar = scalar } }
+        : this;
 }
 
 public enum CpuCurveOptimizerMode { Bios, AllCore, PerCore }

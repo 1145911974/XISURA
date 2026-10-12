@@ -49,7 +49,9 @@ public sealed partial class AutomationWorkspaceV2
             var configuration = await BuildServiceConfigurationAsync(strategy, policy, map, enabled, deadline.Token);
             if (revision != configurationRevision) throw new InvalidOperationException("调度设置已更新，请重试");
             submitted = true;
-            await ConfirmServiceConfigurationAsync(configuration, deadline.Token);
+            await ConfirmServiceConfigurationAsync(configuration, deadline.Token, changeEnabled
+                ? enabled ? Jiaolong.Contracts.Models.AutomationConfigurationIntent.Enable : Jiaolong.Contracts.Models.AutomationConfigurationIntent.Disable
+                : Jiaolong.Contracts.Models.AutomationConfigurationIntent.Update);
             if (revision != configurationRevision) throw new InvalidOperationException("调度设置已更新，请重试");
             preferences.Update(current => changeEnabled
                 ? current with { AdaptiveModeEnabled = enabled }

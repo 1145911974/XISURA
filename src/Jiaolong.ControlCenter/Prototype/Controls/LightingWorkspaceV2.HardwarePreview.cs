@@ -88,7 +88,11 @@ public sealed partial class LightingWorkspaceV2
         try
         {
             if (stillCurrent is not null && !stillCurrent() || plan.Effect == "Cycle" && !nativeCycleAvailable || session is null) return RejectedLighting();
+            Catalog?.RecordManualLive(ControlPageId.Lighting);
+            followPreset = false;
+            PresetToolbar.SetFollowPreset(false);
             var result = await session.ExecuteAsync(new SetKeyboardLightingCommand(Guid.NewGuid(), plan), token);
+            if (Catalog is not null) await Catalog.PublishManualLiveAsync(token);
             if (result.State == CommandState.Applied && result.Error is null) appliedLightingPlan = plan;
             return result;
         }

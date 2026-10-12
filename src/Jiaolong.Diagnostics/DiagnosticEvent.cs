@@ -54,6 +54,7 @@ public static class DiagnosticEventNames
     public const string AutomationTransition = "automation.transition";
     public const string ConflictDetected = "conflict.detected";
     public const string DiagnosticsExported = "diagnostics.exported";
+    public const string ModeObserved = "mode.observed";
 
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -79,6 +80,7 @@ public static class DiagnosticEventNames
         FanReleased,
         AutomationTransition,
         ConflictDetected,
-        DiagnosticsExported
+        DiagnosticsExported,
+        ModeObserved
     };
 }

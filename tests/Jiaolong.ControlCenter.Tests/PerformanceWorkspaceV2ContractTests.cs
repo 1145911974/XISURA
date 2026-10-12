@@ -49,6 +49,8 @@ public sealed class PerformanceWorkspaceV2ContractTests
         int handler = code.IndexOf("private void OnValueBoxTextChanged", StringComparison.Ordinal);
         string textHandler = code[handler..code.IndexOf("private void OnValueBoxLostFocus", handler, StringComparison.Ordinal)];
         StringAssert.Contains(textHandler, "ValueBox.FocusState == FocusState.Unfocused");
+        Assert.IsTrue(textHandler.IndexOf("inputCommitted = false", StringComparison.Ordinal) <
+            textHandler.IndexOf("TryParseInput", StringComparison.Ordinal), "Empty or intermediate input must remain pending before parsing.");
 
         StringAssert.Contains(row, "<ColumnDefinition Width=\"157\" />");
         StringAssert.Contains(row, "Width=\"98\"");
@@ -266,7 +268,7 @@ public sealed class PerformanceWorkspaceV2ContractTests
         StringAssert.Contains(toolbar, "x:Name=\"PresetStatusText\"");
         StringAssert.Contains(toolbarCode, "ShowSavedStatusAsync");
         StringAssert.Contains(toolbarCode, "HideStatusAsync");
-        StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(2)");
+        StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(3)");
         StringAssert.Contains(toolbarCode, "_ = HideStatusAfterDelayAsync(version);");
         StringAssert.Contains(toolbarCode, "statusVersion");
         StringAssert.Contains(toolbarCode, "TransitionAsync");
@@ -295,7 +297,12 @@ public sealed class PerformanceWorkspaceV2ContractTests
         StringAssert.Contains(workspace, "WindowsPowerSchemeReader.ReadSchemes");
         StringAssert.Contains(workspace, "windowsPowerSchemeDraftId = selectedScheme");
         StringAssert.Contains(workspace, "presetStore.LoadAsync(ControlPageId.Performance, key");
-        StringAssert.Contains(workspace, "requireComplete: true");
+        StringAssert.Contains(workspace, "Catalog.ApplyAsync");
+        string catalog = File.ReadAllText(Path.Combine(root, "src", "Jiaolong.ControlCenter", "Services", "PresetCatalogController.cs"));
+        StringAssert.Contains(catalog, "Task.Delay(500");
+        StringAssert.Contains(catalog, "await FlushAsync(token)");
+        StringAssert.Contains(catalog, "session.ApplyControlRequestAsync");
+        StringAssert.Contains(catalog, "item.Revision");
         StringAssert.Contains(workspace, "if (beforeApply is not null && !await beforeApply())");
         StringAssert.Contains(workspace, "if (!dirty && selectedSavedDraft is null)");
         int selectionStart = workspace.IndexOf("private void OnPowerPlanSelectionChanged", StringComparison.Ordinal);

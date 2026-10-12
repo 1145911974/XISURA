@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text.Json;
 using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Models;
@@ -17,7 +17,8 @@ namespace Jiaolong_ControlCenter.Prototype.Controls;
 
 public sealed partial class GpuWorkspaceV2 : UserControl
 {
-    private readonly ControlPresetStore presetStore = new();
+    public PresetCatalogController? Catalog { get; set; }
+    private readonly ControlPresetStore presetStore;
     private PathGeometry? usageGeometry;
     private ArcSegment? usageArc;
     private bool gpuVfDirty;
@@ -41,7 +42,13 @@ public sealed partial class GpuWorkspaceV2 : UserControl
 
     public GpuWorkspaceV2()
     {
+        presetStore = new(capabilities: () => session?.State?.Capabilities);
         InitializeComponent();
+        PresetToolbar.PresetRenamed += async (_, key) =>
+        {
+            try { if (Catalog is not null) await Catalog.RenameAsync(key); }
+            catch (Exception error) { AppRuntimeLog.Write($"Preset rename: {error}"); await PresetToolbar.ShowStatusAsync("名称保存未完成，请重试"); }
+        };
         IsFollowingPreset = followPreferences.Load().GpuFollowPreset;
         PresetToolbar.ConfigureFollowPreset(IsFollowingPreset);
         PresetToolbar.FollowPresetChanged += OnFollowPresetChanged;
@@ -129,6 +136,15 @@ public sealed partial class GpuWorkspaceV2 : UserControl
             return;
         }
         gpuPresetDirty = true;
+        var key = PresetToolbar.SelectedKey;
+        var snapshot = CaptureGpuEditor(false);
+        Catalog?.ScheduleSave(ControlPageId.Gpu, key, PresetToolbar.DisplayNameFor(key),
+            System.Text.Json.JsonSerializer.SerializeToElement(snapshot), () =>
+            {
+                if (PresetToolbar.SelectedKey == key && System.Text.Json.JsonElement.DeepEquals(
+                    System.Text.Json.JsonSerializer.SerializeToElement(CaptureGpuEditor(false)), System.Text.Json.JsonSerializer.SerializeToElement(snapshot)))
+                { selectedGpuPreset = snapshot; gpuPresetDirty = false; PresetToolbar.SetEditingState(key, false, true); _ = PresetToolbar.ShowSavedStatusAsync(); }
+            });
         PresetToolbar.SetActionAvailability(!GpuWritePending, !GpuWritePending);
         _ = PresetToolbar.SetDirtyStatusAsync(true);
     }
@@ -254,16 +270,23 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         string? gpuName = snapshot.Capabilities.Identity?.GpuName;
         RouteDiagram.SetGpuName(gpuName);
         bool muxAvailable = CapabilityAvailable(snapshot, "muxMode");
-        bool tuningAvailable = CapabilityAvailable(snapshot, "gpuFrequencyLimit") && snapshot.Controls.GpuClockLimit is { Error: null, MaximumMhz: > 0 };
+        bool tuningAvailable = CapabilityAvailable(snapshot, "gpuFrequencyLimit") &&
+            snapshot.Capabilities.Fields.Any(item => item.Key == "coreFrequencyLimitMhz" && item.Readable && item.Writable) &&
+            snapshot.Controls.GpuClockLimit is { Error: null, MaximumMhz: > 0 };
         RouteDiagram.SetAvailable(muxAvailable);
         if (muxAvailable && snapshot.Controls.MuxMode is MuxMode mode)
             RouteDiagram.SetMode(mode);
         else RouteDiagram.SetUnknownMode();
-        if (PresetToolbar.IsEditingPreset || gpuEditorLoading) return;
+        if (PresetToolbar.IsEditingPreset || gpuEditorLoading || gpuRailPointerHeld || CoreValueBox.IsInputPending || MemoryValueBox.IsInputPending || CoreOffsetValueBox.IsInputPending) return;
         // Each group sets its own availability; a blanket reset restarts disabled-state motion on every poll.
         ApplyClockLimitState(snapshot.Controls.GpuClockLimit, tuningAvailable);
         CoreValueBox.Visibility = Visibility.Visible;
-        CoreLiveUnknown.Visibility = tuningAvailable && !clockDirty && snapshot.Controls.GpuClockLimit?.SubmittedMhz is null
+        CoreLiveUnknown.Text = snapshot.Controls.GpuClockLimit?.SubmittedMhz is int submittedMhz
+            ? $"此前提交 {submittedMhz} MHz · 未读回，暂停写入"
+            : snapshot.Controls.GpuClockLimit?.HasSubmission == true
+                ? "曾请求恢复默认 · 未读回，暂停写入"
+                : "当前锁频未读回 · 暂停写入";
+        CoreLiveUnknown.Visibility = snapshot.Controls.GpuClockLimit is { Error: null, MaximumMhz: > 0 } && !clockDirty
             ? Visibility.Visible : Visibility.Collapsed;
         PresetToolbar.SetActionAvailability(!GpuWritePending, gpuVfDirty && !GpuWritePending);
         TuningStateText.Text = tuningAvailable ? "可调节" : "只读";
@@ -503,7 +526,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         if (!ReferenceEquals(UsageProgressPath.Data, usageGeometry)) UsageProgressPath.Data = usageGeometry;
     }
 
-    private static bool CapabilityAvailable(HomeStateSnapshot snapshot, string key) => snapshot.Capabilities.Items.Any(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
+    private static bool CapabilityAvailable(HomeStateSnapshot snapshot, string key) => snapshot.Capabilities.IsAvailable(key);
     private static string Format(double? value, string unit) => value is double actual && double.IsFinite(actual) ? $"{actual:0} {unit}" : $"-- {unit}";
 
 }

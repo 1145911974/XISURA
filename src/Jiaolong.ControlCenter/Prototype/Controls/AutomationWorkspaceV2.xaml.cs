@@ -145,7 +145,7 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
                 SecondaryButtonText = "放弃更改",
                 CloseButtonText = "取消"
             };
-            var result = await dialog.ShowAsync();
+            var result = await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog);
             if (result == ContentDialogResult.None || result == ContentDialogResult.Primary && !SavePlan()) return;
         }
         selection.Choose(strategy);
@@ -211,8 +211,8 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
             map.WithTarget(AdaptivePowerSource.Ac, AdaptiveStage.Office, map.AcOffice);
             map.WithTarget(AdaptivePowerSource.Ac, AdaptiveStage.Game, map.AcGame);
             map.WithTarget(AdaptivePowerSource.Ac, AdaptiveStage.Turbo, map.AcTurbo);
-            map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Office, map.DcOffice);
-            map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, map.DcGame);
+            map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Office, map.DcOffice, preferences.Load().CustomBaseModes);
+            map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, map.DcGame, preferences.Load().CustomBaseModes);
             return map;
         }
         catch (ArgumentOutOfRangeException)
@@ -312,7 +312,7 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
                 args.Cancel = true;
             }
         };
-        await dialog.ShowAsync();
+        await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog);
     }
 
     private static NumberBox CreateThresholdBox(string header, int value, int maximum = 100) => new()
@@ -454,7 +454,7 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
         if (loadingMap || !mapEditorOpen) return;
         try
         {
-            draftMap = draftMap.WithTarget(mapPower, mapStage, key);
+            draftMap = draftMap.WithTarget(mapPower, mapStage, key, preferences.Load().CustomBaseModes);
         }
         catch (ArgumentOutOfRangeException)
         {
@@ -561,7 +561,7 @@ public sealed partial class AutomationWorkspaceV2 : UserControl
             PrimaryButtonText = "恢复推荐",
             CloseButtonText = "取消"
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog) != ContentDialogResult.Primary) return;
         draftMap = AdaptiveTargetMap.Recommended;
         draftPolicy = AdaptiveTriggerPolicy.Recommended(selection.Editing);
         RenderMapping();

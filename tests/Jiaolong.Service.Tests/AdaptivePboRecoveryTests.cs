@@ -61,7 +61,7 @@ public sealed class AdaptivePboRecoveryTests
         Assert.IsFalse(AdaptiveAutomationWorker.CpuPlanMatches(plan, state with { PboScalar = 1 }));
         Assert.IsTrue(AdaptiveAutomationWorker.CpuPlanMatches(plan, state with { PboScalar = 2 }));
         var curve = plan with { Advanced = new(PerCoreCurveOptimizer: new Dictionary<int,int> { [0] = -29 }) };
-        var captured = state with { CurveOptimizerVerification = "hardwareReadback",
+        var captured = state with { EnabledCoreCount = 8, CurveOptimizerVerification = "hardwareReadback",
             PerCoreCurveOptimizer = Enumerable.Range(0, 8).ToDictionary(core => core, _ => -30) };
         Assert.IsTrue(AdaptiveAutomationWorker.CanApplyAndRestore(curve, captured));
         Assert.IsFalse(AdaptiveAutomationWorker.CanApplyAndRestore(curve, captured with { CurveOptimizerVerification = "cached" }));

@@ -1,4 +1,5 @@
 using Jiaolong.Contracts.Models;
+using System.Text.Json;
 using Jiaolong_ControlCenter.Services;
 
 namespace Jiaolong_ControlCenter.Prototype.Controls;
@@ -14,17 +15,15 @@ public sealed partial class FanWorkspaceV2
     private PresetKey? pendingFanFollowTarget;
     private PresetKey? appliedFanKey;
     private FanCurveState? appliedFanPreset;
-    private bool fanFollowingSuspended;
-    private int fanFollowOperations;
+    private long appliedFanRevision = -1;
 
     public async Task PausePresetFollowingAsync(CancellationToken token)
     {
-        fanFollowingSuspended = true;
-        while (fanFollowOperations > 0 || applyingPreset || savingPreset)
+        while (applyingPreset || savingPreset)
             await Task.Delay(40, token);
     }
 
-    public void ResumePresetFollowing() => fanFollowingSuspended = false;
+    public void ResumePresetFollowing() { }
 
     private async void OnFollowPresetChanged(object? sender, bool enabled)
     {
@@ -33,44 +32,47 @@ public sealed partial class FanWorkspaceV2
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { PresetToolbar.SetFollowPreset(IsFollowingPreset); await PresetToolbar.ShowStatusAsync("保存跟随设置失败"); return; }
         IsFollowingPreset = enabled;
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(enabled);
         if (!enabled) pendingFanFollowTarget = null;
     }
 
     public async void SetFollowPresetTarget(PresetKey key)
     {
-        if (fanFollowingSuspended) return;
-        fanFollowOperations++;
-        try
+        await Task.CompletedTask;
+        followFanTarget = key;
+        if (session?.State?.Controls.ExecutionState?.Pages.FirstOrDefault(p => p.Page == ControlPageId.Fan) is { } page)
         {
-            var slots = followPreferences.Load().FanPresetSlots;
-            key = PresetKey.Create(key.Mode, slots.TryGetValue(key.Mode.ToString(), out int slot) && slot is >= 1 and <= 3 ? slot : 2);
-            if (followFanTarget?.Mode == key.Mode && pendingFanFollowTarget != key) return;
-            followFanTarget = key;
-            if (!IsFollowingPreset || session is null) return;
-            if (PresetToolbar.IsEditingPreset) { pendingFanFollowTarget = key; return; }
-            if (session.State?.Controls.StrongCooling != false) { pendingFanFollowTarget = key; return; }
-            pendingFanFollowTarget = null;
-            while (applyingPreset || savingPreset || fanEditorLoading)
-            {
-                await Task.Delay(40);
-                if (fanFollowingSuspended || !IsFollowingPreset || followFanTarget != key) return;
-                if (PresetToolbar.IsEditingPreset) { pendingFanFollowTarget = key; return; }
-            }
-            editingKey = key;
-            syncingPreset = true; PresetToolbar.SelectedKey = key; syncingPreset = false;
-            if (!fanFollowingSuspended && IsFollowingPreset && followFanTarget == key) await ApplyFanStateAsync(preserveStrongCooling: true);
+            if (page.State == Jiaolong.Contracts.Models.ApplyState.Confirmed) PresetToolbar.SetCurrentPreset(page.Key);
+            else if (page.Key is { } submitted) PresetToolbar.SetSubmittedPreset(submitted);
         }
-        catch (Exception error)
-        {
-            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Fan preset follow: {error}\n");
-        }
-        finally { fanFollowOperations--; }
     }
 
-    private void UpdateFanActiveBadge(HomeStateSnapshot state)
+    private async void UpdateFanActiveBadge(HomeStateSnapshot state)
     {
         if (liveFanQueued) return;
+        if (state.Controls.ExecutionState is { } execution && execution.Pages.FirstOrDefault(p => p.Page == ControlPageId.Fan) is { Key: { } key } page)
+        {
+            if (page.State != Jiaolong.Contracts.Models.ApplyState.Confirmed)
+            { PresetToolbar.SetSubmittedPreset(key); PresetToolbar.SetConfirmedActivePreset(null); return; }
+            if (appliedFanKey != key || appliedFanRevision != page.Revision)
+            {
+                appliedFanKey = key; appliedFanRevision = page.Revision; appliedFanPreset = null;
+                try
+                {
+                    var saved = await presetStore.LoadAsync(ControlPageId.Fan, key, CancellationToken.None);
+                    if (appliedFanKey != key || appliedFanRevision != page.Revision) return;
+                    if (session?.State?.Controls.ExecutionState?.Pages.Any(p => p.Page == ControlPageId.Fan &&
+                        p.Key == key && p.Revision == page.Revision && p.State == Jiaolong.Contracts.Models.ApplyState.Confirmed) != true)
+                    { appliedFanRevision = -1; return; }
+                    if (saved is { SchemaVersion: PagePresetEnvelope.CurrentSchemaVersion } && saved.Revision == page.Revision)
+                        appliedFanPreset = saved.Payload.Deserialize<FanCurveState>();
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+                { AppRuntimeLog.Write($"Fan applied preset read: {error.Message}"); }
+            }
+        }
         var expected = appliedFanPreset;
+        state = session?.State ?? state;
         var plan = state.Controls.ActiveFanControlPlan;
         bool matches = expected is not null && state.Controls.StrongCooling != true &&
             (expected.Strategy == "Auto" && expected.MaximumRpm is null ? plan is null :

@@ -68,7 +68,7 @@ public sealed partial class AutomationWorkspaceV2
             }
             catch (ArgumentException exception) { error.Text = exception.Message; args.Cancel = true; }
         };
-        await dialog.ShowAsync();
+        await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog);
     }
 
     private static int ReadInteger(NumberBox box)
@@ -112,7 +112,7 @@ public sealed partial class AutomationWorkspaceV2
         root.Children.Add(Section("温度、时间与空闲约束", protection));
 
         var apps = new StackPanel { Spacing = 10 };
-        var rows = new List<(TextBox Exe, ComboBox Match, ComboBox Target)>();
+        var rows = new List<(TextBox Exe, ComboBox Match, ComboBox Target, CheckBox Activity)>();
         var appRows = new StackPanel { Spacing = 12 };
         var add = new Button { Content = "添加应用规则（最多8条）" };
         void AddRule(AdaptiveApplicationRule rule)
@@ -120,10 +120,12 @@ public sealed partial class AutomationWorkspaceV2
             var exe = new TextBox { Header = "进程名（不启动应用）", Text = rule.Executable, PlaceholderText = "例如 ffmpeg.exe", MaxLength = 120 };
             var match = new ComboBox { Header = "生效范围", Width = 150, ItemsSource = new[] { "运行中（含后台）", "仅前台" }, SelectedIndex = rule.ForegroundOnly ? 1 : 0 };
             var target = new ComboBox { Header = "目标场景", Width = 120, ItemsSource = new[] { "办公", "游戏", "狂飙" }, SelectedIndex = (int)rule.Target };
+            var activity = new CheckBox { Content = "要求应用持续活动；关闭后运行期间固定目标", IsChecked = rule.RequireActivity };
             var delete = new Button { Content = "删除", VerticalAlignment = VerticalAlignment.Bottom };
             var line = Pair(match, target); line.Children.Add(delete);
             var group = new StackPanel { Spacing = 8 }; group.Children.Add(exe); group.Children.Add(line);
-            var entry = (exe, match, target); rows.Add(entry); appRows.Children.Add(group);
+            group.Children.Add(activity);
+            var entry = (exe, match, target, activity); rows.Add(entry); appRows.Children.Add(group);
             delete.Click += (_, _) => { rows.Remove(entry); appRows.Children.Remove(group); add.IsEnabled = rows.Count < 8; };
             add.IsEnabled = rows.Count < 8;
         }
@@ -138,7 +140,8 @@ public sealed partial class AutomationWorkspaceV2
                 LowBatteryPercent = ReadInteger(low), BatteryRecoveryPercent = ReadInteger(recovery), RespectBatterySaver = saver.IsChecked == true,
                 CpuTemperatureCeiling = ReadInteger(cpuHeat), GpuTemperatureCeiling = ReadInteger(gpuHeat), CooldownSeconds = ReadInteger(cooldown),
                 MinimumDwellSeconds = ReadInteger(dwell), ApplicationSeconds = ReadInteger(appSeconds), IdleSeconds = ReadInteger(idle), IdleReturnEnabled = idleEnabled.IsChecked == true,
-                ApplicationRules = rows.Select(r => new AdaptiveApplicationRule(r.Exe.Text.Trim(), r.Match.SelectedIndex == 1, (AdaptiveStage)r.Target.SelectedIndex)).ToArray()
+                ApplicationRules = rows.Select(r => new AdaptiveApplicationRule(r.Exe.Text.Trim(), r.Match.SelectedIndex == 1, (AdaptiveStage)r.Target.SelectedIndex)
+                    { RequireActivity = r.Activity.IsChecked == true }).ToArray()
             };
             value.Validate(); return value;
         }
@@ -154,6 +157,8 @@ public sealed partial class AutomationWorkspaceV2
         var latch = new CheckBox { Content = "此前已触发低电量保护" };
         var foreground = new CheckBox { Content = "该应用当前位于前台", IsChecked = true };
         var process = new TextBox { Header = "试算应用进程名", MaxLength = 120 };
+        var processCpu = AdvancedNumber("模拟应用CPU活动 %", 0, 0, 100); processCpu.Value = double.NaN;
+        var processGpu = AdvancedNumber("模拟应用GPU活动 %", 0, 0, 100); processGpu.Value = double.NaN;
         var current = new ComboBox { Header = "当前场景", ItemsSource = new[] { "办公", "游戏", "狂飙" }, SelectedIndex = 0 };
         var result = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
         var readLive = new Button { Content = "读取本机即时数值" };
@@ -183,6 +188,7 @@ public sealed partial class AutomationWorkspaceV2
                     CpuPercent = NullableValue(cpu), GpuPercent = NullableValue(gpu), CpuTemperature = NullableValue(cpuTemp), GpuTemperature = NullableValue(gpuTemp),
                     BatteryPercent = double.IsFinite(battery.Value) ? ReadInteger(battery) : null, AcConnected = ac.IsChecked, BatterySaver = saving.IsChecked == true,
                     LowBatteryLatched = latch.IsChecked == true, Executable = process.Text, Foreground = foreground.IsChecked == true,
+                    ProcessCpuPercent = NullableValue(processCpu), ProcessGpuPercent = NullableValue(processGpu),
                     ConditionSeconds = ReadInteger(seconds), SinceSwitchSeconds = ReadInteger(since), IdleSeconds = ReadInteger(idleTime), Current = (AdaptiveStage)current.SelectedIndex
                 };
                 var verdict = AdaptiveRuleTrial.Evaluate(policy, input);
@@ -192,7 +198,7 @@ public sealed partial class AutomationWorkspaceV2
             result.UpdateLayout();
             result.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 1, AnimationDesired = new Windows.UI.ViewManagement.UISettings().AnimationsEnabled });
         };
-        foreach (var element in new UIElement[] { Pair(cpu, gpu), Pair(cpuTemp, gpuTemp), Pair(battery, seconds), Pair(since, idleTime), ac, saving, latch, process, foreground, current, Pair(readLive, run), result }) trial.Children.Add(element);
+        foreach (var element in new UIElement[] { Pair(cpu, gpu), Pair(cpuTemp, gpuTemp), Pair(battery, seconds), Pair(since, idleTime), ac, saving, latch, process, Pair(processCpu, processGpu), foreground, current, Pair(readLive, run), result }) trial.Children.Add(element);
         root.Children.Add(Section("场景试算与命中原因", trial));
         return (root, Read);
     }

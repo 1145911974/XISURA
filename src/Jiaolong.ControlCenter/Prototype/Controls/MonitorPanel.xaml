@@ -56,7 +56,7 @@
                                 <TextBlock Canvas.Left="143" Text="80°C" Foreground="#A8FFFFFF" FontSize="9" />
                             </Canvas>
                         </Grid>
-                        <TextBlock x:Name="TemperaturePeak" Typography.NumeralAlignment="Tabular" Text="最高 --°C" Foreground="#B8FFFFFF" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                        <TextBlock x:Name="TemperaturePeak" ToolTipService.ToolTip="当前模式的界面参考温度，不代表硬件温控上限或实测最高温度。" Typography.NumeralAlignment="Tabular" Text="参考 --°C" Foreground="#B8FFFFFF" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Right" />
                     </StackPanel>
                 </Grid>
             </Grid>

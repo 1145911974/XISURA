@@ -33,6 +33,12 @@ internal static class SystemPowerStatusReader
         }
     }
 
+    internal static bool? ReadBatterySaver()
+    {
+        try { return GetSystemPowerStatus(out var status) ? status.SystemStatusFlag == 1 : null; }
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException) { return null; }
+    }
+
     [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetSystemPowerStatus(out NativeSystemPowerStatus status);

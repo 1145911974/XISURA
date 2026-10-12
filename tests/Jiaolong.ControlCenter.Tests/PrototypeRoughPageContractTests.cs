@@ -11,16 +11,19 @@ public sealed class PrototypeRoughPageContractTests
     public void Latest_mode_click_previews_immediately_and_supersedes_unstarted_presets()
     {
         var code = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.xaml.cs");
-        var workspace = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "PerformanceWorkspaceV2.xaml.cs");
-        var request = code[code.IndexOf("private async void OnModeRequested", StringComparison.Ordinal)..];
-        var queued = request[request.IndexOf("queuedModeRequest = mode;", StringComparison.Ordinal)..request.IndexOf("queuedModeRequest = null;", StringComparison.Ordinal)];
-        StringAssert.Contains(queued, "PreviewModeVisuals(controlMode);");
-        Assert.IsTrue(request.IndexOf("PreviewModeVisuals(controlMode);", StringComparison.Ordinal) <
-            request.IndexOf("await PauseAdaptiveForManualControlAsync()", StringComparison.Ordinal));
-        StringAssert.Contains(code, "if (revision != manualModeRevision) return;");
-        StringAssert.Contains(code, "isCurrentRequest: () => revision == manualModeRevision");
-        StringAssert.Contains(workspace, "if (isCurrentRequest?.Invoke() == false) return false;");
-        StringAssert.Contains(code, "!presetDraft.UseOfficialCpuPolicy && controls?.CpuTuning?.OemCustomPowerMode != true");
+        var catalog = ReadSource("src", "Jiaolong.ControlCenter", "Services", "PresetCatalogController.cs");
+        int requestStart = code.IndexOf("private async void OnModeRequested", StringComparison.Ordinal);
+        int requestEnd = code.IndexOf("private void ResumeQueuedModeRequest", requestStart, StringComparison.Ordinal);
+        string request = code[requestStart..requestEnd];
+        StringAssert.Contains(request, "int revision = ++manualModeRevision;");
+        int preview = request.IndexOf("PreviewModeVisuals(logical);", StringComparison.Ordinal);
+        int apply = request.IndexOf("ApplyCatalogModeAsync(logical, revision)", StringComparison.Ordinal);
+        Assert.IsTrue(preview >= 0 && apply > preview, "Preview precedes asynchronous hardware submission.");
+        StringAssert.Contains(code, "if (revision != manualModeRevision) return false;");
+        StringAssert.Contains(code, "() => revision == manualModeRevision");
+        StringAssert.Contains(catalog, "intent == Volatile.Read(ref applyVersion) && isCurrent?.Invoke() != false");
+        StringAssert.Contains(catalog, "if (!Current()) return null;");
+        StringAssert.Contains(catalog, "session.ApplyControlRequestAsync");
     }
 
     [TestMethod]
@@ -44,8 +47,10 @@ public sealed class PrototypeRoughPageContractTests
         StringAssert.Contains(automationCode, "前台应用和空闲规则需要客户端在线");
         StringAssert.Contains(worker, "ClientContextMaxAge = TimeSpan.FromSeconds(5)");
         StringAssert.Contains(worker, "IsFresh(saved.ClientContext, now)");
-        StringAssert.Contains(worker, "应用规则暂停。");
-        StringAssert.Contains(worker, "空闲返回规则暂停。");
+        StringAssert.Contains(worker, "ApplicationContextAvailable = !contextIncomplete");
+        StringAssert.Contains(worker, "IdleContextAvailable = context?.IdleSeconds is not null");
+        Assert.IsFalse(worker.Contains("contextIncomplete && target >", StringComparison.Ordinal),
+            "Missing client context must not veto independent service load decisions.");
         Assert.IsFalse(worker.Contains("HasManualCoolingControl", StringComparison.Ordinal));
         var heartbeat = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "AutomationWorkspaceV2.Service.cs");
         Assert.IsFalse(heartbeat.Contains("Unloaded += (_, _) => serviceContextTimer.Stop()", StringComparison.Ordinal));
@@ -232,9 +237,12 @@ public sealed class PrototypeRoughPageContractTests
         int start = code.IndexOf("private async void OnUsePreset", StringComparison.Ordinal);
         string use = code[start..code.IndexOf("public void SetPageActive", start, StringComparison.Ordinal)];
         Assert.IsFalse(use.Contains("confirmation.ShowAsync", StringComparison.Ordinal), "Saved lighting presets apply directly.");
-        StringAssert.Contains(use, "await ApplySavedLightingAsync");
+        StringAssert.Contains(use, "await Catalog.ApplyAsync");
+        StringAssert.Contains(use, "ControlOrigin.PresetUse, ControlPageId.Lighting, key");
         StringAssert.Contains(use, "if (result.State == CommandState.Applied && result.Error is null)");
-        StringAssert.Contains(use, "PresetToolbar.SetActivePreset(key)");
+        StringAssert.Contains(use, "Pages.FirstOrDefault(p => p.Page == ControlPageId.Lighting)?.State == Jiaolong.Contracts.Models.ApplyState.Confirmed");
+        StringAssert.Contains(use, "PresetToolbar.SetCurrentPreset(key)");
+        StringAssert.Contains(use, "PresetToolbar.SetSubmittedPreset(key)");
     }
 
     [TestMethod]
@@ -681,7 +689,8 @@ public sealed class PrototypeRoughPageContractTests
         var workspace = ReadPerformanceV2Markup();
         StringAssert.Contains(code, "_ = PresetToolbar.ShowSavedStatusAsync()");
         StringAssert.Contains(code, "await ShowOperationFailureAsync(\"保存失败，原预设未更改。请重试。\")");
-        StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(2)");
+        StringAssert.Contains(toolbarCode, "ShowStatusAsync(\"已保存，但未使用\", autoHide: true)");
+        StringAssert.Contains(toolbarCode, "TimeSpan.FromSeconds(3)");
         StringAssert.Contains(workspace, "SaveRequested=\"OnSavePresetClick\"");
         StringAssert.Contains(workspace, "UseRequested=\"OnUsePresetClick\"");
     }

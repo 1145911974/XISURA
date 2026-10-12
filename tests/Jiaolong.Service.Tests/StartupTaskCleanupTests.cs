@@ -25,7 +25,7 @@ public sealed class StartupTaskCleanupTests
         var scheduled = package.Descendants(wix + "Custom")
             .Single(element => (string?)element.Attribute("Action") == (string?)action.Attribute("Id"));
         Assert.AreEqual("RemoveFiles", (string?)scheduled.Attribute("Before"));
-        Assert.AreEqual("REMOVE~=\"ALL\" AND NOT UPGRADINGPRODUCTCODE", (string?)scheduled.Attribute("Condition"));
+        Assert.AreEqual("REMOVE~=\"ALL\" AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALL", (string?)scheduled.Attribute("Condition"));
 
         const string installed = @"C:\Program Files\Jiaolong Control Center\Jiaolong.ControlCenter.exe";
         const string name = "XISURA Startup S-1-5-21-42";

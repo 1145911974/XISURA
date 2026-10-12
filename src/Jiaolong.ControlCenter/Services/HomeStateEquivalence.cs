@@ -21,6 +21,7 @@ public static class HomeStateEquivalence
         left.SupportState == right.SupportState &&
         string.Equals(left.Reason, right.Reason, StringComparison.Ordinal) &&
         Equals(left.Identity, right.Identity) &&
+        left.IsOnAcPower == right.IsOnAcPower && left.Fields.SequenceEqual(right.Fields) &&
         left.Items.Length == right.Items.Length &&
         left.Items.Zip(right.Items).All(pair =>
             string.Equals(pair.First.Key, pair.Second.Key, StringComparison.Ordinal) &&
@@ -60,12 +61,14 @@ public static class HomeStateEquivalence
 
     private static bool AreEquivalent(HomeControlState left, HomeControlState right) =>
         left.PerformanceMode == right.PerformanceMode &&
+        SameAdaptive(left.AdaptiveAutomation, right.AdaptiveAutomation) &&
+        SameExecution(left.ExecutionState, right.ExecutionState) &&
         left.StrongCooling == right.StrongCooling &&
         left.MuxMode == right.MuxMode &&
         Equals(left.GpuClockLimit, right.GpuClockLimit) &&
         Equals(left.GpuPowerLimit, right.GpuPowerLimit) &&
         Equals(left.GpuPowerPolicy, right.GpuPowerPolicy) &&
-        Equals(left.CpuTuning, right.CpuTuning) &&
+        SameCpu(left.CpuTuning, right.CpuTuning) &&
         Equals(left.KeyboardLighting, right.KeyboardLighting) &&
         left.KeyboardLightingNativeCycleAvailable == right.KeyboardLightingNativeCycleAvailable &&
         string.Equals(left.KeyboardLightingError, right.KeyboardLightingError, StringComparison.Ordinal) &&
@@ -81,4 +84,29 @@ public static class HomeStateEquivalence
             pair.First.Setting == pair.Second.Setting &&
             pair.First.Enabled == pair.Second.Enabled &&
             string.Equals(pair.First.Reason, pair.Second.Reason, StringComparison.Ordinal));
+
+    private static bool SameAdaptive(AdaptiveAutomationStatus? left, AdaptiveAutomationStatus? right) =>
+        ReferenceEquals(left, right) || left is not null && right is not null && left.Enabled == right.Enabled &&
+        left.Running == right.Running && left.Revision == right.Revision && left.CurrentTarget == right.CurrentTarget &&
+        left.SubmittedTarget == right.SubmittedTarget && left.TargetApplyState == right.TargetApplyState &&
+        left.CandidateTarget == right.CandidateTarget && left.Reason == right.Reason && left.LastError == right.LastError;
+    private static bool SameCpu(CpuTuningState? left, CpuTuningState? right) => ReferenceEquals(left, right) ||
+        left is not null && right is not null &&
+        Equals(left with { PerCoreCurveOptimizer = null, AdvancedLimits = null }, right with { PerCoreCurveOptimizer = null, AdvancedLimits = null }) &&
+        SameDictionary(left.PerCoreCurveOptimizer, right.PerCoreCurveOptimizer) &&
+        (ReferenceEquals(left.AdvancedLimits, right.AdvancedLimits) || left.AdvancedLimits is { } a && right.AdvancedLimits is { } b &&
+            Equals(a with { PerCoreCurveOptimizer = null, PerCoreOcClockMhz = null }, b with { PerCoreCurveOptimizer = null, PerCoreOcClockMhz = null }) &&
+            SameDictionary(a.PerCoreCurveOptimizer, b.PerCoreCurveOptimizer) && SameDictionary(a.PerCoreOcClockMhz, b.PerCoreOcClockMhz));
+    private static bool SameDictionary(IReadOnlyDictionary<int, int>? left, IReadOnlyDictionary<int, int>? right) =>
+        ReferenceEquals(left, right) || left is not null && right is not null && left.Count == right.Count &&
+        left.All(pair => right.TryGetValue(pair.Key, out int value) && value == pair.Value);
+    private static bool SameExecution(ControlExecutionState? left, ControlExecutionState? right) =>
+        ReferenceEquals(left, right) || left is not null && right is not null && left.Generation == right.Generation &&
+        left.HardwareEpoch == right.HardwareEpoch && left.ConfigurationRevision == right.ConfigurationRevision &&
+        left.LogicalMode == right.LogicalMode && left.NativeMode == right.NativeMode && left.NativeModeApplyState == right.NativeModeApplyState &&
+        left.Pages.Length == right.Pages.Length && left.Pages.Zip(right.Pages).All(pair =>
+            pair.First.Page == pair.Second.Page && pair.First.Key == pair.Second.Key && pair.First.Revision == pair.Second.Revision &&
+            pair.First.State == pair.Second.State && pair.First.ErrorCode == pair.Second.ErrorCode &&
+            pair.First.ConfirmedFields.SequenceEqual(pair.Second.ConfirmedFields) &&
+            pair.First.UnverifiedFields.SequenceEqual(pair.Second.UnverifiedFields) && pair.First.SkippedFields.SequenceEqual(pair.Second.SkippedFields));
 }

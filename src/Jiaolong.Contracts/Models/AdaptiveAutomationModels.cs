@@ -9,7 +9,10 @@ public enum AdaptiveAutomationStrategyId { QuietFirst, BalancedAdaptive, Respons
 [JsonConverter(typeof(LowerCamelEnumConverter<AdaptiveAutomationStageId>))]
 public enum AdaptiveAutomationStageId { Office, Game, Turbo }
 
-public sealed record AdaptiveAutomationApplicationRule(string Executable, bool ForegroundOnly, AdaptiveAutomationStageId Target);
+public sealed record AdaptiveAutomationApplicationRule(string Executable, bool ForegroundOnly, AdaptiveAutomationStageId Target)
+{
+    public bool RequireActivity { get; init; } = true;
+}
 
 public sealed record AdaptiveAutomationPolicy(
     int GameCpuPercent, int GameGpuPercent, int GameSeconds,
@@ -18,20 +21,34 @@ public sealed record AdaptiveAutomationPolicy(
     int LowBatteryPercent, int BatteryRecoveryPercent, bool RespectBatterySaver,
     int CpuTemperatureCeiling, int GpuTemperatureCeiling, int CooldownSeconds,
     int MinimumDwellSeconds, int ApplicationSeconds, bool IdleReturnEnabled,
-    int IdleSeconds, AdaptiveAutomationApplicationRule[] ApplicationRules);
+    int IdleSeconds, AdaptiveAutomationApplicationRule[] ApplicationRules)
+{
+    public int TurboExitCpuPercent { get; init; } = 70;
+    public int TurboExitGpuPercent { get; init; } = 75;
+    public int TurboExitSeconds { get; init; } = 12;
+    public int TurboMinimumDwellSeconds { get; init; } = 12;
+}
 
 public sealed record AdaptiveAutomationTargetMap(PresetKey AcOffice, PresetKey AcGame, PresetKey AcTurbo, PresetKey DcOffice, PresetKey DcGame);
 
 // Preserve the serialized CPU property name; it also carries verified PBO Scalar and CO.
-// Automatic application excludes GPU, MUX, fan, OEM/SMU limits and manual OC fields.
-public sealed record AdaptiveAutomationPreset(PresetKey Key, PerformanceMode PerformanceMode, CpuTuningPlan? CpuWindowsTuning);
+// Legacy CPU snapshots remain readable; Pages carries independently followed page plans.
+public sealed record AdaptiveAutomationPreset(PresetKey Key, PerformanceMode PerformanceMode, CpuTuningPlan? CpuWindowsTuning)
+{
+    public PagePresetEnvelope[] Pages { get; init; } = [];
+    public PageSelection[] Selections { get; init; } = [];
+}
 
 public sealed record AdaptiveAutomationConfiguration(
     bool Enabled,
     AdaptiveAutomationStrategyId Strategy,
     AdaptiveAutomationPolicy Policy,
     AdaptiveAutomationTargetMap TargetMap,
-    AdaptiveAutomationPreset[] Presets);
+    AdaptiveAutomationPreset[] Presets)
+{
+    public long Revision { get; init; }
+    public long CatalogRevision { get; init; }
+}
 
 public sealed record AdaptiveAutomationClientContext(
     DateTimeOffset CapturedAtUtc,
@@ -53,4 +70,7 @@ public sealed record AdaptiveAutomationStatus(
     string? OwnerConfigurationIdentity)
 {
     public PresetKey? CandidateTarget { get; init; }
+    public long Revision { get; init; }
+    public PresetKey? SubmittedTarget { get; init; }
+    public ApplyState? TargetApplyState { get; init; }
 }

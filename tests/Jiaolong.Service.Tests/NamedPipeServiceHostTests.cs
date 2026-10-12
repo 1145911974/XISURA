@@ -16,8 +16,10 @@ public sealed class NamedPipeServiceHostTests
     public async Task A_persistent_client_does_not_block_the_next_connection()
     {
         var pipeName = $"Jiaolong.Test.{Guid.NewGuid():N}";
+        var dispatcher = new BlockingDispatcher();
         var host = new NamedPipeServiceHost(
             pipeName,
+            dispatcher: dispatcher,
             identityVerifier: new AllowLocalClientVerifier());
         using var cancellation = new CancellationTokenSource();
         var hostTask = host.RunAsync(cancellation.Token);
@@ -26,6 +28,21 @@ public sealed class NamedPipeServiceHostTests
         {
             await using var first = await ConnectAndHelloAsync(host);
             await using var second = await ConnectAndHelloAsync(host);
+            var codec = new FrameCodec();
+            RequestEnvelope Request(string operation) => new(new(1, 1), Guid.NewGuid(), DateTimeOffset.UtcNow,
+                Guid.NewGuid(), operation, DateTimeOffset.UtcNow.AddSeconds(5), JsonSerializer.SerializeToElement(true));
+            var blocked = Request("blocked");
+            var latest = Request("latest");
+            await codec.WriteAsync(first, blocked, cancellation.Token);
+            await dispatcher.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await codec.WriteAsync(first, latest, cancellation.Token);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var response = (ResponseEnvelope)await codec.ReadAsync(first, deadline.Token);
+            Assert.AreEqual(latest.MessageId, response.ReplyToMessageId, "A new intent must be admitted before the old operation completes.");
+            Assert.IsFalse(dispatcher.Release.Task.IsCompleted);
+            dispatcher.Release.TrySetResult();
+            response = (ResponseEnvelope)await codec.ReadAsync(first, deadline.Token);
+            Assert.AreEqual(blocked.MessageId, response.ReplyToMessageId);
         }
         finally
         {
@@ -99,6 +116,18 @@ public sealed class NamedPipeServiceHostTests
     {
         public ValueTask<ClientIdentity> VerifyAsync(SafePipeHandle pipeHandle, CancellationToken cancellationToken) =>
             ValueTask.FromResult(ClientIdentity.LocalInteractive("S-1-5-21-test", 1));
+    }
+
+    private sealed class BlockingDispatcher : IRequestDispatcher
+    {
+        public readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public async Task<ResponseEnvelope> DispatchAsync(RequestEnvelope request, ClientIdentity client, CancellationToken token)
+        {
+            if (request.Operation == "blocked") { Entered.TrySetResult(); await Release.Task.WaitAsync(token); }
+            return new(request.ProtocolVersion, Guid.NewGuid(), DateTimeOffset.UtcNow, request.MessageId,
+                request.OperationId, ResponseStatus.Success, JsonSerializer.SerializeToElement(true), null);
+        }
     }
 
     private sealed class TelemetryProvider : IHomeHardwareProvider

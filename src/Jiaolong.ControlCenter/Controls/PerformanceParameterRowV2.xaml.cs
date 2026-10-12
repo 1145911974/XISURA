@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Diagnostics;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -86,6 +86,7 @@ public sealed partial class PerformanceParameterRowV2 : UserControl
 
     public void SetValue(double? value)
     {
+        if (configured && Value == value) return;
         StopValueAnimation();
         SetValueCore(value);
     }
@@ -272,12 +273,13 @@ public sealed partial class PerformanceParameterRowV2 : UserControl
 
     private void OnValueBoxTextChanged(object sender, TextChangedEventArgs args)
     {
-        if (synchronizing || ValueBox.FocusState == FocusState.Unfocused || !TryParseInput(ValueBox.Text, out double value))
+        if (synchronizing || ValueBox.FocusState == FocusState.Unfocused)
             return;
 
         inputCommitted = false;
         inputEdited = true;
         StopValueAnimation();
+        if (!TryParseInput(ValueBox.Text, out double value)) return;
         value = Math.Clamp(PerformanceDisplayValue.ToRaw(value, DisplayScale), Minimum, Maximum);
         synchronizing = true;
         Rail.SetValue(value);

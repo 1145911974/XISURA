@@ -5,6 +5,24 @@ namespace Jiaolong_ControlCenter.Services;
 
 public static class TrayIconAssetCatalog
 {
+    public static bool ReadbackConfirmed(HomeControlState? controls) => controls?.ModeEvidence is { ParsedMode: { } mode } evidence &&
+        (evidence.VerificationLevel == "EffectiveStateConfirmed" ||
+         controls.ExecutionState is { NativeModeApplyState: ApplyState.Confirmed } execution && execution.NativeMode == mode);
+
+    public static ControlModeId? DisplayMode(HomeControlState? controls, bool connected, DateTimeOffset now, ControlModeId? confirmedMode)
+    {
+        if (!connected || controls?.ModeEvidence is not { } evidence ||
+            now - evidence.CapturedAtUtc < TimeSpan.FromSeconds(-1) || now - evidence.CapturedAtUtc > TimeSpan.FromSeconds(3)) return null;
+        if (confirmedMode is not null && ReadbackConfirmed(controls) &&
+            controls.ExecutionState is { } execution && execution.LogicalMode == confirmedMode && execution.NativeMode == evidence.ParsedMode)
+            return confirmedMode;
+        return evidence.ParsedMode switch
+        {
+            PerformanceMode.Quiet => ControlModeId.Office, PerformanceMode.Balanced => ControlModeId.Gaming,
+            PerformanceMode.Turbo => ControlModeId.Turbo, _ => null
+        };
+    }
+
     public const string BaseAsset = "Assets\\AppIcon.ico";
     public const string FixedBrandAsset = "Assets\\Brand\\JiaolongWaveApp.ico";
 

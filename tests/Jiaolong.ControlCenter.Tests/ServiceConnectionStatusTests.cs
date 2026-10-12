@@ -38,9 +38,16 @@ public sealed class ServiceConnectionStatusTests
             typeof(HomeControlSession).GetField("status", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(session, status);
             Assert.IsTrue(session.IsServiceConnected, status.ToString());
         }
+        typeof(HomeControlSession).GetField("status", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(session, HomeSessionStatus.Connected);
+        var rejected = await session.ExecuteAsync(new UnsupportedLocalCommand(Guid.NewGuid()), deadline.Token);
+        Assert.AreEqual(Jiaolong.Contracts.Commands.CommandState.Rejected, rejected.State);
+        Assert.AreEqual(HomeSessionStatus.Connected, session.Status);
+        Assert.IsTrue(session.IsServiceConnected);
         await server.DisposeAsync();
         while (session.IsServiceConnected && !deadline.IsCancellationRequested)
             await Task.Delay(10, deadline.Token);
         Assert.IsFalse(session.IsServiceConnected);
     }
+
+    private sealed record UnsupportedLocalCommand(Guid OperationId) : Jiaolong.Contracts.Commands.HardwareCommand(OperationId);
 }

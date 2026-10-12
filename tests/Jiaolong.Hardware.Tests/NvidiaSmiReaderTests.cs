@@ -41,6 +41,20 @@ public sealed class NvidiaSmiReaderTests
     }
 
     [TestMethod]
+    public void Identity_query_selects_matching_adapter_and_preserves_raw_power()
+    {
+        var reasons = Enumerable.Repeat("Not Active", 10).ToArray();
+        var other = string.Join(", ", new[] { "NVIDIA GeForce RTX 3060", "GPU-other", "40", "0", "25", "P8" }.Concat(reasons).Append("115").Append("125"));
+        var target = string.Join(", ", new[] { "NVIDIA GeForce RTX 4060 Laptop GPU", "GPU-target", "53", "0", "590.4", "P0" }.Concat(reasons).Append("130").Append("140"));
+
+        Assert.IsTrue(NvidiaSmiParser.TryParse($"{other}\r\n{target}", out var reading, "NVIDIA GeForce RTX 4060 Laptop GPU"));
+        Assert.AreEqual("GPU-target", reading.AdapterUuid);
+        Assert.AreEqual(590.4, reading.RawPowerWatts);
+        Assert.AreEqual(140.0, reading.MaximumPowerLimitWatts);
+        Assert.IsFalse(NvidiaSmiParser.TryParse($"{target}\r\n{target}", out _, "NVIDIA GeForce RTX 4060 Laptop GPU"));
+    }
+
+    [TestMethod]
     public async Task Unsupported_extended_fields_fall_back_to_basic_telemetry()
     {
         var queries = new List<string>();

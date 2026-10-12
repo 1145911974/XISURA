@@ -60,7 +60,7 @@ public sealed class PerformanceViewModelTests
         {
             TemperatureLimitC = 82,
             SplWatts = 55,
-            SpptWatts = 80,
+            SpptWatts = 75,
             MaxFrequencyMhz = 4700,
             IsBoostEnabled = true,
             NegativeCurveOptimizer = -10,

@@ -11,7 +11,8 @@ namespace Jiaolong.Service.Ipc;
 public sealed class NamedPipeServiceHost : IAsyncDisposable
 {
     public const string DefaultPipeName = "Jiaolong.ControlCenter.v1";
-    private static readonly TimeSpan DefaultTelemetryInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan DefaultTelemetryInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MinimumTelemetryInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan MaximumTelemetryInterval = TimeSpan.FromSeconds(5);
 
     private readonly string pipeName;
@@ -125,6 +126,7 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
         using var writeGate = new SemaphoreSlim(1, 1);
         using var clientCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task? telemetryTask = null;
+        var requests = new List<Task>();
         var connectionId = Guid.NewGuid();
         try
         {
@@ -134,7 +136,7 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
                 throw new FrameCodecException(Jiaolong.Contracts.Errors.ErrorCode.UnsupportedProtocol);
 
             await WriteAsync(client, new HelloAckEnvelope(
-                new ProtocolVersion(1, 0), Guid.NewGuid(), DateTimeOffset.UtcNow, requestHello.MessageId, "1.0.0"), writeGate, clientCancellation.Token);
+                new ProtocolVersion(1, 1), Guid.NewGuid(), DateTimeOffset.UtcNow, requestHello.MessageId, "1.0.0"), writeGate, clientCancellation.Token);
             if (!keepClientConnected) return;
 
             while (!clientCancellation.IsCancellationRequested && client.IsConnected)
@@ -147,8 +149,32 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
                     continue;
                 }
 
-                var response = await dispatcher.DispatchAsync(request, identity, clientCancellation.Token);
-                await WriteAsync(client, response, writeGate, clientCancellation.Token);
+                requests.RemoveAll(task => task.IsCompleted);
+                if (requests.Count >= 32)
+                {
+                    await WriteAsync(client, new ResponseEnvelope(request.ProtocolVersion, Guid.NewGuid(), DateTimeOffset.UtcNow,
+                        request.MessageId, request.OperationId, ResponseStatus.Error, null,
+                        Jiaolong.Contracts.Errors.ServiceError.Create(Jiaolong.Contracts.Errors.ErrorCode.CommandInProgress, request.OperationId, true)),
+                        writeGate, clientCancellation.Token);
+                    continue;
+                }
+                // Admit newer intents while older hardware work remains serialized by the coordinator.
+                requests.Add(DispatchAndReplyAsync(request));
+            }
+
+            async Task DispatchAndReplyAsync(RequestEnvelope request)
+            {
+                try
+                {
+                    var response = await dispatcher.DispatchAsync(request, identity, clientCancellation.Token);
+                    await WriteAsync(client, response, writeGate, clientCancellation.Token);
+                }
+                catch (OperationCanceledException) when (clientCancellation.IsCancellationRequested) { }
+                catch (Exception error)
+                {
+                    logger?.LogWarning(error, "Control service request failed; closing client connection.");
+                    clientCancellation.Cancel();
+                }
             }
         }
         catch (OperationCanceledException) when (clientCancellation.IsCancellationRequested)
@@ -175,6 +201,7 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
         finally
         {
             clientCancellation.Cancel();
+            try { await Task.WhenAll(requests); } catch { }
             if (telemetryTask is not null)
             {
                 try { await telemetryTask; } catch { }
@@ -237,7 +264,7 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
             !value.TryGetDouble(out var seconds) ||
             !double.IsFinite(seconds)) return DefaultTelemetryInterval;
 
-        return TimeSpan.FromSeconds(Math.Clamp(seconds, DefaultTelemetryInterval.TotalSeconds, MaximumTelemetryInterval.TotalSeconds));
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, MinimumTelemetryInterval.TotalSeconds, MaximumTelemetryInterval.TotalSeconds));
     }
 
     private async Task WriteAsync(

@@ -22,6 +22,11 @@ public sealed partial class TrayQuickConsoleWindow
     private Action<ControlModeId>? managePresetsRequested;
     private ControlModeId? confirmedMode;
     private ControlModeId? previewMode;
+    private ControlModeId? observedMode;
+    private HomeControlState? observedControls;
+    private DateTimeOffset observedModeAt;
+    private bool observedModeUnverified;
+    private ControlModeId? displayedMode;
     private PresetKey? confirmedPreset;
     private AdaptiveStrategyId? confirmedStrategy;
     private ControlModeId? browsingMode;
@@ -59,9 +64,27 @@ public sealed partial class TrayQuickConsoleWindow
     {
         if (previewMode == mode) return;
         previewMode = mode;
-        SelectedModeText.Text = (previewMode ?? confirmedMode) is { } target ? ModeLabel(target) : "模式未确认";
+        RefreshModeReadbackText();
         RefreshVisualState(isVisible);
         if (SelectorLayer.Visibility == Visibility.Visible && selectorView != "fan") RenderSelector();
+    }
+
+    private void RefreshModeReadbackText()
+    {
+        var age = DateTimeOffset.UtcNow - observedModeAt;
+        bool fresh = serviceConnected && observedMode is not null && age >= TimeSpan.FromSeconds(-1) && age <= TimeSpan.FromSeconds(3);
+        var readback = fresh ? observedMode : null;
+        var current = !serviceConnected ? null : previewMode ?? readback;
+        SelectedModeText.Text = current is { } mode ? ModeLabel(mode) : "模式未读取";
+        ModeReadbackHeaderText.Text = !serviceConnected ? "服务未连接" : previewMode is not null ? "请求模式 · 待完成" :
+            observedModeUnverified && fresh ? "接口读回 · 实际效果待验证" : "当前性能模式";
+        if (observedModeUnverified && fresh)
+            ToolTipService.SetToolTip(ModeSelectorButton, "此档位来自接口读回；实际功耗与性能尚未独立确认。展开选择模式与预设。");
+        if (displayedMode != readback)
+        {
+            displayedMode = readback;
+            RefreshVisualState(isVisible);
+        }
     }
 
     public void SetConfirmedSelection(ControlModeId? mode, PresetKey? preset, bool animate = true)
@@ -74,8 +97,8 @@ public sealed partial class TrayQuickConsoleWindow
         if (!preservePreview) previewMode = null;
         confirmedMode = mode;
         confirmedPreset = preset;
-        SelectedModeText.Text = (previewMode ?? mode) is { } current ? ModeLabel(current) : "模式未确认";
         ToolTipService.SetToolTip(ModeSelectorButton, preset is { } p ? $"{ModeLabel(p.Mode)} · {presetInfo?.Invoke(p).Name ?? $"预设 {p.Slot}"}" : "展开六个模式及各三个预设");
+        ApplyModeReadback(observedControls);
         RefreshVisualState(changed && isVisible && animate);
         if (appliedPendingPreset && !preservePreview) CloseSelector();
         if (SelectorLayer.Visibility == Visibility.Visible && selectorView != "fan") RenderSelector();
@@ -189,7 +212,7 @@ public sealed partial class TrayQuickConsoleWindow
         ConsoleWaveLogo.SetHighContrast(highContrast);
         var neutral = PaletteColor("TrayControlBrush");
         var text = PaletteColor("TrayTextBrush");
-        var displayMode = previewMode ?? confirmedMode;
+        var displayMode = displayedMode;
         var accent = displayMode switch
         {
             ControlModeId.Office => Color.FromArgb(255, 0x16, 0x77, 0xFF),

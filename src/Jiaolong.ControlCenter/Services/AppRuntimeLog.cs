@@ -5,9 +5,18 @@ namespace Jiaolong_ControlCenter.Services;
 internal static class AppRuntimeLog
 {
     private static readonly object Gate = new();
+    private static bool applicationLoggingEnabled;
+
+    public static void EnableForApplication() => Volatile.Write(ref applicationLoggingEnabled, true);
 
     public static void Write(string message)
     {
+        // Sessions also run in test and support-tool hosts; only the WinUI app owns client.log.
+        if (!Volatile.Read(ref applicationLoggingEnabled))
+        {
+            Debug.WriteLine(message);
+            return;
+        }
         try
         {
             lock (Gate)

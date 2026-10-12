@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using Microsoft.UI.Composition;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
@@ -263,7 +263,8 @@ public sealed partial class HomeModeBar : UserControl
     {
         if (IsCommandPending)
         {
-            if (!option.StartsWith("Profile", StringComparison.Ordinal)) TurboTierRequested?.Invoke(option);
+            if (option.StartsWith("Profile", StringComparison.Ordinal)) CustomProfileRequested?.Invoke(option);
+            else TurboTierRequested?.Invoke(option);
             return;
         }
         SetChildStatuses(ChildGroup(option), option);

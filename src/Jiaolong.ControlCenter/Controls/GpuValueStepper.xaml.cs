@@ -19,6 +19,7 @@ public sealed partial class GpuValueStepper : UserControl
     public double Minimum { get => minimum; set => minimum = value; }
     public double Maximum { get => maximum; set => maximum = value; }
     public double SmallChange { get => smallChange; set => smallChange = value; }
+    public bool IsInputPending => InputBox.FocusState != FocusState.Unfocused && InputBox.Text != value.ToString("0.#");
     public bool AllowNegative { get; set; }
     public bool RejectOutOfRangeInput { get; set; }
     public double Value
@@ -26,7 +27,9 @@ public sealed partial class GpuValueStepper : UserControl
         get => value;
         set
         {
-            this.value = Math.Clamp(value, Minimum, Maximum);
+            double next = Math.Clamp(value, Minimum, Maximum);
+            if (this.value == next && InputBox.Text == next.ToString("0.#")) return;
+            this.value = next;
             InputBox.Text = this.value.ToString("0.#");
             ValueChanged?.Invoke(this, this.value);
         }

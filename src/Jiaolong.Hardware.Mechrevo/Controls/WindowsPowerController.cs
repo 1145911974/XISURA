@@ -46,8 +46,50 @@ public interface IWindowsPowerSettingsTransport
     Task RestoreAsync(CpuTuningField field, WindowsPowerSettingsSnapshot snapshot, CancellationToken cancellationToken);
 }
 
+internal interface IWindowsPowerSettingsApi
+{
+    Guid ReadActiveScheme();
+    uint ReadIndex(Guid scheme, Guid setting, bool ac);
+    void WriteIndex(Guid scheme, Guid setting, uint value, bool ac);
+    void SetActiveScheme(Guid scheme);
+    uint ReadFriendlyName(Guid scheme, byte[]? buffer, ref uint size);
+}
+
 public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTransport
 {
+    private readonly IWindowsPowerSettingsApi? nativeApi;
+    private readonly Func<bool>? hardwareAccessAllowed;
+    private readonly Func<bool>? hardwareReadAllowed;
+
+    public WindowsPowerSettingsTransport(Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null)
+    {
+        this.hardwareAccessAllowed = hardwareAccessAllowed;
+        this.hardwareReadAllowed = hardwareReadAllowed;
+    }
+
+    internal WindowsPowerSettingsTransport(IWindowsPowerSettingsApi nativeApi, Func<bool>? hardwareAccessAllowed = null,
+        Func<bool>? hardwareReadAllowed = null) : this(hardwareAccessAllowed, hardwareReadAllowed) => this.nativeApi = nativeApi;
+
+    private void EnsureHardwareAccess(bool readOnly = false)
+    {
+        var allowed = readOnly ? hardwareReadAllowed ?? hardwareAccessAllowed : hardwareAccessAllowed;
+        if (allowed?.Invoke() == false) throw new HardwareLifecycleInterruptedException();
+    }
+
+    private T AccessHardware<T>(Func<T> call, bool readOnly = false)
+    {
+        EnsureHardwareAccess(readOnly);
+        try { return call(); }
+        finally { EnsureHardwareAccess(readOnly); }
+    }
+
+    private void AccessHardware(Action call)
+    {
+        EnsureHardwareAccess();
+        try { call(); }
+        finally { EnsureHardwareAccess(); }
+    }
+
     private static readonly Guid ProcessorPowerManagementSubgroup =
         Guid.Parse("54533251-82be-4824-96c1-47b60b740d00");
     private static readonly Guid ProcessorMaximumFrequency =
@@ -67,6 +109,7 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
     public Task SetSchemeAsync(Guid schemeId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         _ = ReadScheme(schemeId);
         SetActiveScheme(schemeId);
         return Task.CompletedTask;
@@ -75,6 +118,7 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
     public Task SetMaxFrequencyAsync(int acMegahertz, int dcMegahertz, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         var scheme = ReadActiveScheme();
         WriteFrequency(scheme, checked((uint)acMegahertz), checked((uint)dcMegahertz));
         SetActiveScheme(scheme);
@@ -84,6 +128,7 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
     public Task SetBoostAsync(bool enabled, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         var scheme = ReadActiveScheme();
         var current = ReadScheme(scheme);
         WriteBoost(
@@ -97,6 +142,7 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
     public Task SetCoreParkingAsync(int acPercent, int dcPercent, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         if (acPercent is < 0 or > 100)
             throw new ArgumentOutOfRangeException(nameof(acPercent));
         if (dcPercent is < 0 or > 100)
@@ -113,6 +159,7 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         switch (field)
         {
             case CpuTuningField.WindowsPowerSchemeId:
@@ -143,7 +190,7 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
         return Task.CompletedTask;
     }
 
-    private static WindowsPowerSettingsSnapshot ReadScheme(Guid scheme)
+    private WindowsPowerSettingsSnapshot ReadScheme(Guid scheme)
     {
         var acFrequency = ReadIndex(scheme, ProcessorMaximumFrequency, ac: true);
         var dcFrequency = ReadIndex(scheme, ProcessorMaximumFrequency, ac: false);
@@ -164,7 +211,10 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
         };
     }
 
-    private static uint ReadIndex(Guid scheme, Guid setting, bool ac)
+    private uint ReadIndex(Guid scheme, Guid setting, bool ac) =>
+        AccessHardware(() => nativeApi?.ReadIndex(scheme, setting, ac) ?? ReadNativeIndex(scheme, setting, ac), readOnly: true);
+
+    private static uint ReadNativeIndex(Guid scheme, Guid setting, bool ac)
     {
         var subgroup = ProcessorPowerManagementSubgroup;
         var settingCopy = setting;
@@ -175,31 +225,37 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
         return value;
     }
 
-    private static uint? TryReadIndex(Guid scheme, Guid setting, bool ac)
+    private uint? TryReadIndex(Guid scheme, Guid setting, bool ac)
     {
         try { return ReadIndex(scheme, setting, ac); }
         catch (Win32Exception) { return null; }
     }
 
-    private static void WriteFrequency(Guid scheme, uint ac, uint dc)
+    private void WriteFrequency(Guid scheme, uint ac, uint dc)
     {
         WriteIndex(scheme, ProcessorMaximumFrequency, ac, acMode: true);
         WriteIndex(scheme, ProcessorMaximumFrequency, dc, acMode: false);
     }
 
-    private static void WriteBoost(Guid scheme, int ac, int dc)
+    private void WriteBoost(Guid scheme, int ac, int dc)
     {
         WriteIndex(scheme, ProcessorBoostMode, checked((uint)ac), acMode: true);
         WriteIndex(scheme, ProcessorBoostMode, checked((uint)dc), acMode: false);
     }
 
-    private static void WriteCoreParking(Guid scheme, int ac, int dc)
+    private void WriteCoreParking(Guid scheme, int ac, int dc)
     {
         WriteIndex(scheme, ProcessorCoreParkingMinCores, checked((uint)ac), acMode: true);
         WriteIndex(scheme, ProcessorCoreParkingMinCores, checked((uint)dc), acMode: false);
     }
 
-    private static void WriteIndex(Guid scheme, Guid setting, uint value, bool acMode)
+    private void WriteIndex(Guid scheme, Guid setting, uint value, bool acMode) => AccessHardware(() =>
+    {
+        if (nativeApi is not null) nativeApi.WriteIndex(scheme, setting, value, acMode);
+        else WriteNativeIndex(scheme, setting, value, acMode);
+    });
+
+    private static void WriteNativeIndex(Guid scheme, Guid setting, uint value, bool acMode)
     {
         var subgroup = ProcessorPowerManagementSubgroup;
         var settingCopy = setting;
@@ -209,7 +265,9 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
         ThrowIfFailed(result, acMode ? "PowerWriteACValueIndex" : "PowerWriteDCValueIndex");
     }
 
-    private static Guid ReadActiveScheme()
+    private Guid ReadActiveScheme() => AccessHardware(() => nativeApi?.ReadActiveScheme() ?? ReadNativeActiveScheme(), readOnly: true);
+
+    private static Guid ReadNativeActiveScheme()
     {
         var result = PowerGetActiveScheme(IntPtr.Zero, out var pointer);
         ThrowIfFailed(result, "PowerGetActiveScheme");
@@ -223,24 +281,41 @@ public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTranspo
         }
     }
 
-    private static void SetActiveScheme(Guid scheme)
+    private void SetActiveScheme(Guid scheme) => AccessHardware(() =>
+    {
+        if (nativeApi is not null) nativeApi.SetActiveScheme(scheme);
+        else SetNativeActiveScheme(scheme);
+    });
+
+    private static void SetNativeActiveScheme(Guid scheme)
     {
         var schemeCopy = scheme;
         ThrowIfFailed(PowerSetActiveScheme(IntPtr.Zero, ref schemeCopy), "PowerSetActiveScheme");
     }
 
-    private static string? ReadFriendlyName(Guid scheme)
+    private string? ReadFriendlyName(Guid scheme)
     {
         const uint ErrorMoreData = 234;
         uint size = 0;
-        uint result = PowerReadFriendlyName(IntPtr.Zero, ref scheme, IntPtr.Zero, IntPtr.Zero, null, ref size);
+        uint result = ReadFriendlyNameBuffer(scheme, null, ref size);
         if (result != ErrorMoreData && result != 0)
             ThrowIfFailed(result, "PowerReadFriendlyName(size)");
         if (size == 0) return null;
 
         byte[] buffer = new byte[size];
-        ThrowIfFailed(PowerReadFriendlyName(IntPtr.Zero, ref scheme, IntPtr.Zero, IntPtr.Zero, buffer, ref size), "PowerReadFriendlyName");
+        ThrowIfFailed(ReadFriendlyNameBuffer(scheme, buffer, ref size), "PowerReadFriendlyName");
         return Encoding.Unicode.GetString(buffer).TrimEnd('\0');
+    }
+
+    private uint ReadFriendlyNameBuffer(Guid scheme, byte[]? buffer, ref uint size)
+    {
+        EnsureHardwareAccess(readOnly: true);
+        try
+        {
+            return nativeApi is not null ? nativeApi.ReadFriendlyName(scheme, buffer, ref size)
+                : PowerReadFriendlyName(IntPtr.Zero, ref scheme, IntPtr.Zero, IntPtr.Zero, buffer, ref size);
+        }
+        finally { EnsureHardwareAccess(readOnly: true); }
     }
 
     private static void ThrowIfFailed(uint result, string operation)

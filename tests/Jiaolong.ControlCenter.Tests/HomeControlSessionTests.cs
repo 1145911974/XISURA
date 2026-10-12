@@ -15,6 +15,24 @@ public sealed class HomeControlSessionTests
     [TestMethod]
     public async Task Mode_peer_bypasses_blocked_monitor_poll_and_keeps_newer_readback()
     {
+        var errorText = typeof(HomeControlSession).GetMethod("ErrorText",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic, [typeof(ServiceError)])!;
+        var rejection = ServiceError.Create(ErrorCode.ValidationFailed, Guid.NewGuid(), false);
+        rejection.Details["stage"] = "Preflight";
+        rejection.Details["cause"] = "fieldNotWritable:temperatureLimitC";
+        string message = (string)errorText.Invoke(null, [rejection])!;
+        StringAssert.Contains(message, "CPU 温度上限");
+        StringAssert.Contains(message, "均未应用");
+        StringAssert.Contains(message, "随模式应用");
+        var pendingGpu = ServiceError.Create(ErrorCode.RollbackFailed, Guid.NewGuid(), false);
+        pendingGpu.Details["reason"] = "gpuPersistedRecoveryRequired";
+        string pendingMessage = (string)errorText.Invoke(null, [pendingGpu])!;
+        StringAssert.Contains(pendingMessage, "GPU");
+        StringAssert.Contains(pendingMessage, "未写入");
+        StringAssert.Contains(pendingMessage, "恢复验证");
+        Assert.IsFalse(pendingMessage.Contains("重启", StringComparison.Ordinal));
+        foreach (bool unified in new[] { false, true })
+        {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         string pipeName = "Jiaolong-priority-mode-" + Guid.NewGuid().ToString("N");
         await using var normal = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 2, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
@@ -44,15 +62,18 @@ public sealed class HomeControlSessionTests
                     var message = JsonSerializer.Deserialize(bytes, ProtocolJsonContext.Default.MessageEnvelope)!;
                     if (message is HelloEnvelope hello)
                     {
-                        await WriteAsync(stream, new HelloAckEnvelope(new(1, 0), Guid.NewGuid(), DateTimeOffset.UtcNow, hello.MessageId, "test"));
+                        await WriteAsync(stream, new HelloAckEnvelope(new(1, 1), Guid.NewGuid(), DateTimeOffset.UtcNow, hello.MessageId, "test"));
                         continue;
                     }
                     if (message is not RequestEnvelope request) continue;
+                    Assert.AreEqual((ushort)1, request.ProtocolVersion.Minor, "Requests must use the negotiated protocol, including unified Apply.");
                     JsonElement payload;
                     if (request.Operation == "executeCommand" && modeConnection)
                     {
                         payload = JsonSerializer.SerializeToElement(new CommandResult(request.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
-                            { VerifiedPerformanceMode = PerformanceMode.Turbo }, ProtocolJsonContext.Default.CommandResult);
+                            { VerifiedPerformanceMode = PerformanceMode.Turbo,
+                              ExecutionState = new(1, 1, 0, ControlModeId.Turbo, PerformanceMode.Turbo, [], [])
+                                { NativeModeApplyState = ApplyState.Confirmed } }, ProtocolJsonContext.Default.CommandResult);
                     }
                     else if (request.Operation == "getDeviceState")
                     {
@@ -76,8 +97,12 @@ public sealed class HomeControlSessionTests
             await session.StartAsync(deadline.Token);
             session.SupersedeAutomaticRestore();
             await pollEntered.Task.WaitAsync(deadline.Token);
-            var result = await session.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Turbo), deadline.Token).WaitAsync(TimeSpan.FromSeconds(1));
-            Assert.AreEqual(CommandState.Applied, result.State);
+            var modePublished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            session.StateChanged += snapshot => { if (snapshot.Controls.PerformanceMode == PerformanceMode.Turbo) modePublished.TrySetResult(); };
+            var applied = unified
+                ? session.ApplyControlRequestAsync(ControlModeId.Turbo, PerformanceMode.Turbo, [], ControlOrigin.ManualMode, deadline.Token)
+                : session.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Turbo), deadline.Token);
+            await modePublished.Task.WaitAsync(TimeSpan.FromSeconds(1));
             Assert.AreEqual(PerformanceMode.Turbo, session.State!.Controls.PerformanceMode);
             Assert.IsFalse(releasePoll.Task.IsCompleted);
             using var preparation = new CancellationTokenSource();
@@ -88,14 +113,17 @@ public sealed class HomeControlSessionTests
             Assert.AreEqual(HomeSessionStatus.Connected, session.Status);
             releasePoll.TrySetResult();
             await staleReplySent.Task.WaitAsync(deadline.Token);
+            Assert.AreEqual(CommandState.Applied, (await applied.WaitAsync(deadline.Token)).State);
             await Task.Delay(100, deadline.Token);
             Assert.AreEqual(PerformanceMode.Turbo, session.State.Controls.PerformanceMode);
+            if (!unified) Assert.AreEqual(ApplyState.Confirmed, session.State.Controls.ExecutionState?.NativeModeApplyState);
         }
         finally
         {
             releasePoll.TrySetResult();
             deadline.Cancel();
             await Task.WhenAll(normalServer, modeServer);
+        }
         }
     }
 
@@ -153,7 +181,8 @@ public sealed class HomeControlSessionTests
         var restorePaths = new RecordingPathProvider();
         var restore = new AppliedConfigurationRestore(restorePaths);
         var savedMode = new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced);
-        await restore.RecordAppliedAsync(savedMode, new(savedMode.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false), CancellationToken.None);
+        await restore.RecordAppliedAsync(savedMode, new(savedMode.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
+            { VerifiedPerformanceMode = savedMode.Mode }, CancellationToken.None);
         try
         {
             await using var session = new HomeControlSession(new ControlCenterClient(pipeName), new RecordingRadioController(), restore);
@@ -187,7 +216,7 @@ public sealed class HomeControlSessionTests
     [TestMethod]
     public void Control_state_refresh_is_fast_enough_for_hardware_hotkeys()
     {
-        Assert.AreEqual(TimeSpan.FromMilliseconds(100), HomeControlSession.ControlStateRefreshInterval);
+        Assert.AreEqual(TimeSpan.FromSeconds(1), HomeControlSession.ControlStateRefreshInterval);
     }
 
     [TestMethod]
@@ -213,6 +242,13 @@ public sealed class HomeControlSessionTests
         Assert.IsFalse(HomeStateEquivalence.HaveSameControls(baseline, sample with { Controls = sample.Controls with { PerformanceMode = PerformanceMode.Quiet } }));
         Assert.IsFalse(HomeStateEquivalence.HaveSameControls(baseline, sample with { Telemetry = sample.Telemetry! with { AcPowerConnected = false } }));
         Assert.IsFalse(HomeStateEquivalence.HaveSameControls(baseline, sample with { Telemetry = sample.Telemetry! with { HardwareState = "Unavailable" } }));
+        var auto = new AdaptiveAutomationStatus(true, true, null, "observing", null, null, null, null) { Revision = 2 };
+        var automatic = sample with { Controls = sample.Controls with { AdaptiveAutomation = auto } };
+        Assert.IsFalse(HomeStateEquivalence.HaveSameControls(sample, automatic));
+        Assert.IsTrue(HomeStateEquivalence.HaveSameControls(automatic, automatic with
+            { Controls = automatic.Controls with { AdaptiveAutomation = auto with { LastEvaluationUtc = DateTimeOffset.UtcNow } } }));
+        Assert.IsFalse(HomeStateEquivalence.HaveSameControls(automatic, automatic with
+            { Controls = automatic.Controls with { AdaptiveAutomation = auto with { Enabled = false, Revision = 3 } } }));
     }
 
     [TestMethod]

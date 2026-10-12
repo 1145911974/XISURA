@@ -16,10 +16,17 @@ public sealed class ServiceWorker(
     {
         logger.LogInformation("Jiaolong control service started in console or SCM mode.");
         await TryWriteEventAsync(DiagnosticEventNames.ServiceStarted, stoppingToken);
+        SystemPowerNotifications? power = null;
         try
         {
             // Accept the IPC handshake before slow firmware/driver discovery starts.
             var pipeTask = pipeHost.RunAsync(stoppingToken);
+            try
+            {
+                power = new SystemPowerNotifications((resume, version, token) => homeRuntime.HandleLifecycleAsync(resume, token, version),
+                    logger, stoppingToken, prepare: homeRuntime.PreparePowerTransition);
+            }
+            catch (Exception error) { logger.LogWarning(error, "Service suspend/resume notification registration failed."); }
             try
             {
                 var state = await Task.Run(() => homeRuntime.InitializeAsync(stoppingToken), stoppingToken);
@@ -40,8 +47,12 @@ public sealed class ServiceWorker(
         finally
         {
             await TryWriteEventAsync(DiagnosticEventNames.ServiceStopping, CancellationToken.None);
+            if (power is not null) await power.DisposeAsync();
+            using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await homeRuntime.HandleLifecycleAsync(false, releaseDeadline.Token); }
+            catch (Exception error) { TryLogShutdown(() => logger.LogWarning(error, "Service fan release failed; pending state retained."), $"Service fan release failed; pending state retained: {error}"); }
             await pipeHost.DisposeAsync();
-            logger.LogInformation("Jiaolong control service stopping.");
+            TryLogShutdown(() => logger.LogInformation("Jiaolong control service stopping."), "Jiaolong control service stopping.");
         }
     }
 
@@ -53,12 +64,25 @@ public sealed class ServiceWorker(
             {
                 TimestampUtc = DateTimeOffset.UtcNow,
                 EventName = eventName,
-                ServiceVersion = typeof(ServiceWorker).Assembly.GetName().Version?.ToString()
+                ServiceVersion = typeof(ServiceWorker).Assembly.GetName().Version?.ToString(),
+                CorrelationId = homeRuntime.SessionId,
+                Fields = new Dictionary<string, string> { ["sessionId"] = homeRuntime.SessionId.ToString("N") }
             }, cancellationToken);
         }
         catch (Exception exception)
         {
-            logger.LogWarning(exception, "Could not write diagnostic event {eventName}.", eventName);
+            TryLogShutdown(() => logger.LogWarning(exception, "Could not write diagnostic event {eventName}.", eventName),
+                $"Could not write diagnostic event {eventName}: {exception}");
+        }
+    }
+
+    private static void TryLogShutdown(Action log, string fallback)
+    {
+        try { log(); }
+        catch (Exception error)
+        {
+            try { System.Diagnostics.Trace.WriteLine($"{fallback}; logger failed: {error}"); }
+            catch { }
         }
     }
 }

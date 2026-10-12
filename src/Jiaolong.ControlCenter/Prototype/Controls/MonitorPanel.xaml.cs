@@ -1,4 +1,4 @@
-﻿using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using System.Diagnostics;
@@ -269,7 +269,7 @@ public sealed partial class MonitorPanel : UserControl
     private string TemperatureWallText()
     {
         var displayedWall = RailMinimumTemperatureC + currentWallProgress * (MaximumTemperatureC - RailMinimumTemperatureC);
-        return $"最高 {displayedWall:0}°C";
+        return $"参考 {displayedWall:0}°C";
     }
 
     private bool IsAtTemperatureWall(bool available) => available &&

@@ -13,6 +13,7 @@ public sealed partial class PrototypeWindow
     private DateTimeOffset? confirmedAutomaticApply;
     private string? confirmedCpuSignature;
     private PerformanceMode? confirmedFirmwareMode;
+    private (string Style, ControlModeId? Mode)? displayedBranding;
     private static string? CpuSignature(CpuTuningState? cpu) => cpu is null ? null : JsonSerializer.Serialize(cpu with { WindowsPowerSchemeName = null });
     private string? trayIconPath;
     private string? taskbarIconPath;
@@ -37,9 +38,8 @@ public sealed partial class PrototypeWindow
     private void ApplyLogoStyle(string style)
     {
         userPreferences = preferences.Load();
-        Hero.SetBrandingState(userPreferences.LogoStyle, confirmedControlMode, animate: false);
+        RefreshReadbackBranding(animate: false);
         trayQuickConsole?.ApplyLogoStyle(userPreferences.LogoStyle);
-        PublishSystemIcons();
     }
 
     private void PublishConfirmedMode(ControlModeId? mode, PresetKey? preset, bool animate)
@@ -49,9 +49,8 @@ public sealed partial class PrototypeWindow
         confirmedControlMode = mode;
         confirmedPerformancePreset = preset;
         PerformanceWorkspaceV2Preview.SetConfirmedActivePreset(preset);
-        Hero.SetBrandingState(userPreferences.LogoStyle, mode, animate);
         trayQuickConsole?.SetConfirmedSelection(mode, preset, animate);
-        PublishSystemIcons();
+        RefreshReadbackBranding(animate);
         if (targetChanged && mode is { } targetMode && turboBranch?.ActiveTier is null)
         {
             var target = preset ?? RememberedPerformancePreset(targetMode);
@@ -66,7 +65,10 @@ public sealed partial class PrototypeWindow
 
     private void PublishSystemIcons()
     {
-        string path = TrayIconAssetCatalog.ResolveAbsolute(AppContext.BaseDirectory, userPreferences.LogoStyle, confirmedControlMode);
+        var mode = TrayIconAssetCatalog.DisplayMode(homeSession.State?.Controls, homeSession.Status == HomeSessionStatus.Connected,
+            DateTimeOffset.UtcNow, confirmedControlMode);
+        string path = TrayIconAssetCatalog.ResolveAbsolute(AppContext.BaseDirectory, userPreferences.LogoStyle, mode);
+        if (trayIconPath == path && taskbarIconPath == path) return;
         if (!File.Exists(path))
         {
             AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Branding icon missing: {path}\n");
@@ -87,9 +89,44 @@ public sealed partial class PrototypeWindow
         }
     }
 
+    private void RefreshReadbackBranding(bool animate = false)
+    {
+        var controls = homeSession.State?.Controls;
+        bool connected = homeSession.Status == HomeSessionStatus.Connected;
+        var mode = TrayIconAssetCatalog.DisplayMode(controls, connected, DateTimeOffset.UtcNow, confirmedControlMode);
+        HomeModeVerificationText.Text = !connected ? "服务未连接" : mode is null ? "模式未读取" :
+            TrayIconAssetCatalog.ReadbackConfirmed(controls) ? "当前模式已确认" : "接口读回 · 实际效果待验证";
+        if (mode is not null && controls?.ExecutionState is { } execution &&
+            execution.NativeMode == controls.ModeEvidence?.ParsedMode &&
+            execution.Pages.Any(page => page.Page == ControlPageId.Gpu &&
+                page.SkippedFields.Contains("coreFrequencyLimitMhz", StringComparer.OrdinalIgnoreCase)))
+            HomeModeVerificationText.Text = controls.GpuClockLimit is { HasSubmission: true, SubmittedMhz: int submittedMhz }
+                ? $"接口读回 · GPU 上限未应用（此前提交 {submittedMhz} MHz，当前限制未读回）"
+                : "接口读回 · GPU 上限未应用（当前限制未读回）";
+        var target = (userPreferences.LogoStyle, mode);
+        if (mode is { } readback && !isModeCommandPending && !customActivationPending && queuedModeRequest is null)
+        {
+            var visualMode = PrototypeModeCommandCoordinator.Map(AdaptiveTargetMap.PerformanceModeFor(PresetKey.Create(readback, 2)));
+            var profile = readback is ControlModeId.Custom1 or ControlModeId.Custom2 or ControlModeId.Custom3
+                ? $"Profile{(int)readback - (int)ControlModeId.Custom1 + 1}" : customProfile;
+            if (activeScene?.Mode != visualMode || visualMode == PrototypePerformanceMode.Custom && activeScene?.CustomProfile != profile)
+                RequestModeVisuals(visualMode, animate, profile);
+        }
+        if (displayedBranding != target)
+        {
+            displayedBranding = target;
+            Hero.SetBrandingState(target.LogoStyle, mode, animate);
+            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(Hero, "图标对应当前接口读回；实际功耗与性能须独立验证。");
+            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(HomeModeBar, "当前选中项对应接口读回；实际功耗与性能须独立验证。");
+        }
+        PublishSystemIcons();
+    }
+
     private void ReconcileConfirmedBranding(HomeStateSnapshot snapshot, bool animate)
     {
-        PublishSystemIcons();
+        RefreshReadbackBranding(animate);
+        if (snapshot.Controls.ExecutionState?.NativeModeApplyState != Jiaolong.Contracts.Models.ApplyState.Confirmed &&
+            snapshot.Controls.ModeEvidence?.VerificationLevel != "EffectiveStateConfirmed") return;
         if (snapshot.Controls.PerformanceMode is not { } hardwareMode || customActivationPending || isModeCommandPending ||
             queuedModeRequest is not null || modeReconciliation.Current is not null) return;
         var automation = snapshot.Controls.AdaptiveAutomation;
@@ -102,6 +139,14 @@ public sealed partial class PrototypeWindow
                 ConfirmPerformancePreset(target, animate);
                 return;
             }
+        }
+        if (snapshot.Controls.ExecutionState is { NativeModeApplyState: Jiaolong.Contracts.Models.ApplyState.Confirmed } execution)
+        {
+            var cpu = execution.Pages.FirstOrDefault(page => page.Page == ControlPageId.Performance);
+            var preset = cpu?.State == Jiaolong.Contracts.Models.ApplyState.Confirmed ? cpu.Key : null;
+            if (confirmedControlMode != execution.LogicalMode || confirmedPerformancePreset != preset)
+                PublishConfirmedMode(execution.LogicalMode, preset, animate);
+            return;
         }
         if (HasConfirmedPerformanceIdentity(snapshot)) return;
         ControlModeId? observed = hardwareMode switch
@@ -135,18 +180,7 @@ public sealed partial class PrototypeWindow
         PublishConfirmedMode(key.Mode, presetConfirmed ? key : null, animate);
         if (!presetConfirmed) PerformanceWorkspaceV2Preview.SetSubmittedPreset(key);
         RequestModeVisuals(state.Mode, animate);
-        try
-        {
-            userPreferences = preferences.Update(current => current with
-            {
-                PerformancePresetSlots = new Dictionary<string, int>(current.PerformancePresetSlots ?? []) { [key.Mode.ToString()] = key.Slot }
-            });
-        }
-        catch (Exception error)
-        {
-            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Remember performance slot: {error}\n");
-            trayQuickConsole?.ShowStatus("预设已应用；槽位记忆保存失败");
-        }
+
     }
 
     private bool HasConfirmedPerformanceIdentity(HomeStateSnapshot snapshot) => confirmedPerformancePreset is not null &&
@@ -164,7 +198,6 @@ public sealed partial class PrototypeWindow
     {
         savedPerformanceDrafts.Remove(key);
         if (confirmedPerformancePreset == key) PublishConfirmedMode(confirmedControlMode, null, animate: false);
-        PageWorkspace.SetAutomaticPresetReader(PerformanceWorkspace.ReadAutomaticServicePresetsAsync);
         _ = RefreshTrayPresetCatalogAsync();
     }
 
@@ -173,8 +206,26 @@ public sealed partial class PrototypeWindow
 
     private static string? PresetUnavailableReason(PerformanceDraft draft, HomeStateSnapshot? snapshot)
     {
-        bool Available(string key) => snapshot?.Capabilities.Items.Any(item =>
-            item.Key == key && item.State == CapabilityState.Available) == true;
+        bool Available(string key) => snapshot?.Capabilities.IsAvailable(key) == true;
+        if (draft.SettingRequests is { } settings)
+        {
+            if (snapshot?.Controls.CpuTuning is null || !Available("cpuTuning")) return "CPU 调校能力不可用";
+            long epoch = snapshot.Controls.ExecutionState?.HardwareEpoch ?? snapshot.Capabilities.Fields.FirstOrDefault()?.HardwareEpoch ?? 0;
+            foreach (var (field, setting) in settings)
+            {
+                if (setting.Intent != SettingIntent.Set || PresetValidation.IsOptionalField(field)) continue;
+                var capability = snapshot.Capabilities.Fields.FirstOrDefault(item => item.Key.Equals(field, StringComparison.OrdinalIgnoreCase));
+                if (!PresetValidation.IsVerifiedWritable(capability, epoch)) return "预设所需的设置尚无可靠写入验证";
+                if (setting.Value?.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                    (!setting.Value.Value.TryGetDouble(out double number) || !PresetValidation.WithinRange(number, capability!)))
+                    return "预设数值超出当前设备范围";
+                if (field is "temperatureLimitC" or "splWatts" or "spptWatts" &&
+                    (capability!.NativeModeSideEffect != "PreservesSelectedMode" || snapshot.Capabilities.IsOnAcPower != true ||
+                     capability.Minimum is null || capability.Maximum is null)) return "CPU 限值尚无可靠的模式保持验证";
+            }
+            // Optional fields are reported by the execution result; they do not disable the whole preset.
+            return null;
+        }
         var plan = PerformanceCommandFactory.CreatePresetCommands(draft, snapshot?.Controls.CpuTuning,
             Available("cpuTuning"), Available("cpuTuning:smu"), Available("cpuTuning:pbo"), Available("cpuTuning:curveOptimizer"));
         return plan.Error ?? (plan.Skipped.Count > 0 ? $"未提供完整读回：{string.Join("、", plan.Skipped)}" : null);
@@ -200,7 +251,7 @@ public sealed partial class PrototypeWindow
         int revision = ++presetCatalogRevision;
         var catalog = new Dictionary<PresetKey, (string Name, bool Available, string? Reason)>();
         var drafts = new Dictionary<PresetKey, PerformanceDraft>();
-        var store = new ControlPresetStore();
+        var store = new ControlPresetStore(capabilities: () => homeSession.State?.Capabilities);
         var names = preferences.Load().PresetNames ?? [];
         foreach (var mode in Enum.GetValues<ControlModeId>())
         for (int slot = 1; slot <= 3; slot++)

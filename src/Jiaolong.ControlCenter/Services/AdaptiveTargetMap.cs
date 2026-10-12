@@ -19,10 +19,11 @@ public sealed record AdaptiveTargetMap(
         PresetKey.Create(ControlModeId.Office, 1),
         PresetKey.Create(ControlModeId.Gaming, 2));
 
-    public AdaptiveTargetMap WithTarget(AdaptivePowerSource power, AdaptiveStage stage, PresetKey key)
+    public AdaptiveTargetMap WithTarget(AdaptivePowerSource power, AdaptiveStage stage, PresetKey key,
+        IReadOnlyDictionary<string, string>? customBaseModes = null)
     {
         PresetKey.Create(key.Mode, key.Slot);
-        if (power == AdaptivePowerSource.Dc && HardwareModeFor(key) == PerformanceMode.Turbo)
+        if (power == AdaptivePowerSource.Dc && HardwareModeFor(key, customBaseModes) == PerformanceMode.Turbo)
             throw new ArgumentOutOfRangeException(nameof(key), "电池供电不可指向狂飙或自定义预设的原生狂飙模式。");
         return (power, stage) switch
         {
@@ -59,9 +60,19 @@ public sealed record AdaptiveTargetMap(
         };
     }
 
-    public static PerformanceMode HardwareModeFor(PresetKey target)
+    public static PerformanceMode HardwareModeFor(PresetKey target, IReadOnlyDictionary<string, string>? customBaseModes = null)
     {
         var mode = PerformanceModeFor(target);
-        return mode == PerformanceMode.Custom ? PerformanceMode.Turbo : mode;
+        if (mode != PerformanceMode.Custom) return mode;
+        string? selected = customBaseModes?.FirstOrDefault(pair =>
+            pair.Key.Equals(target.Mode.ToString(), StringComparison.OrdinalIgnoreCase)).Value;
+        return selected?.ToLowerInvariant() switch
+        {
+            "office" => PerformanceMode.Quiet,
+            "gaming" => PerformanceMode.Balanced,
+            "turbo" => PerformanceMode.Turbo,
+            _ => target.Mode switch
+            { ControlModeId.Custom1 => PerformanceMode.Quiet, ControlModeId.Custom2 => PerformanceMode.Balanced, _ => PerformanceMode.Turbo }
+        };
     }
 }

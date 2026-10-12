@@ -1,4 +1,4 @@
-using Jiaolong.Contracts.Commands;
+﻿using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Errors;
 using Jiaolong.Contracts.Models;
 using Jiaolong_ControlCenter.Services;
@@ -9,7 +9,8 @@ public sealed class AdaptiveAutomationWorker(
     AdaptiveAutomationStateStore store,
     HomeServiceRuntime runtime,
     AdaptiveAutomationHardwareProvider hardware,
-    ILogger<AdaptiveAutomationWorker> logger) : BackgroundService
+    ILogger<AdaptiveAutomationWorker> logger,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan TelemetryMaxAge = TimeSpan.FromSeconds(3);
@@ -17,11 +18,24 @@ public sealed class AdaptiveAutomationWorker(
     private static readonly TimeSpan FailureBackoff = TimeSpan.FromSeconds(10);
     private readonly SemaphoreSlim cycleGate = new(1, 1);
     private readonly AdaptiveRuleSession ruleSession = new();
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
+    private readonly long startedAt = (timeProvider ?? TimeProvider.System).GetTimestamp();
+    private long publishedRevision = -1;
+    private readonly Dictionary<PresetKey, PageSelection[]> publishedSelections = new();
+    private bool configurationChanged;
     private AdaptiveTriggerPolicy? runtimePolicy;
     private bool? lastAcConnected;
     private long seenRevision = -1;
     private DateTimeOffset retryAfterUtc;
     private PresetKey? currentTarget;
+    private PresetKey? submittedTarget;
+    private long submittedRevision = -1;
+    private ApplyState? targetApplyState;
+    private bool unverifiedNativeMode;
+    private Guid? unknownOperation;
+    private long seenHardwareEpoch = -1;
+    private readonly Dictionary<PresetKey, int> failures = new();
+    private PresetKey? pausedTarget;
     private AdaptiveStage? currentStageOverride;
     private PerformanceMode? currentStageOverrideMode;
     private DateTimeOffset? lastEvaluationUtc;
@@ -33,17 +47,6 @@ public sealed class AdaptiveAutomationWorker(
         try
         {
             await store.InitializeAsync(stoppingToken);
-            try
-            {
-                var saved = await store.ReadAsync(stoppingToken);
-                if (saved.Recovery is { } recovery && (recovery.Active || recovery.Pending))
-                {
-                    var pending = recovery with { Pending = true };
-                    if (await store.ReplaceOwnedRecoveryAsync(pending, recovery, stoppingToken))
-                        await hardware.RunAutomationCycleAsync(token => RestorePendingAsync(token, force: true), stoppingToken);
-                }
-            }
-            catch (Exception exception) { logger.LogWarning(exception, "Pending adaptive recovery will retry in the service loop."); }
             using var timer = new PeriodicTimer(TickInterval);
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
@@ -54,7 +57,7 @@ public sealed class AdaptiveAutomationWorker(
                 {
                     logger.LogWarning(exception, "Adaptive service tick failed; retrying after {seconds}s", FailureBackoff.TotalSeconds);
                     ruleSession.Reset();
-                    retryAfterUtc = DateTimeOffset.UtcNow + FailureBackoff;
+                    retryAfterUtc = clock.GetUtcNow() + FailureBackoff;
                     lastError = exception is OperationCanceledException ? "自动执行超过时限；保留恢复状态，稍后重试。" : "自动执行失败；保留恢复状态，稍后重试。";
                     var failed = await store.ReadAsync(CancellationToken.None);
                     await PublishStatusAsync(failed.Configuration, false, lastError, lastEvaluationUtc, CancellationToken.None);
@@ -67,55 +70,28 @@ public sealed class AdaptiveAutomationWorker(
         {
             logger.LogError(exception, "Adaptive automation could not initialize; service remains available without scheduling.");
         }
-        finally
-        {
-            if (await cycleGate.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None))
-            {
-                try
-                {
-                    var saved = await store.ReadAsync(CancellationToken.None);
-                    if (saved.Recovery is { } recovery && (recovery.Active || recovery.Pending))
-                    {
-                        var pending = recovery with { Pending = true };
-                        if (await store.ReplaceOwnedRecoveryAsync(pending, recovery, CancellationToken.None))
-                            await hardware.RunAutomationCycleAsync(token => RestorePendingAsync(token, force: true), CancellationToken.None);
-                    }
-                }
-                catch (Exception exception) { logger.LogError(exception, "Adaptive automation stop recovery failed; recovery state remains persisted."); }
-                finally { cycleGate.Release(); }
-            }
-            else logger.LogError("Adaptive automation stop recovery exceeded its five-second deadline; recovery state remains persisted.");
-        }
     }
 
     private async Task TickAsync(CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (now < retryAfterUtc) return;
+        var now = clock.GetUtcNow();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var saved = await store.ReadAsync(deadline.Token);
+        if (runtime.IsSuspended) { ruleSession.Reset(); return; }
         if (saved.Revision != seenRevision)
         {
             seenRevision = saved.Revision;
             ruleSession.Reset();
             runtimePolicy = null;
+            configurationChanged = true;
+            failures.Clear(); pausedTarget = null; retryAfterUtc = default;
         }
 
-        if (saved.Recovery is { Pending: true })
-        {
-            await RestorePendingAsync(deadline.Token);
-            return;
-        }
         if (saved.Configuration is not { Enabled: true } configuration)
         {
             ruleSession.Reset();
-            if (saved.Recovery is { } disabledRecovery && (disabledRecovery.Active || disabledRecovery.Pending))
-            {
-                var pending = disabledRecovery with { Pending = true };
-                if (await store.ReplaceOwnedRecoveryAsync(pending, disabledRecovery, deadline.Token))
-                    await RestorePendingAsync(deadline.Token, force: true);
-            }
+            // Disable transfers control to the user; it never restores an old whole-machine snapshot.
             await PublishStatusAsync(saved.Configuration, false, "自动调度已关闭。", null, cancellationToken);
             return;
         }
@@ -133,7 +109,15 @@ public sealed class AdaptiveAutomationWorker(
         }
 
         var state = await runtime.GetHomeStateAsync(deadline.Token);
-        now = DateTimeOffset.UtcNow;
+        if (seenHardwareEpoch != runtime.Execution.HardwareEpoch)
+        {
+            seenHardwareEpoch = runtime.Execution.HardwareEpoch;
+            ruleSession.Reset(); failures.Clear(); pausedTarget = null;
+            retryAfterUtc = default; submittedRevision = -1;
+        }
+        var unresolved = await runtime.ReadUnresolvedOperationsAsync(deadline.Token);
+        if (unresolved.Length > 0) unknownOperation ??= unresolved[0];
+        now = clock.GetUtcNow();
         var telemetry = state.Telemetry;
         lastAcConnected = telemetry?.AcPowerConnected;
         if (state.Capabilities.SupportState != DeviceSupportState.Ready || state.Controls.PerformanceMode is not { } mode ||
@@ -163,34 +147,60 @@ public sealed class AdaptiveAutomationWorker(
         var idleSeconds = policy.Advanced.IdleReturnEnabled ? context?.IdleSeconds ?? 0 : 0;
         var input = new AdaptiveTrialInput
         {
-            CpuPercent = telemetry.CpuUsagePercent,
-            GpuPercent = telemetry.GpuUsagePercent,
-            CpuTemperature = telemetry.CpuTemperatureC,
-            GpuTemperature = telemetry.GpuTemperatureC,
+            CpuObservedAtUtc = telemetry.CpuUsageObservedAtUtc ?? telemetry.CapturedAtUtc,
+            GpuObservedAtUtc = telemetry.GpuUsageObservedAtUtc ?? telemetry.CapturedAtUtc,
+            CpuTemperatureObservedAtUtc = telemetry.CpuTemperatureObservedAtUtc ?? telemetry.CapturedAtUtc,
+            GpuTemperatureObservedAtUtc = telemetry.GpuTemperatureObservedAtUtc ?? telemetry.CapturedAtUtc,
+            CpuPercent = FreshSensor(telemetry.CpuUsageObservedAtUtc ?? telemetry.CapturedAtUtc, now) ? telemetry.CpuUsagePercent : null,
+            GpuPercent = FreshSensor(telemetry.GpuUsageObservedAtUtc ?? telemetry.CapturedAtUtc, now) ? telemetry.GpuUsagePercent : null,
+            CpuTemperature = FreshSensor(telemetry.CpuTemperatureObservedAtUtc ?? telemetry.CapturedAtUtc, now) ? telemetry.CpuTemperatureC : null,
+            GpuTemperature = FreshSensor(telemetry.GpuTemperatureObservedAtUtc ?? telemetry.CapturedAtUtc, now) ? telemetry.GpuTemperatureC : null,
             AcConnected = telemetry.AcPowerConnected,
             BatteryPercent = telemetry.BatteryPercent,
-            BatterySaver = context?.BatterySaver,
+            BatterySaver = telemetry.BatterySaver,
             Executable = executable,
             Foreground = context?.ForegroundExecutable is { } foreground && string.Equals(executable, foreground, StringComparison.OrdinalIgnoreCase),
             IdleSeconds = idleSeconds,
             Current = currentStage.Value,
-            ReapplyCurrentTarget = true,
+            ReapplyCurrentTarget = configurationChanged,
+            ConfigurationChanged = configurationChanged,
             ApplicationContextAvailable = !contextIncomplete,
             IdleContextAvailable = context?.IdleSeconds is not null
         };
-        var result = ruleSession.Evaluate(policy, input, telemetry.CapturedAtUtc);
+        var result = ruleSession.Evaluate(policy, input, telemetry.CapturedAtUtc, clock.GetElapsedTime(startedAt));
+        store.RecordDecision(new(clock.GetUtcNow(), clock.GetElapsedTime(startedAt).TotalSeconds, saved.Revision,
+            runtime.Execution.HardwareEpoch, mode, ruleSession.CandidateStage, ruleSession.Evidence,
+            input.CpuObservedAtUtc is { } cpuAt ? (now - cpuAt).TotalSeconds : null,
+            input.GpuObservedAtUtc is { } gpuAt ? (now - gpuAt).TotalSeconds : null, result.Reason));
         lastEvaluationUtc = telemetry.CapturedAtUtc;
+        if (ruleSession.RequiresEcRelease && (state.Controls.ActiveFanControlPlan is not null || state.Controls.StrongCooling == true))
+        {
+            if (unresolved.Length > 0 && (await runtime.ReadControlJournalAsync(deadline.Token))?.Unresolved.Any(item =>
+                    item.CommandKind == nameof(ReleaseFanControlCommand)) == true)
+            {
+                await PublishStatusAsync(configuration, false, "此前交还EC的结果未知，禁止自动重复写入；请人工核实风扇状态。", lastEvaluationUtc, cancellationToken);
+                return;
+            }
+            var release = await hardware.ExecuteAutomaticCommandAsync(runtime,
+                new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.ThermalEmergency), deadline.Token, saved.Revision);
+            if (!Succeeded(release))
+            {
+                lastError = $"温控交还EC未确认：{release.Error?.Code}";
+                await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, cancellationToken);
+                return;
+            }
+        }
+        if (unknownOperation is not null)
+        {
+            await PublishStatusAsync(configuration, false, $"操作{unknownOperation}结果未知；等待读回/人工核实，禁止自动重复写入。", lastEvaluationUtc, cancellationToken);
+            return;
+        }
+        if (now < retryAfterUtc) return;
         if (result.Target is not { } target)
         {
             await PublishStatusAsync(configuration, true, result.Reason, lastEvaluationUtc, cancellationToken);
             return;
         }
-        if (contextIncomplete && target >= currentStage.Value)
-        {
-            await PublishStatusAsync(configuration, true, "应用规则暂停。空闲返回规则暂停。上下文不完整时仅允许负载降档。", lastEvaluationUtc, cancellationToken);
-            return;
-        }
-
         var power = telemetry.AcPowerConnected == true ? AdaptivePowerSource.Ac : AdaptivePowerSource.Dc;
         if (telemetry.AcPowerConnected is null)
         {
@@ -199,246 +209,120 @@ public sealed class AdaptiveAutomationWorker(
         }
         var map = AdaptiveAutomationConfigurationValidator.ToTargetMap(configuration.TargetMap);
         var key = map.GetTarget(power, target);
+        if (pausedTarget == key)
+        {
+            await PublishStatusAsync(configuration, false, "同一目标已重试3次；等待配置、设备代次或用户请求变化。", lastEvaluationUtc, cancellationToken);
+            return;
+        }
+        if (submittedTarget == key && submittedRevision == saved.Revision)
+        {
+            await PublishStatusAsync(configuration, true, targetApplyState == ApplyState.SubmittedUnverified
+                ? "目标已提交，实际模式尚无独立确认；不重复写入。" : "有效目标未变化，不重复写入。", lastEvaluationUtc, cancellationToken);
+            return;
+        }
+        if (unverifiedNativeMode && target > currentStage.Value)
+        {
+            await PublishStatusAsync(configuration, false, "前一原生模式尚未独立确认，暂停继续升档。", lastEvaluationUtc, cancellationToken);
+            return;
+        }
         var preset = configuration.Presets.FirstOrDefault(item => item.Key == key);
         if (preset is null)
         {
             logger.LogWarning("Adaptive target {target} has no saved preset snapshot", key);
             lastError = "目标映射引用了缺失的预设快照。";
             await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, cancellationToken);
-            BackOff();
+            BackOff(key);
             return;
         }
 
-        var latest = await runtime.GetHomeStateAsync(deadline.Token);
-        if (latest.Controls.PerformanceMode is not { } currentMode ||
-            preset.CpuWindowsTuning is { } cpuPlan && !CanApplyAndRestore(cpuPlan, latest.Controls.CpuTuning))
+        if (publishedRevision != saved.Revision)
         {
-            logger.LogWarning("Adaptive target {target} was skipped because its mode or CPU Windows values cannot be safely read back and restored", key);
-            lastError = "目标模式或 CPU 字段缺少安全读回/恢复值。";
-            await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, cancellationToken);
-            BackOff();
+            var snapshots = configuration.Presets.Select(BuildSnapshot).ToArray();
+            var items = snapshots.SelectMany(item => item.Pages).DistinctBy(item => (item.Page, item.Key)).ToArray();
+            publishedSelections.Clear();
+            foreach (var snapshot in snapshots) publishedSelections[snapshot.Key] = snapshot.Selections;
+            if (items.Length > 0)
+            {
+                string catalogOwner = HomeServiceRuntime.AutomaticCatalogOwner(saved.OwnerSid);
+                var publication = new PublishPresetCatalogCommand(Guid.NewGuid(), runtime.Execution.Catalog.Revision(catalogOwner), items);
+                var published = await runtime.ExecuteAsync(publication, deadline.Token, userSid: catalogOwner);
+                if (!Succeeded(published))
+                {
+                    lastError = $"自动预设目录发布失败：{published.Error?.Code}";
+                    await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, deadline.Token);
+                    BackOff(key); return;
+                }
+            }
+            publishedRevision = saved.Revision;
+        }
+        var operationId = Guid.NewGuid();
+        var selections = publishedSelections.GetValueOrDefault(key) ?? [];
+        if (ruleSession.RequiresEcRelease) selections = selections.Where(page => page.Page != ControlPageId.Fan).ToArray();
+        var command = new ApplyControlRequestCommand(operationId,
+            new(operationId, 0, ControlOrigin.Adaptive, key.Mode, preset.PerformanceMode, selections));
+        var applied = await hardware.ExecuteAutomaticCommandAsync(runtime, command, deadline.Token, saved.Revision);
+        store.RecordDecision(new(clock.GetUtcNow(), clock.GetElapsedTime(startedAt).TotalSeconds, saved.Revision,
+            runtime.Execution.HardwareEpoch, mode, target, ruleSession.Evidence, null, null,
+            applied.Error?.Code.ToString() ?? applied.State.ToString(), operationId, applied.ExecutionState?.Pages));
+        if (!Succeeded(applied))
+        {
+            lastError = $"自动目标提交失败：{applied.Error?.Code ?? ErrorCode.HardwareWriteFailed}";
+            await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, CancellationToken.None);
+            if (applied.State == CommandState.RecoveryRequired || applied.Mutation == HardwareMutation.Unknown && applied.Error is not null)
+                unknownOperation = operationId;
+            BackOff(key); return;
+        }
+        var latestConfiguration = await store.ReadAsync(CancellationToken.None);
+        if (latestConfiguration.Revision != saved.Revision || latestConfiguration.Configuration?.Enabled != true)
+        {
+            await PublishStatusAsync(latestConfiguration.Configuration, false, "配置或手动控制权已变化；旧计划已停止，不回写旧快照。",
+                lastEvaluationUtc, CancellationToken.None);
             return;
         }
-        var cpu = preset.CpuWindowsTuning;
-        bool applyCpu = cpu is not null && !CpuPlanMatches(cpu, latest.Controls.CpuTuning);
-        bool applyMode = currentMode != preset.PerformanceMode;
-        if (!applyMode && !applyCpu)
+        submittedTarget = key; submittedRevision = saved.Revision;
+        unverifiedNativeMode = applied.VerifiedPerformanceMode != preset.PerformanceMode;
+        targetApplyState = unverifiedNativeMode ? ApplyState.SubmittedUnverified : ApplyState.Confirmed;
+        if (!unverifiedNativeMode)
         {
             currentTarget = key;
             currentStageOverride = target;
             currentStageOverrideMode = preset.PerformanceMode;
-            lastError = null;
-            await PublishStatusAsync(configuration, true, $"当前状态已符合{PresetLabel(key)}，无需重复应用。", lastEvaluationUtc, cancellationToken);
-            return;
         }
-
-        var priorRecovery = saved.Recovery;
-        var recovery = priorRecovery ?? CaptureRecovery(latest.Controls);
-        var ownedRecovery = recovery with { LastAppliedMode = preset.PerformanceMode, Pending = true, Active = true };
-        if (!await store.TryBeginRecoveryAsync(ownedRecovery, saved.Revision, deadline.Token))
-        {
-            await PublishStatusAsync(configuration, false, "配置或人工控制权已变化，本轮自动写入已取消。", lastEvaluationUtc, cancellationToken);
-            return;
-        }
-        bool modeApplied = false;
-        await PublishStatusAsync(configuration, true, $"正在应用{PresetLabel(key)}。", lastEvaluationUtc, cancellationToken);
-        if (applyMode)
-        {
-            var modeResult = await ApplyModeAsync(preset.PerformanceMode, deadline.Token, saved.Revision);
-            if (!Succeeded(modeResult))
-            {
-                await store.ReplaceOwnedRecoveryAsync(priorRecovery, ownedRecovery, CancellationToken.None);
-                logger.LogWarning("Adaptive target {target} mode command failed: {error}", key, modeResult.Error?.Code);
-                lastError = $"性能模式应用失败：{modeResult.Error?.Code ?? ErrorCode.HardwareWriteFailed}";
-                await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, CancellationToken.None);
-                BackOff();
-                return;
-            }
-            modeApplied = true;
-        }
-
-        // A performance-mode change may reset Windows CPU limits, so decide after the mode has settled.
-        var postMode = modeApplied ? await runtime.GetHomeStateAsync(deadline.Token) : latest;
-        applyCpu = cpu is not null && !CpuPlanMatches(cpu, postMode.Controls.CpuTuning);
-        if (applyCpu && cpu is not null)
-        {
-            if (!CanApplyAndRestore(cpu, postMode.Controls.CpuTuning))
-            {
-                lastError = "性能模式切换后 CPU 字段无法安全读回/恢复。";
-                await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, CancellationToken.None);
-                BackOff();
-                return;
-            }
-            var cpuResult = await ExecuteCpuPlanAsync(cpu, deadline.Token, saved.Revision);
-            if (!Succeeded(cpuResult))
-            {
-                bool rolledBack = await TryRestoreOwnedSnapshotAsync(ownedRecovery,
-                    CaptureRecovery(latest.Controls) with { LastAppliedMode = currentMode }, CancellationToken.None);
-                if (rolledBack) await store.ReplaceOwnedRecoveryAsync(priorRecovery, ownedRecovery, CancellationToken.None);
-                logger.LogWarning("Adaptive target {target} CPU settings failed: {error}; rolledBack={rolledBack}", key, cpuResult.Error?.Code, rolledBack);
-                lastError = $"CPU 调整失败：{cpuResult.Error?.Code ?? ErrorCode.HardwareWriteFailed}; rollback={rolledBack}";
-                await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, CancellationToken.None);
-                BackOff();
-                return;
-            }
-        }
-
-        var latestConfiguration = await store.ReadAsync(CancellationToken.None);
-        if (latestConfiguration.Revision != saved.Revision || latestConfiguration.Configuration?.Enabled != true)
-        {
-            bool rolledBack = await TryRestoreOwnedSnapshotAsync(ownedRecovery,
-                CaptureRecovery(latest.Controls) with { LastAppliedMode = currentMode }, CancellationToken.None);
-            if (rolledBack) await store.ReplaceOwnedRecoveryAsync(priorRecovery, ownedRecovery, CancellationToken.None);
-            lastError = rolledBack ? null : "自动配置更新期间未能完整撤销旧目标；保留恢复状态。";
-            await PublishStatusAsync(latestConfiguration.Configuration, false,
-                rolledBack ? "自动配置已变化，已撤销旧目标并等待下一轮判定。" : lastError!,
-                lastEvaluationUtc, CancellationToken.None);
-            if (!rolledBack) BackOff();
-            return;
-        }
-
-        var verified = await runtime.GetHomeStateAsync(deadline.Token);
-        if (verified.Controls.PerformanceMode != preset.PerformanceMode ||
-            cpu is not null && (!CanApplyAndRestore(cpu, verified.Controls.CpuTuning) || !CpuPlanMatches(cpu, verified.Controls.CpuTuning)))
-        {
-            lastError = "自动目标写入后读回不匹配；恢复状态保留并将在退避后恢复。";
-            await PublishStatusAsync(configuration, false, lastError, lastEvaluationUtc, CancellationToken.None);
-            BackOff();
-            return;
-        }
-        if (!await store.CompleteRecoveryAsync(ownedRecovery with { Pending = false, Active = true }, saved.Revision, CancellationToken.None))
-        {
-            var changed = await store.ReadAsync(CancellationToken.None);
-            await PublishStatusAsync(changed.Configuration, false,
-                changed.ManualOverrideUntilUtc is { } until && DateTimeOffset.UtcNow < until
-                    ? "检测到人工调整，自动调度已让出控制权。"
-                    : "自动配置或恢复所有权已变化，未确认本轮自动目标。",
-                lastEvaluationUtc, CancellationToken.None);
-            return;
-        }
-        currentTarget = key;
-        currentStageOverride = target;
-        currentStageOverrideMode = preset.PerformanceMode;
-        lastApplyUtc = DateTimeOffset.UtcNow;
-        lastError = null;
-        logger.LogInformation("Adaptive target {target} applied; scope={scope}", key, cpu is not null ? "performanceMode+cpuWindows" : "performanceModeOnly");
-        await PublishStatusAsync(configuration, true,
-            cpu is not null
-                ? $"已应用{PresetLabel(key)}：性能模式与 CPU 系统参数。"
-                : $"已应用{PresetLabel(key)}：仅性能模式。",
-            lastEvaluationUtc, CancellationToken.None);
+        configurationChanged = false;
+        lastApplyUtc = clock.GetUtcNow();
+        var pages = applied.ExecutionState?.Pages ?? [];
+        bool partial = pages.Any(page => page.State is ApplyState.Partial or ApplyState.Failed or ApplyState.Unknown or ApplyState.Superseded);
+        lastError = partial ? string.Join("；", pages.Where(page => page.State is ApplyState.Partial or ApplyState.Failed or ApplyState.Unknown)
+            .Select(page => $"{page.Page}: {page.ErrorCode ?? string.Join(',', page.SkippedFields)}")) : null;
+        if (partial) targetApplyState = ApplyState.Partial;
+        await PublishStatusAsync(configuration, true, partial ? $"已提交{PresetLabel(key)}；部分字段未应用：{lastError}"
+            : $"已提交{PresetLabel(key)}；模式与字段是否确认以独立读回证据为准。", lastEvaluationUtc, CancellationToken.None);
     }
 
-    private async Task<CommandResult> ApplyModeAsync(PerformanceMode mode, CancellationToken cancellationToken, long? expectedRevision = null)
+    // Legacy configuration remains readable; its Windows values join the same page compiler.
+    private AdaptiveAutomationPreset BuildSnapshot(AdaptiveAutomationPreset preset)
     {
-        var command = new SetPerformanceModeCommand(Guid.NewGuid(), mode);
-        return await hardware.ExecuteAutomaticCommandAsync(runtime, command, cancellationToken, expectedRevision);
+        if (preset.Pages.Length > 0 || preset.CpuWindowsTuning is not { } cpu) return preset;
+        var settings = new Dictionary<string, SettingRequest>(StringComparer.OrdinalIgnoreCase);
+        void Set<T>(string field, T? value) { if (value is not null) settings[field] = SettingRequest.Set(value); }
+        int? ac = cpu.AcMaxFrequencyMhz ?? cpu.MaxFrequencyMhz;
+        int? dc = cpu.DcMaxFrequencyMhz ?? cpu.MaxFrequencyMhz;
+        Set("acMaxFrequencyMhz", ac is > 0 ? ac : null); Set("dcMaxFrequencyMhz", dc is > 0 ? dc : null);
+        Set("isBoostEnabled", cpu.BoostEnabled); Set("windowsPowerSchemeId", cpu.WindowsPowerSchemeId);
+        Set("acMinActiveCoresPercent", cpu.AcMinActiveCoresPercent); Set("dcMinActiveCoresPercent", cpu.DcMinActiveCoresPercent);
+        Set("negativeCurveOptimizer", cpu.NegativeCurveOptimizer); Set("advancedCpuTuning", cpu.Advanced);
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(new
+        {
+            temperatureLimitC = 75, splWatts = 60, spptWatts = 60, acMaxFrequencyMhz = ac is > 0 ? ac : 4500,
+            dcMaxFrequencyMhz = dc is > 0 ? dc : 3200, isBoostEnabled = cpu.BoostEnabled ?? true,
+            windowsPowerSchemeId = cpu.WindowsPowerSchemeId ?? Guid.Parse("381b4222-f694-41f0-9685-ff5bb260df2e"),
+            acMinActiveCoresPercent = cpu.AcMinActiveCoresPercent, dcMinActiveCoresPercent = cpu.DcMinActiveCoresPercent,
+            negativeCurveOptimizer = cpu.NegativeCurveOptimizer, advancedCpuTuning = cpu.Advanced
+        });
+        var envelope = new PagePresetEnvelope(2, ControlPageId.Performance, preset.Key, "历史自动预设", payload, DateTimeOffset.UnixEpoch)
+        { Revision = seenRevision + 1, Settings = settings };
+        return preset with { Pages = [envelope], Selections = [new(ControlPageId.Performance, true, preset.Key, envelope.Revision)] };
     }
-
-    private async Task RestorePendingAsync(CancellationToken cancellationToken, bool force = false)
-    {
-        var snapshot = await store.ReadAsync(cancellationToken);
-        if (snapshot.Recovery is not { } recovery) return;
-        if (!force && !recovery.Pending) return;
-        if (snapshot.ManualOverrideUntilUtc is { } manualUntil && DateTimeOffset.UtcNow < manualUntil)
-        {
-            await store.ClearRecoveryAsync(CancellationToken.None);
-            return;
-        }
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
-        var current = await runtime.GetHomeStateAsync(deadline.Token);
-        if (current.Capabilities.SupportState != DeviceSupportState.Ready || current.Controls.PerformanceMode is not { } currentMode)
-        {
-            logger.LogWarning("Adaptive recovery paused because hardware support state or performance mode is unavailable.");
-            retryAfterUtc = DateTimeOffset.UtcNow + FailureBackoff;
-            return;
-        }
-        if (recovery.LastAppliedMode is { } expected && currentMode != expected)
-        {
-            await store.ReplaceOwnedRecoveryAsync(null, recovery, CancellationToken.None);
-            currentTarget = null;
-            currentStageOverride = null;
-            currentStageOverrideMode = null;
-            return;
-        }
-        if (await RestoreSnapshotAsync(recovery with { LastAppliedMode = recovery.OriginalMode }, deadline.Token))
-        {
-            if (!await store.ReplaceOwnedRecoveryAsync(null, recovery, CancellationToken.None))
-            {
-                logger.LogWarning("Adaptive recovery completed but ownership changed before its state could be cleared.");
-                return;
-            }
-            currentTarget = null;
-            currentStageOverride = null;
-            currentStageOverrideMode = null;
-            lastError = null;
-            logger.LogInformation("Adaptive automation restored the prior performance mode and readable CPU Windows settings.");
-        }
-        else
-        {
-            if (recovery.OriginalMode is { } restoredMode)
-            {
-                var partial = await runtime.GetHomeStateAsync(deadline.Token);
-                if (partial.Controls.PerformanceMode == restoredMode)
-                    await store.ReplaceOwnedRecoveryAsync(recovery with { LastAppliedMode = restoredMode, Pending = true }, recovery, CancellationToken.None);
-            }
-            logger.LogWarning("Adaptive automation restoration was incomplete; recovery state retained for retry.");
-            retryAfterUtc = DateTimeOffset.UtcNow + FailureBackoff;
-        }
-    }
-
-    private async Task<bool> RestoreSnapshotAsync(AdaptiveAutomationRecovery target, CancellationToken cancellationToken)
-    {
-        var initial = await runtime.GetHomeStateAsync(cancellationToken);
-        if (initial.Capabilities.SupportState != DeviceSupportState.Ready || initial.Controls.PerformanceMode is null) return false;
-        if (target.LastAppliedMode is { } mode)
-        {
-            if (initial.Controls.PerformanceMode != mode)
-            {
-                var result = await ApplyModeAsync(mode, cancellationToken);
-                if (!Succeeded(result)) return false;
-            }
-        }
-        var afterMode = await runtime.GetHomeStateAsync(cancellationToken);
-        if (afterMode.Capabilities.SupportState != DeviceSupportState.Ready || afterMode.Controls.PerformanceMode is null ||
-            target.LastAppliedMode is { } expectedMode && afterMode.Controls.PerformanceMode != expectedMode)
-            return false;
-        if (target.OriginalCpuWindowsTuning is { } cpu)
-        {
-            if (!CanApplyAndRestore(cpu, afterMode.Controls.CpuTuning))
-            {
-                return false;
-            }
-            else if (!CpuPlanMatches(cpu, afterMode.Controls.CpuTuning))
-            {
-                var result = await ExecuteCpuPlanAsync(cpu, cancellationToken);
-                if (!Succeeded(result)) return false;
-            }
-        }
-        var verified = await runtime.GetHomeStateAsync(cancellationToken);
-        return verified.Capabilities.SupportState == DeviceSupportState.Ready &&
-            verified.Controls.PerformanceMode is { } finalMode &&
-            (target.LastAppliedMode is null || finalMode == target.LastAppliedMode) &&
-            (target.OriginalCpuWindowsTuning is not { } finalCpu ||
-                CanApplyAndRestore(finalCpu, verified.Controls.CpuTuning) && CpuPlanMatches(finalCpu, verified.Controls.CpuTuning));
-    }
-
-    private async Task<bool> TryRestoreOwnedSnapshotAsync(
-        AdaptiveAutomationRecovery expectedOwner,
-        AdaptiveAutomationRecovery target,
-        CancellationToken cancellationToken)
-    {
-        var latest = await store.ReadAsync(cancellationToken);
-        if (latest.ManualOverrideUntilUtc is { } until && DateTimeOffset.UtcNow < until) return false;
-        if (latest.Recovery != expectedOwner || !expectedOwner.Pending) return false;
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
-        return await RestoreSnapshotAsync(target, deadline.Token);
-    }
-
-    private static AdaptiveAutomationRecovery CaptureRecovery(HomeControlState controls) =>
-        new(controls.PerformanceMode, CaptureRestorableCpuPlan(controls.CpuTuning), null);
 
     internal static CpuTuningPlan? CaptureRestorableCpuPlan(CpuTuningState? state)
     {
@@ -501,31 +385,11 @@ public sealed class AdaptiveAutomationWorker(
     private static bool HasRestorableCurve(CpuTuningState state) => state.CurveOptimizerVerification == "hardwareReadback" &&
         state.HasCompleteCurveValues() && state.PerCoreCurveOptimizer!.Values.All(value => value <= 0);
 
-    private async Task<CommandResult> ExecuteCpuPlanAsync(CpuTuningPlan plan, CancellationToken token, long? revision = null)
-    {
-        // CO uses its existing isolated transaction; the owned journal spans both submissions.
-        var windows = plan with { NegativeCurveOptimizer = null,
-            Advanced = plan.Advanced?.PboScalar is int scalar ? new(PboScalar: scalar) : null };
-        CommandResult? result = null;
-        if (IsNonEmptySafePlan(windows))
-        {
-            result = await hardware.ExecuteAutomaticCommandAsync(runtime,
-                new SetCpuTuningCommand(Guid.NewGuid(), windows, true), token, revision);
-            if (!Succeeded(result)) return result;
-        }
-        if (HasCurveTargets(plan))
-        {
-            var curve = new CpuTuningPlan(null, null, null, null, null, null, null, plan.NegativeCurveOptimizer)
-            { Advanced = plan.Advanced is { } advanced ? new(CurveOptimizerAll: advanced.CurveOptimizerAll,
-                PerCoreCurveOptimizer: advanced.PerCoreCurveOptimizer) : null };
-            result = await hardware.ExecuteAutomaticCommandAsync(runtime,
-                new SetCpuTuningCommand(Guid.NewGuid(), curve, true), token, revision);
-        }
-        return result ?? throw new InvalidOperationException("Empty automatic CPU plan.");
-    }
-
     private static bool IsFresh(AdaptiveAutomationClientContext? context, DateTimeOffset now) =>
         context is not null && context.CapturedAtUtc <= now.AddSeconds(1) && now - context.CapturedAtUtc <= ClientContextMaxAge;
+
+    private static bool FreshSensor(DateTimeOffset sampledAt, DateTimeOffset now) =>
+        sampledAt <= now.AddSeconds(1) && now - sampledAt <= TelemetryMaxAge;
 
     private AdaptiveStage? ResolveCurrentStage(PerformanceMode mode)
     {
@@ -566,6 +430,7 @@ public sealed class AdaptiveAutomationWorker(
             lastError,
             configuration is null ? null : AdaptiveAutomationConfigurationValidator.Identity(configuration))
         {
+            SubmittedTarget = submittedTarget, TargetApplyState = targetApplyState,
             CandidateTarget = configuration is { Enabled: true } && running && lastAcConnected is bool ac && ruleSession.CandidateStage is { } stage
                 ? AdaptiveAutomationConfigurationValidator.ToTargetMap(configuration.TargetMap).GetTarget(ac ? AdaptivePowerSource.Ac : AdaptivePowerSource.Dc, stage)
                 : null
@@ -579,9 +444,11 @@ public sealed class AdaptiveAutomationWorker(
         ControlModeId.Custom1 => "自定义 1", ControlModeId.Custom2 => "自定义 2", _ => "自定义"
     }}预设 {key.Slot}";
 
-    private void BackOff()
+    private void BackOff(PresetKey? target = null)
     {
         ruleSession.Reset();
-        retryAfterUtc = DateTimeOffset.UtcNow + FailureBackoff;
+        int count = target is { } key ? failures[key] = failures.GetValueOrDefault(key) + 1 : 1;
+        if (count > 3 && target is { } failed) pausedTarget = failed;
+        retryAfterUtc = clock.GetUtcNow().AddSeconds(count switch { 1 => 5, 2 => 15, _ => 30 });
     }
 }

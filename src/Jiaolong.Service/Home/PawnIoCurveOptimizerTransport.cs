@@ -8,6 +8,13 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Jiaolong.Service.Home;
 
+internal interface IPawnIoDeviceApi
+{
+    SafeFileHandle Open();
+    bool LoadModule(SafeFileHandle device, byte[] module);
+    bool Execute(SafeFileHandle device, string functionName, ulong[]? input, ulong[]? output);
+}
+
 internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTransport, IPboScalarTransport, ISmuCpuLimitTransport, IDisposable
 {
     private const int FunctionNameLength = 32;
@@ -22,26 +29,46 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
 
     private SafeFileHandle? safeHandle;
     private SafeFileHandle? msrSafeHandle;
-    private IntPtr rawHandle;
+    private readonly IPawnIoDeviceApi? deviceApiOverride;
     private readonly Func<uint, uint, uint>? curveCommandOverride;
     private readonly CpuPackagePowerCalculator packagePowerCalculator = new();
     private readonly object mailboxGate = new();
     private bool initialized;
     private bool msrInitialized;
     private bool disposed;
-    private readonly int physicalCoreCount = 8;
+    private readonly int physicalCoreCount;
+    private readonly Func<bool>? hardwareAccessAllowed;
+    private readonly Func<bool>? hardwareReadAllowed;
 
-    public PawnIoCurveOptimizerTransport() { }
-    public PawnIoCurveOptimizerTransport(int physicalCoreCount)
+    private bool IsHardwareAccessAllowed(bool readOnly = false) =>
+        (readOnly ? hardwareReadAllowed ?? hardwareAccessAllowed : hardwareAccessAllowed)?.Invoke() != false;
+
+    private void EnsureHardwareAccess(bool readOnly = false)
+    {
+        if (!IsHardwareAccessAllowed(readOnly)) throw new IOException("hardwareAccessPaused");
+    }
+    // Package-power reads need no topology. CO stays unavailable until a count is supplied.
+    public PawnIoCurveOptimizerTransport(Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null)
+    {
+        this.hardwareAccessAllowed = hardwareAccessAllowed;
+        this.hardwareReadAllowed = hardwareReadAllowed;
+    }
+    public PawnIoCurveOptimizerTransport(int physicalCoreCount, Func<bool>? hardwareAccessAllowed = null,
+        Func<bool>? hardwareReadAllowed = null) : this(hardwareAccessAllowed, hardwareReadAllowed)
     {
         if (physicalCoreCount is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(physicalCoreCount));
         this.physicalCoreCount = physicalCoreCount;
     }
-    internal PawnIoCurveOptimizerTransport(Func<uint, uint, uint> curveCommand, int physicalCoreCount = 8)
-        : this(physicalCoreCount) => curveCommandOverride = curveCommand;
+    internal PawnIoCurveOptimizerTransport(Func<uint, uint, uint> curveCommand, int physicalCoreCount = 8,
+        Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null)
+        : this(physicalCoreCount, hardwareAccessAllowed, hardwareReadAllowed) => curveCommandOverride = curveCommand;
+    internal PawnIoCurveOptimizerTransport(IPawnIoDeviceApi deviceApi, int physicalCoreCount = 8,
+        Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null)
+        : this(physicalCoreCount, hardwareAccessAllowed, hardwareReadAllowed) => deviceApiOverride = deviceApi;
 
     public bool TryInitialize()
     {
+        EnsureHardwareAccess(readOnly: true);
         if (curveCommandOverride is not null) return !disposed;
         if (initialized) return true;
         if (disposed) return false;
@@ -49,31 +76,44 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         var module = ReadRyzenSmuModule();
         if (module is null) return false;
 
-        rawHandle = CreateFile(PawnIoDevicePath, 0xC0000000u, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-        if (rawHandle == IntPtr.Zero || rawHandle.ToInt64() == -1)
+        var handle = OpenModule(module);
+        if (handle is null) return false;
+        try
         {
-            rawHandle = IntPtr.Zero;
-            return false;
+            var result = new ulong[1];
+            if (!Execute("ioctl_get_code_name", null, result, handle) || result[0] != (uint)RyzenSmuProtocol.DragonRangeCodeName)
+            {
+                handle.Dispose();
+                Dispose();
+                return false;
+            }
+            safeHandle = handle;
+            initialized = true;
+            return true;
         }
+        catch { handle.Dispose(); throw; }
+    }
 
-        if (!DeviceIoControl(rawHandle, LoadIoctl, module, checked((uint)module.Length), null, 0, out _, IntPtr.Zero))
+    private SafeFileHandle? OpenModule(byte[] module)
+    {
+        EnsureHardwareAccess(readOnly: true);
+        var handle = deviceApiOverride?.Open() ?? new SafeFileHandle(
+            CreateFile(PawnIoDevicePath, 0xC0000000u, 3, IntPtr.Zero, 3, 0, IntPtr.Zero), ownsHandle: true);
+        try
         {
-            CloseHandle(rawHandle);
-            rawHandle = IntPtr.Zero;
-            return false;
+            EnsureHardwareAccess(readOnly: true);
+            if (handle.IsInvalid) { handle.Dispose(); return null; }
+            bool loaded = deviceApiOverride?.LoadModule(handle, module) ??
+                DeviceIoControl(handle, LoadIoctl, module, checked((uint)module.Length), null, 0, out _, IntPtr.Zero);
+            EnsureHardwareAccess(readOnly: true);
+            if (!loaded)
+            {
+                handle.Dispose();
+                return null;
+            }
+            return handle;
         }
-
-        safeHandle = new SafeFileHandle(rawHandle, ownsHandle: true);
-        rawHandle = IntPtr.Zero;
-        var result = new ulong[1];
-        if (!Execute("ioctl_get_code_name", null, result) || result[0] != (uint)RyzenSmuProtocol.DragonRangeCodeName)
-        {
-            Dispose();
-            return false;
-        }
-
-        initialized = true;
-        return true;
+        catch { handle.Dispose(); EnsureHardwareAccess(readOnly: true); throw; }
     }
 
     public Task<int> ReadAsync(CancellationToken cancellationToken)
@@ -90,6 +130,8 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public IReadOnlyDictionary<int, int> ReadPerCore(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess(readOnly: true);
+        if (physicalCoreCount == 0) throw new InvalidOperationException("cpuCoreTopologyUnknown");
         if (!TryInitialize()) throw new InvalidOperationException("curveOptimizerUnavailable");
         lock (mailboxGate) return ReadPerCoreLocked(cancellationToken);
     }
@@ -108,14 +150,23 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         return values;
     }
 
-    private uint CurveCommand(uint command, uint argument) => curveCommandOverride is not null
-        ? curveCommandOverride(command, argument)
-        : SendMailboxAndReadFirst(RyzenSmuProtocol.RaphaelCommandAddress, RyzenSmuProtocol.RaphaelResponseAddress,
-            RyzenSmuProtocol.RaphaelArgumentAddress, command, argument);
+    private uint CurveCommand(uint command, uint argument)
+    {
+        bool readOnly = command == 0xD5;
+        EnsureHardwareAccess(readOnly);
+        try
+        {
+            return curveCommandOverride is not null ? curveCommandOverride(command, argument)
+                : SendMailboxAndReadFirst(RyzenSmuProtocol.RaphaelCommandAddress, RyzenSmuProtocol.RaphaelResponseAddress,
+                    RyzenSmuProtocol.RaphaelArgumentAddress, command, argument, readOnly);
+        }
+        finally { EnsureHardwareAccess(readOnly); }
+    }
 
     internal double? ReadPackagePower(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess(readOnly: true);
         if (!TryInitializeMsr() ||
             !ReadMsr(MsrPowerUnit, out var powerUnit) ||
             !ReadMsr(MsrPackageEnergy, out var packageEnergy))
@@ -131,9 +182,6 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         cancellationToken.ThrowIfCancellationRequested();
         if (value is < -30 or > 0)
             return Task.FromException(new ArgumentOutOfRangeException(nameof(value)));
-        if (!TryInitialize())
-            return Task.FromException(new InvalidOperationException("curveOptimizerUnavailable"));
-
         try
         {
             WritePerCore(Enumerable.Range(0, physicalCoreCount).ToDictionary(core => core, _ => value), cancellationToken);
@@ -153,6 +201,17 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
 
     public void WritePerCore(IReadOnlyDictionary<int, int> values, CancellationToken cancellationToken)
     {
+        bool writeAttempted = false;
+        try { WritePerCore(values, cancellationToken, ref writeAttempted); }
+        catch (Exception error)
+        {
+            error.Data["curveOptimizerWriteAttempted"] = writeAttempted;
+            throw;
+        }
+    }
+
+    private void WritePerCore(IReadOnlyDictionary<int, int> values, CancellationToken cancellationToken, ref bool writeAttempted)
+    {
         ArgumentNullException.ThrowIfNull(values);
         if (values.Count < 1 || values.Count > physicalCoreCount)
             throw new ArgumentException("perCoreCurveRequiresEditedCores", nameof(values));
@@ -162,17 +221,24 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
             if (value is < -30 or > 0) throw new ArgumentOutOfRangeException(nameof(values), "perCoreCurveOutOfRange");
         }
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         if (!TryInitialize()) throw new InvalidOperationException("curveOptimizerUnavailable");
 
         lock (mailboxGate)
         {
+            EnsureHardwareAccess();
             var before = ReadPerCoreLocked(cancellationToken);
             try
             {
                 foreach (var (core, value) in values.OrderBy(pair => pair.Key))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (before[core] != value) WriteCore(core, value);
+                    if (before[core] != value)
+                    {
+                        EnsureHardwareAccess();
+                        writeAttempted = true;
+                        WriteCore(core, value);
+                    }
                 }
                 var after = ReadPerCoreLocked(cancellationToken);
                 if (before.Any(pair => after[pair.Key] != (values.TryGetValue(pair.Key, out int target) ? target : pair.Value)))
@@ -180,6 +246,11 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
             }
             catch (Exception error)
             {
+                if (!writeAttempted)
+                {
+                    error.Data["curveOptimizerRollbackFailed"] = false;
+                    throw;
+                }
                 try { RestorePerCoreLocked(before); }
                 catch (Exception restoreError)
                 {
@@ -202,13 +273,15 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         if (values.Count != physicalCoreCount || Enumerable.Range(0, physicalCoreCount).Any(core => !values.TryGetValue(core, out int value) || value is < -30 or > 30))
             throw new ArgumentException("curveOptimizerSnapshotInvalid", nameof(values));
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         if (!TryInitialize()) throw new InvalidOperationException("curveOptimizerUnavailable");
         lock (mailboxGate) RestorePerCoreLocked(values);
     }
 
     private void RestorePerCoreLocked(IReadOnlyDictionary<int, int> values)
     {
-        // Recovery ignores request cancellation and restores each captured value, including positive BIOS offsets.
+        // Request cancellation does not cancel recovery; a power transition still forbids it.
+        EnsureHardwareAccess();
         foreach (var (core, value) in values.OrderBy(pair => pair.Key)) WriteCore(core, value);
         var restored = ReadPerCoreLocked(CancellationToken.None);
         if (values.Any(pair => restored[pair.Key] != pair.Value)) throw new IOException("curveOptimizerRestoreMismatch");
@@ -232,6 +305,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public void WriteAdvancedLimit(RyzenSmuLimitWrite write, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess();
         if (!TryInitialize()) throw new InvalidOperationException("advancedCpuProtocolUnavailable");
         lock (mailboxGate)
         {
@@ -248,12 +322,20 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public CpuSmuLimitSnapshot ReadLimitSnapshot(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess(readOnly: true);
         if (!TryInitialize()) throw new InvalidOperationException("advancedCpuProtocolUnavailable");
         lock (mailboxGate)
         {
             var resolved = new ulong[2];
-            if (!Execute("ioctl_resolve_pm_table", [], resolved) || resolved[0] != 0x540108 || resolved[1] == 0)
-                throw new InvalidOperationException("advancedCpuPmTableUnsupported");
+            var resolutionSucceeded = Execute("ioctl_resolve_pm_table", [], resolved);
+            if (!resolutionSucceeded || resolved[0] != 0x540108 || resolved[1] == 0)
+            {
+                var error = new InvalidOperationException("advancedCpuPmTableUnsupported");
+                error.Data["pmTableId"] = $"0x{resolved[0]:X}";
+                error.Data["pmTableResolutionSucceeded"] = resolutionSucceeded.ToString();
+                error.Data["pmTableAddressAvailable"] = (resolved[1] != 0).ToString();
+                throw error;
+            }
             bool refreshed = false;
             for (int attempt = 0; attempt < 3 && !refreshed; attempt++)
             {
@@ -277,6 +359,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public int Read(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHardwareAccess(readOnly: true);
         if (!TryInitialize()) throw new InvalidOperationException("pboScalarUnavailable");
         lock (mailboxGate)
         {
@@ -284,7 +367,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
                 RyzenSmuProtocol.RaphaelCommandAddress,
                 RyzenSmuProtocol.RaphaelResponseAddress,
                 RyzenSmuProtocol.RaphaelArgumentAddress,
-                RyzenSmuProtocol.GetPboScalarCommand, 0);
+                RyzenSmuProtocol.GetPboScalarCommand, 0, readOnly: true);
             float scalar = BitConverter.Int32BitsToSingle(unchecked((int)raw));
             if (!float.IsFinite(scalar) || scalar < 1 || scalar > 10 || scalar != MathF.Round(scalar))
                 throw new InvalidOperationException("pboScalarReadInvalid");
@@ -296,6 +379,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (scalar is < 1 or > 10) throw new ArgumentOutOfRangeException(nameof(scalar));
+        EnsureHardwareAccess();
         if (!TryInitialize()) throw new InvalidOperationException("pboScalarUnavailable");
         lock (mailboxGate)
             SendMailbox(
@@ -319,7 +403,16 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         uint responseAddress,
         uint argumentAddress,
         uint command,
-        uint argument)
+        uint argument,
+        bool readOnly = false)
+    {
+        EnsureHardwareAccess(readOnly);
+        try { return SendMailboxAndReadFirstCore(commandAddress, responseAddress, argumentAddress, command, argument); }
+        finally { EnsureHardwareAccess(readOnly); }
+    }
+
+    private uint SendMailboxAndReadFirstCore(
+        uint commandAddress, uint responseAddress, uint argumentAddress, uint command, uint argument)
     {
         if (!WaitForMailboxIdle(responseAddress) ||
             !WriteRegister(responseAddress, 0))
@@ -376,7 +469,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     {
         value = 0;
         var output = new ulong[1];
-        if (!Execute("ioctl_read_smu_register", [address], output)) return false;
+        if (!Execute("ioctl_read_smu_register", [address], output, guardLifecycle: false)) return false;
         value = output[0];
         return true;
     }
@@ -391,27 +484,19 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     }
 
     private bool WriteRegister(uint address, uint value) =>
-        Execute("ioctl_write_smu_register", [address, value], null);
+        Execute("ioctl_write_smu_register", [address, value], null, guardLifecycle: false);
 
     private bool TryInitializeMsr()
     {
+        EnsureHardwareAccess(readOnly: true);
         if (msrInitialized) return true;
         if (disposed) return false;
 
         var module = ReadEmbeddedModule("AMDFamily17.bin");
         if (module is null) return false;
 
-        var raw = CreateFile(PawnIoDevicePath, 0xC0000000u, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-        if (raw == IntPtr.Zero || raw.ToInt64() == -1)
-            return false;
-
-        if (!DeviceIoControl(raw, LoadIoctl, module, checked((uint)module.Length), null, 0, out _, IntPtr.Zero))
-        {
-            CloseHandle(raw);
-            return false;
-        }
-
-        msrSafeHandle = new SafeFileHandle(raw, ownsHandle: true);
+        msrSafeHandle = OpenModule(module);
+        if (msrSafeHandle is null) return false;
         msrInitialized = true;
         return true;
     }
@@ -420,10 +505,21 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         string functionName,
         ulong[]? input,
         ulong[]? output,
-        SafeFileHandle? deviceHandle = null)
+        SafeFileHandle? deviceHandle = null,
+        bool guardLifecycle = true)
+    {
+        // Register transfers finish the already-started mailbox transaction; no speculative mid-protocol abort.
+        if (!guardLifecycle) return ExecuteCore(functionName, input, output, deviceHandle);
+        EnsureHardwareAccess(readOnly: true);
+        try { return ExecuteCore(functionName, input, output, deviceHandle); }
+        finally { EnsureHardwareAccess(readOnly: true); }
+    }
+
+    private bool ExecuteCore(string functionName, ulong[]? input, ulong[]? output, SafeFileHandle? deviceHandle)
     {
         deviceHandle ??= safeHandle;
         if (deviceHandle is null || deviceHandle.IsInvalid || deviceHandle.IsClosed) return false;
+        if (deviceApiOverride is not null) return deviceApiOverride.Execute(deviceHandle, functionName, input, output);
         var nameBytes = Encoding.ASCII.GetBytes(functionName);
         var inputCount = input?.Length ?? 0;
         var request = new byte[FunctionNameLength + inputCount * sizeof(ulong)];
@@ -475,9 +571,6 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         msrInitialized = false;
         msrSafeHandle?.Dispose();
         msrSafeHandle = null;
-        if (rawHandle != IntPtr.Zero && rawHandle.ToInt64() != -1)
-            CloseHandle(rawHandle);
-        rawHandle = IntPtr.Zero;
     }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -489,20 +582,6 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         uint disposition,
         uint flags,
         IntPtr template);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr handle);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool DeviceIoControl(
-        IntPtr device,
-        uint code,
-        byte[] input,
-        uint inputSize,
-        byte[]? output,
-        uint outputSize,
-        out uint returned,
-        IntPtr overlapped);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool DeviceIoControl(

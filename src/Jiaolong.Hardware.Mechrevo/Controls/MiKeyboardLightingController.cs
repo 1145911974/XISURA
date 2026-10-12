@@ -28,12 +28,22 @@ public sealed class MiKeyboardLightingController
     {
         if (!plan.IsValid()) throw new ArgumentException("Invalid keyboard lighting plan.", nameof(plan));
         if (plan.LogoEnabled.HasValue && logo is null) throw new InvalidOperationException("lidLogoUnavailable");
-        var beforeMode = await Read(mode, 1, token);
-        var beforeColor = await Read(color, 3, token);
-        var beforeBrightness = await Read(brightness, 1, token);
-        var beforeLogo = plan.LogoEnabled.HasValue ? await Read(logo!, 1, token) : null;
-        if (beforeMode[0] is not (0 or 1 or 2) || beforeBrightness[0] > 3)
-            throw new InvalidOperationException("keyboardLightingReadFailed");
+        byte[] beforeMode, beforeColor, beforeBrightness;
+        byte[]? beforeLogo;
+        try
+        {
+            beforeMode = await Read(mode, 1, token);
+            beforeColor = await Read(color, 3, token);
+            beforeBrightness = await Read(brightness, 1, token);
+            beforeLogo = plan.LogoEnabled.HasValue ? await Read(logo!, 1, token) : null;
+            if (beforeMode[0] is not (0 or 1 or 2) || beforeBrightness[0] > 3)
+                throw new InvalidOperationException("keyboardLightingReadFailed");
+        }
+        catch (Exception error)
+        {
+            error.Data["keyboardLightingWriteAttempted"] = false;
+            throw;
+        }
         int level = plan.BrightnessLevel ?? (int)Math.Round(plan.Brightness * 3d / 100);
         var resolved = plan with { Red = plan.Red ?? beforeColor[0], Green = plan.Green ?? beforeColor[1], Blue = plan.Blue ?? beforeColor[2], BrightnessLevel = level };
         bool colorAttempted = false;
@@ -41,7 +51,12 @@ public sealed class MiKeyboardLightingController
         {
             // Cycle uses the firmware palette; writing RGB would interfere with that palette.
             // This firmware coerces mode 0 to 2; brightness 0 turns off either supported effect.
-            await WriteChecked(mode, [(byte)(plan.Effect == "Cycle" ? 1 : 2)], token);
+            try { await WriteChecked(mode, [(byte)(plan.Effect == "Cycle" ? 1 : 2)], token); }
+            catch (Exception error) when (error.Data["miWriteAttempted"] is false)
+            {
+                error.Data["keyboardLightingWriteAttempted"] = false;
+                throw;
+            }
             if (plan.Effect != "Cycle")
             {
                 colorAttempted = true;
@@ -53,6 +68,8 @@ public sealed class MiKeyboardLightingController
         }
         catch (Exception original)
         {
+            if (original.Data["keyboardLightingWriteAttempted"] is false) throw;
+            original.Data["keyboardLightingWriteAttempted"] = true;
             // Cancellation of the request must not cancel restoration after a partial write.
             var errors = new List<Exception>();
             foreach (var item in new[] { (color, colorAttempted ? beforeColor : null), (logo, beforeLogo), (mode, beforeMode), (brightness, beforeBrightness) })
@@ -61,7 +78,12 @@ public sealed class MiKeyboardLightingController
                 try { await WriteChecked(item.Item1, item.Item2, CancellationToken.None); }
                 catch (Exception error) { errors.Add(error); }
             }
-            if (errors.Count > 0) throw new InvalidOperationException("rollbackFailed", new AggregateException(errors.Prepend(original)));
+            if (errors.Count > 0)
+            {
+                var failure = new InvalidOperationException("rollbackFailed", new AggregateException(errors.Prepend(original)));
+                failure.Data["keyboardLightingWriteAttempted"] = true;
+                throw failure;
+            }
             throw;
         }
     }

@@ -9,12 +9,12 @@ public sealed class NvidiaSmiReader
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
     private static readonly string[] Arguments =
     [
-        "--query-gpu=temperature.gpu,utilization.gpu,power.draw,pstate,clocks_event_reasons.gpu_idle,clocks_event_reasons.applications_clocks_setting,clocks_event_reasons.sw_power_cap,clocks_event_reasons.hw_slowdown,clocks_event_reasons.hw_thermal_slowdown,clocks_event_reasons.hw_power_brake_slowdown,clocks_event_reasons.sw_thermal_slowdown,clocks_event_reasons.sync_boost,clocks_event_reasons.board_limit,clocks_event_reasons.reliability,enforced.power.limit,power.max_limit",
+        "--query-gpu=name,uuid,temperature.gpu,utilization.gpu,power.draw,pstate,clocks_event_reasons.gpu_idle,clocks_event_reasons.applications_clocks_setting,clocks_event_reasons.sw_power_cap,clocks_event_reasons.hw_slowdown,clocks_event_reasons.hw_thermal_slowdown,clocks_event_reasons.hw_power_brake_slowdown,clocks_event_reasons.sw_thermal_slowdown,clocks_event_reasons.sync_boost,clocks_event_reasons.board_limit,clocks_event_reasons.reliability,enforced.power.limit,power.max_limit",
         "--format=csv,noheader,nounits"
     ];
     private static readonly string[] BasicArguments =
     [
-        "--query-gpu=temperature.gpu,utilization.gpu,power.draw,pstate,clocks_event_reasons.gpu_idle,clocks_event_reasons.applications_clocks_setting,clocks_event_reasons.sw_power_cap,clocks_event_reasons.hw_slowdown,clocks_event_reasons.hw_thermal_slowdown,clocks_event_reasons.hw_power_brake_slowdown,clocks_event_reasons.sw_thermal_slowdown,clocks_event_reasons.sync_boost,clocks_event_reasons.board_limit,clocks_event_reasons.reliability",
+        "--query-gpu=name,uuid,temperature.gpu,utilization.gpu,power.draw,pstate,clocks_event_reasons.gpu_idle,clocks_event_reasons.applications_clocks_setting,clocks_event_reasons.sw_power_cap,clocks_event_reasons.hw_slowdown,clocks_event_reasons.hw_thermal_slowdown,clocks_event_reasons.hw_power_brake_slowdown,clocks_event_reasons.sw_thermal_slowdown,clocks_event_reasons.sync_boost,clocks_event_reasons.board_limit,clocks_event_reasons.reliability",
         "--format=csv,noheader,nounits"
     ];
     private readonly string? executablePath;
@@ -31,7 +31,7 @@ public sealed class NvidiaSmiReader
         this.executableVerifier = executableVerifier ?? (_ => false);
     }
 
-    public async Task<NvidiaSmiReading> ReadAsync(CancellationToken cancellationToken)
+    public async Task<NvidiaSmiReading> ReadAsync(CancellationToken cancellationToken, string? expectedAdapterName = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (outputProvider is null && !IsTrustedNvidiaSmiPath(executablePath))
@@ -43,7 +43,7 @@ public sealed class NvidiaSmiReader
                 var output = outputProvider is null
                     ? await ReadProcessOutputAsync(arguments, cancellationToken)
                     : await outputProvider(arguments[0], cancellationToken);
-                if (output is not null && NvidiaSmiParser.TryParse(output, out var reading))
+                if (output is not null && NvidiaSmiParser.TryParse(output, out var reading, expectedAdapterName))
                     return reading;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -50,7 +50,8 @@ public sealed partial class TrayContextMenuWindow : Window
 
     public void ShowNearCursor(PointInt32 cursor)
     {
-        var area = DisplayArea.GetFromPoint(cursor, DisplayAreaFallback.Primary).WorkArea;
+        var area = PrototypeWindowChrome.CandidateWorkArea() ??
+            DisplayArea.GetFromPoint(cursor, DisplayAreaFallback.Primary).WorkArea;
         AppWindow.Move(new PointInt32(area.X, area.Y));
         double scale = Math.Max(96u, GetDpiForWindow(WindowNative.GetWindowHandle(this))) / 96d;
         AppWindow.ResizeClient(new SizeInt32((int)Math.Ceiling(136 * scale), (int)Math.Ceiling(62 * scale)));

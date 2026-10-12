@@ -12,6 +12,10 @@ public enum CapabilityState
 
 public sealed record CapabilityDescriptor(string Key, CapabilityState State, string? Reason);
 
+public sealed record FieldCapability(string Key, CapabilityState Availability, bool Readable, bool Writable,
+    double? Minimum, double? Maximum, double? Step, string Unit, string Source,
+    string NativeModeSideEffect, DateTimeOffset? VerifiedAtUtc, long HardwareEpoch);
+
 [JsonConverter(typeof(Jiaolong.Contracts.Commands.LowerCamelEnumConverter<DeviceSupportState>))]
 public enum DeviceSupportState
 {
@@ -45,6 +49,8 @@ public sealed record CpuTuningState(
     public int? DcMaxFrequencyMhz { get; init; }
     public int? AcMinActiveCoresPercent { get; init; }
     public int? DcMinActiveCoresPercent { get; init; }
+    public int? AcBoostMode { get; init; }
+    public int? DcBoostMode { get; init; }
     public string? WindowsPowerSchemeName { get; init; }
     public int? PboScalar { get; init; }
     public IReadOnlyDictionary<int, int>? PerCoreCurveOptimizer { get; init; }
@@ -56,7 +62,7 @@ public static class CpuTuningStateExtensions
 {
     public static bool HasCompleteCurveValues(this CpuTuningState state) =>
         state.PerCoreCurveOptimizer is { Count: > 0 and <= 16 } cores &&
-        cores.Count == (state.EnabledCoreCount ?? 8) &&
+        state.EnabledCoreCount is int count && cores.Count == count &&
         Enumerable.Range(0, cores.Count).All(core => cores.TryGetValue(core, out int value) && value is >= -30 and <= 30);
 
     public static int? AcFrequency(this CpuTuningState state) =>
@@ -71,6 +77,8 @@ public sealed record HomeControlState(
     bool? StrongCooling,
     QuickSettingStatus[] QuickSettings)
 {
+    public ControlExecutionState? ExecutionState { get; init; }
+    public Jiaolong.Contracts.Commands.PerformanceModeEvidence? ModeEvidence { get; init; }
     public AdaptiveAutomationStatus? AdaptiveAutomation { get; init; }
     public MuxMode? MuxMode { get; init; }
     public CpuTuningState? CpuTuning { get; init; }
@@ -103,6 +111,8 @@ public sealed record GpuVfNode(int VoltageMv, int BaseFrequencyMhz, int OffsetKh
 
 public sealed record GpuVfState(GpuVfNode[] Nodes, int MinimumOffsetKhz, int MaximumOffsetKhz, string? Error)
 {
+    public DateTimeOffset? ObservedAtUtc { get; init; }
+    public string? Source { get; init; }
     public int? MemoryOffsetKhz { get; init; }
     public int? MemoryMinimumOffsetKhz { get; init; }
     public int? MemoryMaximumOffsetKhz { get; init; }
@@ -120,6 +130,10 @@ public sealed record HomeStateSnapshot(
 
 public sealed record CapabilitySnapshot(CapabilityDescriptor[] Items)
 {
+    public bool IsAvailable(string key) => Items.Any(item =>
+        string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase) && item.State == CapabilityState.Available);
+    public FieldCapability[] Fields { get; init; } = [];
+    public bool? IsOnAcPower { get; init; }
     public HardwareIdentity? Identity { get; init; }
     public DeviceSupportState SupportState { get; init; } = DeviceSupportState.Diagnosing;
     public string? Reason { get; init; }

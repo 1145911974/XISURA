@@ -12,7 +12,8 @@ public sealed record LightingDraft(string Effect, int Brightness, string Hex, bo
                 plan.BrightnessLevel ?? (int)Math.Round(plan.Brightness * 3d / 100),
                 new LightingColor(red, green, blue).Hex, plan.LogoEnabled ?? false) { Speed = plan.Speed }
             : null;
-    public bool IsValid() => Effect is "Static" or "Gradient" or "Cycle" && Brightness is >= 0 and <= 3 && LightingColor.TryParse(Hex, out _) && double.IsFinite(Speed) && Speed is >= .5 and <= 2;
+    public bool IsValid() => double.IsFinite(Speed) && Jiaolong.Contracts.Models.PresetValidation.ValidatePayload(Jiaolong.Contracts.Models.ControlPageId.Lighting,
+        System.Text.Json.JsonSerializer.SerializeToElement(this)).IsValid && Effect is "Static" or "Gradient" or "Cycle" && Brightness is >= 0 and <= 3 && LightingColor.TryParse(Hex, out _) && Speed is >= .5 and <= 2;
     public LightingColor PreviewColor(double seconds)
     {
         var color = ToPlan().ColorAt(seconds);

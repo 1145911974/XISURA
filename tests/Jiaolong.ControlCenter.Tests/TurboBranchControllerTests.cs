@@ -15,18 +15,20 @@ public sealed class TurboBranchControllerTests
         var controller = new TurboBranchController(() => hardware.State, hardware.Execute);
         await controller.ApplyAsync("Quiet", CancellationToken.None);
         Assert.AreEqual("Quiet", controller.ActiveTier);
-        Assert.AreEqual(45, hardware.State.Controls.CpuTuning!.SplWatts);
-        Assert.AreEqual(3500, hardware.State.Controls.ActiveFanControlPlan!.MaximumRpm);
-        Assert.AreEqual(2100, hardware.State.Controls.GpuClockLimit!.SubmittedMhz);
-        Assert.IsInstanceOfType<SetCpuTuningBatchCommand>(hardware.Commands[^1]);
-        hardware.State = hardware.State with { Controls = hardware.State.Controls with {
-            GpuClockLimit = hardware.State.Controls.GpuClockLimit with { SubmittedMhz = 2200 },
-            ActiveFanControlPlan = new FanControlPlan([]) { Strategy = "Fixed", FixedRpm = 4200 } } };
+        Assert.IsTrue(controller.HasOwnership);
+        Assert.IsInstanceOfType<ApplyTurboBranchCommand>(hardware.Commands.Single());
+        Assert.AreEqual(TurboBranchTier.Quiet, ((ApplyTurboBranchCommand)hardware.Commands[0]).Tier);
+        Assert.AreEqual(2400, hardware.State.Controls.GpuClockLimit!.SubmittedMhz);
+        Assert.IsNull(hardware.State.Controls.ActiveFanControlPlan);
+        hardware.State = hardware.State with { Controls = hardware.State.Controls with { PerformanceMode = PerformanceMode.Quiet } };
         Assert.IsTrue(controller.InvalidateIfChanged(hardware.State));
-        int writes = hardware.Commands.Count;
         await controller.ReleaseAsync(CancellationToken.None);
-        Assert.AreEqual(writes, hardware.Commands.Count);
-        Assert.AreEqual(2200, hardware.State.Controls.GpuClockLimit!.SubmittedMhz);
+        Assert.IsInstanceOfType<ReleaseTurboBranchCommand>(hardware.Commands[^1]);
+        Assert.AreEqual(hardware.Commands[0].OperationId, ((ReleaseTurboBranchCommand)hardware.Commands[^1]).BranchOperationId);
+        Assert.IsFalse(controller.HasOwnership);
+        Assert.AreEqual(2400, hardware.State.Controls.GpuClockLimit!.SubmittedMhz);
+        await controller.ApplyAsync("Extreme", CancellationToken.None);
+        Assert.AreEqual(TurboBranchTier.Extreme, ((ApplyTurboBranchCommand)hardware.Commands[^1]).Tier);
     }
 
     [TestMethod]
@@ -34,18 +36,31 @@ public sealed class TurboBranchControllerTests
     {
         var hardware = new Hardware { RejectCpu = true };
         var controller = new TurboBranchController(() => hardware.State, hardware.Execute);
-        await Assert.ThrowsExactlyAsync<AggregateException>(() => controller.ApplyAsync("Extreme", CancellationToken.None));
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => controller.ApplyAsync("Extreme", CancellationToken.None));
         Assert.IsNull(controller.ActiveTier);
         Assert.IsFalse(controller.HasOwnership);
         Assert.AreEqual(false, hardware.State.Controls.StrongCooling);
         Assert.AreEqual(2400, hardware.State.Controls.GpuClockLimit!.SubmittedMhz);
         Assert.AreEqual(120, hardware.State.Controls.CpuTuning!.SpptWatts);
-        Assert.AreEqual(1, hardware.Commands.OfType<SetCpuTuningBatchCommand>().Count());
+        Assert.AreEqual(1, hardware.Commands.Count);
+        hardware.RejectCpu = false;
+        hardware.UnknownApply = true;
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => controller.ApplyAsync("Quiet", CancellationToken.None));
+        Assert.IsTrue(controller.HasOwnership, "Lost/uncertain replies retain the owner token.");
+        hardware.FailRelease = true;
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => controller.ReleaseAsync(CancellationToken.None));
+        Assert.IsTrue(controller.HasOwnership, "Unconfirmed release retains the owner token for retry.");
+        hardware.FailRelease = false;
+        await controller.ReleaseAsync(CancellationToken.None);
+        Assert.IsFalse(controller.HasOwnership);
+        Assert.IsInstanceOfType<ReleaseTurboBranchCommand>(hardware.Commands[^1]);
     }
 
     private sealed class Hardware
     {
-        public bool RejectCpu { get; init; }
+        public bool RejectCpu { get; set; }
+        public bool UnknownApply { get; set; }
+        public bool FailRelease { get; set; }
         public List<HardwareCommand> Commands { get; } = [];
         public HomeStateSnapshot State { get; set; } = new(
             new CapabilitySnapshot([new("fanControl", CapabilityState.Available, null), new("strongCooling", CapabilityState.Available, null), new("gpuFrequencyLimit", CapabilityState.Available, null)]),
@@ -57,33 +72,15 @@ public sealed class TurboBranchControllerTests
         public Task<CommandResult> Execute(HardwareCommand command, CancellationToken token)
         {
             Commands.Add(command);
-            var controls = State.Controls;
-            switch (command)
-            {
-                case SetCpuTuningBatchCommand batch when RejectCpu:
-                    return Task.FromResult(new CommandResult(command.OperationId, CommandState.RolledBack, null, RequiredUserAction.None,
-                        ServiceError.Create(ErrorCode.ReadBackMismatch, command.OperationId, false), false));
-                case SetCpuTuningBatchCommand batch:
-                    var plan = batch.Plans[0];
-                    controls = controls with { PerformanceMode = batch.NativeMode, CpuTuning = controls.CpuTuning! with {
-                        TemperatureLimitC = plan.TemperatureLimitC, SplWatts = plan.SplWatts, SpptWatts = plan.SpptWatts,
-                        AcMaxFrequencyMhz = plan.AcMaxFrequencyMhz, DcMaxFrequencyMhz = plan.DcMaxFrequencyMhz, BoostEnabled = plan.BoostEnabled } };
-                    break;
-                case SetGpuFrequencyLimitCommand gpu:
-                    controls = controls with { GpuClockLimit = controls.GpuClockLimit! with { SubmittedMhz = gpu.Megahertz } };
-                    break;
-                case SetFanControlCommand fan:
-                    controls = controls with { ActiveFanControlPlan = fan.Plan, StrongCooling = false };
-                    break;
-                case SetStrongCoolingCommand strong:
-                    controls = controls with { StrongCooling = strong.Enabled, ActiveFanControlPlan = null };
-                    break;
-                case ReleaseFanControlCommand:
-                    controls = controls with { StrongCooling = false, ActiveFanControlPlan = null };
-                    break;
-            }
-            State = State with { Controls = controls };
-            return Task.FromResult(new CommandResult(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false));
+            if (command is ApplyTurboBranchCommand && (RejectCpu || UnknownApply))
+                return Task.FromResult(new CommandResult(command.OperationId, UnknownApply ? CommandState.RecoveryRequired : CommandState.Rejected,
+                    null, RequiredUserAction.None, ServiceError.Create(ErrorCode.ReadBackMismatch, command.OperationId, false), false)
+                { Mutation = UnknownApply ? HardwareMutation.Unknown : HardwareMutation.NoMutation });
+            if (command is ReleaseTurboBranchCommand && FailRelease)
+                return Task.FromResult(new CommandResult(command.OperationId, CommandState.RecoveryRequired, null, RequiredUserAction.None,
+                    ServiceError.Create(ErrorCode.ConflictDetected, command.OperationId, false), false) { Mutation = HardwareMutation.NoMutation });
+            return Task.FromResult(new CommandResult(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
+            { Mutation = HardwareMutation.NoMutation });
         }
     }
 }

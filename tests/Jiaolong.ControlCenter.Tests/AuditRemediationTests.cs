@@ -15,12 +15,15 @@ public sealed class AuditRemediationTests
     }
 
     [TestMethod]
-    public void Saved_performance_presets_refresh_the_adaptive_service_configuration()
+    public void Saved_performance_presets_leave_active_automatic_configuration_frozen()
     {
         string code = Read("Prototype/PrototypeWindow.Branding.cs");
         string handler = code[code.IndexOf("private void InvalidateSavedPerformancePreset", StringComparison.Ordinal)..];
         handler = handler[..handler.IndexOf("private (string Name", StringComparison.Ordinal)];
-        StringAssert.Contains(handler, "SetAutomaticPresetReader(PerformanceWorkspace.ReadAutomaticServicePresetsAsync)");
+        StringAssert.Contains(handler, "savedPerformanceDrafts.Remove(key)");
+        StringAssert.Contains(handler, "RefreshTrayPresetCatalogAsync()");
+        Assert.IsFalse(handler.Contains("SetAutomaticPresetReader", StringComparison.Ordinal),
+            "Autosave must leave the active automatic configuration frozen until explicitly applied.");
     }
 
     [TestMethod]

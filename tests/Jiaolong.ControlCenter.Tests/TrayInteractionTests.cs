@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using Jiaolong.Contracts.Models;
 using Jiaolong_ControlCenter.Prototype;
 using Jiaolong_ControlCenter.Services;
 
@@ -70,6 +71,32 @@ public sealed class TrayInteractionTests
     [TestMethod]
     public void Runtime_icons_use_six_approved_C_modes_and_keep_the_fixed_fallback()
     {
+        var now = DateTimeOffset.UtcNow;
+        var controls = new Jiaolong.Contracts.Models.HomeControlState(PerformanceMode.Quiet, false, [])
+        {
+            ModeEvidence = new Jiaolong.Contracts.Commands.PerformanceModeEvidence(now, "WMI", 4, "02", 2,
+                PerformanceMode.Quiet, null, "RequestStateUnverified")
+        };
+        Assert.AreEqual(Jiaolong.Contracts.Models.ControlModeId.Office,
+            TrayIconAssetCatalog.DisplayMode(controls, true, now, null));
+        Assert.IsFalse(TrayIconAssetCatalog.ReadbackConfirmed(controls));
+        Assert.IsNull(TrayIconAssetCatalog.DisplayMode(controls, false, now, null));
+        Assert.IsNull(TrayIconAssetCatalog.DisplayMode(controls, true, now.AddSeconds(4), null));
+        Assert.IsNull(TrayIconAssetCatalog.DisplayMode(controls, true, now.AddSeconds(-2), null));
+        controls = controls with
+        {
+            ExecutionState = new(1, 1, 1, Jiaolong.Contracts.Models.ControlModeId.Custom2,
+                PerformanceMode.Quiet, [], []) { NativeModeApplyState = Jiaolong.Contracts.Models.ApplyState.Confirmed }
+        };
+        Assert.AreEqual(Jiaolong.Contracts.Models.ControlModeId.Custom2,
+            TrayIconAssetCatalog.DisplayMode(controls, true, now, Jiaolong.Contracts.Models.ControlModeId.Custom2));
+        controls = controls with { ModeEvidence = controls.ModeEvidence! with { ParsedMode = PerformanceMode.Turbo } };
+        Assert.IsFalse(TrayIconAssetCatalog.ReadbackConfirmed(controls));
+        Assert.AreEqual(Jiaolong.Contracts.Models.ControlModeId.Turbo,
+            TrayIconAssetCatalog.DisplayMode(controls, true, now, Jiaolong.Contracts.Models.ControlModeId.Custom2));
+        controls = controls with { ModeEvidence = controls.ModeEvidence! with { VerificationLevel = "EffectiveStateConfirmed" } };
+        Assert.AreEqual(Jiaolong.Contracts.Models.ControlModeId.Turbo,
+            TrayIconAssetCatalog.DisplayMode(controls, true, now, Jiaolong.Contracts.Models.ControlModeId.Custom2));
         foreach (var mode in Enum.GetValues<Jiaolong.Contracts.Models.ControlModeId>())
             Assert.AreEqual($"Assets\\Brand\\CModeIcons\\JiaolongC{mode}.ico", TrayIconAssetCatalog.For("explore", mode));
         Assert.AreEqual(TrayIconAssetCatalog.FixedBrandAsset, TrayIconAssetCatalog.For("explore", null));

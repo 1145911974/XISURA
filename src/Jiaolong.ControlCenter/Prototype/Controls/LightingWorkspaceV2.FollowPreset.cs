@@ -16,13 +16,11 @@ public sealed partial class LightingWorkspaceV2
     private PresetKey? confirmedCustomLighting;
     private PresetKey? confirmedPerformanceLighting;
     public void SetConfirmedPerformanceTarget(PresetKey? key) => confirmedPerformanceLighting = key;
-    private PresetKey? followTarget;
     private PresetKey? lastAutomaticTarget;
     private PresetKey? lastFollowedTarget;
     private KeyboardLightingPlan? lastFollowedPlan;
     private string? followStatus;
     private readonly DispatcherTimer followPoll = new() { Interval = TimeSpan.FromSeconds(2) };
-    private readonly AdaptivePresetExecutor lightingFollower;
 
     private void InitializeLightingControl()
     {
@@ -45,51 +43,12 @@ public sealed partial class LightingWorkspaceV2
 
     private async Task FollowCurrentPresetAsync()
     {
-        if (!followPreset || followSettingPending || applying || saving || loading || colorDragging || lightingSliderDragging || colorFocused || pendingHardwarePreview is not null || PresetToolbar.IsEditingPreset || session?.State is not { } state || !lightingAvailable || !session.ConfigurationRestorationSettled) return;
-        followTarget = LightingPresetPolicy.ResolveTarget(state.Controls, lightingSlots, confirmedCustomLighting, confirmedPerformanceLighting);
-        if (lightingFollower.IsApplying || followTarget is not { } target || target == lastAutomaticTarget) return;
-        lightingFollower.Reset();
-        if (!lightingFollower.TryStartApply(target, CancellationToken.None, out var completion)) return;
-        // Remember the transition, not readback equality: polling cannot erase manual changes.
-        lastAutomaticTarget = target;
-        try
+        await Task.CompletedTask;
+        if (session?.State?.Controls.ExecutionState?.Pages.FirstOrDefault(p => p.Page == ControlPageId.Lighting) is { } page)
         {
-            var result = await completion;
-            if (result is not null && followPreset && followTarget == target)
-                HardwareStatusText.Text = followStatus = result.Command is { State: CommandState.Applied, Error: null }
-                    ? "已随模式应用对应灯光"
-                    : result.PartialReason ?? "自动应用未生效，已保留当前灯效；可手动重试";
+            if (page.State == Jiaolong.Contracts.Models.ApplyState.Confirmed) PresetToolbar.SetCurrentPreset(page.Key);
+            else if (page.Key is { } submitted) PresetToolbar.SetSubmittedPreset(submitted);
         }
-        catch (Exception error)
-        {
-            AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Lighting preset follow: {error}\n");
-            HardwareStatusText.Text = followStatus = "自动应用通信失败，已保留当前灯效；可手动重试";
-        }
-        finally
-        {
-            if (followPreset && followTarget != target) _ = FollowCurrentPresetAsync();
-        }
-    }
-
-    private async Task<AdaptivePresetApplyResult> ApplyFollowedPresetAsync(PresetKey target, CancellationToken token)
-    {
-        var envelope = await presets.LoadAsync(ControlPageId.Lighting, target, token);
-        var stored = envelope is null ? LightingDraft.Default : envelope.SchemaVersion == 1 ? envelope.Payload.Deserialize<LightingDraft>() : null;
-        if (stored?.IsValid() != true)
-            return new(RejectedLighting(), "当前模式没有有效的已保存灯光预设，保持现有灯效");
-        var plan = stored.ToPlan() with { LogoEnabled = null };
-        var result = await ApplySavedLightingAsync(plan,
-            () => followPreset && !followSettingPending && !PresetToolbar.IsEditingPreset && session?.State is { } current &&
-                LightingPresetPolicy.ResolveTarget(current.Controls, lightingSlots, confirmedCustomLighting, confirmedPerformanceLighting) == target, token);
-        if (result is { State: CommandState.Applied, Error: null })
-        {
-            lastFollowedTarget = target; lastFollowedPlan = plan;
-            independentDraft = LightingDraft.FromPlan(plan);
-            PresetToolbar.SetCurrentPreset(target);
-            PresetToolbar.SetConfirmedActivePreset(target);
-            if (!PresetToolbar.IsEditingPreset) { draft = independentDraft!; Render(); }
-        }
-        return new(result);
     }
 
     private async void OnFollowPresetClick(object? sender, bool requested)
@@ -118,6 +77,7 @@ public sealed partial class LightingWorkspaceV2
             PresetToolbar.SetFollowPreset(followPreset);
             UpdateActionAvailability();
         }
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(requested);
         await FollowCurrentPresetAsync();
     }
 

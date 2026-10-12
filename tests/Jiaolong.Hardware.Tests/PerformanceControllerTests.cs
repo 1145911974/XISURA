@@ -10,6 +10,46 @@ namespace Jiaolong.Hardware.Tests;
 public sealed class PerformanceControllerTests
 {
     [TestMethod]
+    public async Task Cpu_lifecycle_pause_stops_subsequent_calls_and_never_runs_unchecked_recovery()
+    {
+        foreach (string stage in new[] { "capture", "write", "restore" })
+        {
+            bool allowed = true;
+            var calls = new List<string>();
+            var fake = new LifecycleCpuTransport(calls, stage, () => allowed = false);
+            var controller = new PerformanceController(cpuTransport: fake, hardwareAccessAllowed: () => allowed);
+            var result = await controller.ApplyCpuTuningAsync(new(90, null, null, 3000, null, null, null, null), true,
+                CancellationToken.None);
+            Assert.AreEqual(stage == "capture" ? CommandState.Rejected : CommandState.RecoveryRequired, result.State, stage);
+            Assert.IsFalse(result.HardwareReadBackConfirmed);
+            Assert.IsNotNull(result.Error);
+            int boundary = calls.IndexOf("paused");
+            Assert.IsTrue(boundary >= 0);
+            Assert.AreEqual(boundary, calls.Count - 1, "No read, write or restore may follow the pause: " + stage);
+        }
+    }
+
+    private sealed class LifecycleCpuTransport(List<string> calls, string stage, Action pause) : ICpuTuningTransport
+    {
+        private bool wrote;
+        private void Pause() { pause(); calls.Add("paused"); }
+        public Task CaptureTransactionAsync(IReadOnlyList<CpuTuningPlan> plans, bool nativeEffects, CancellationToken token)
+        { calls.Add("capture"); if (stage == "capture") Pause(); return Task.CompletedTask; }
+        public Task<object?> ReadFieldAsync(CpuTuningField field, CancellationToken token)
+        {
+            calls.Add("read:" + field);
+            if (wrote && stage == "restore") throw new InvalidOperationException("Simulated verification failure");
+            return Task.FromResult<object?>(field == CpuTuningField.TemperatureLimitC ? wrote ? 90 : 95 : new WindowsPowerFrequencyValue(4500, 4500));
+        }
+        public Task WriteFieldAsync(CpuTuningField field, object? value, CancellationToken token)
+        { calls.Add("write:" + field); wrote = true; if (stage == "write") Pause(); return Task.CompletedTask; }
+        public Task RestoreFieldAsync(CpuTuningField field, object? value, CancellationToken token)
+        { calls.Add("restore:" + field); Pause(); return Task.CompletedTask; }
+        public Task RestoreTransactionAsync(CancellationToken token)
+        { calls.Add("restore.transaction"); return Task.CompletedTask; }
+    }
+
+    [TestMethod]
     public async Task Batch_skips_confirmed_equal_values_but_rechecks_after_native_mode_reset()
     {
         var unchanged = new CpuTuningFixture(CpuTuningField.SplWatts);

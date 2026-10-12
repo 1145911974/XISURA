@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Jiaolong_ControlCenter.Prototype.QuickMenu;
 
 namespace Jiaolong_ControlCenter.Services;
@@ -26,6 +27,10 @@ public sealed record UserPreferences(bool MinimizeToTrayOnClose, string Theme, b
     public Dictionary<string, int> PerformancePresetSlots { get; init; } = [];
     public Dictionary<string, int> GpuPresetSlots { get; init; } = [];
     public Dictionary<string, int> FanPresetSlots { get; init; } = [];
+    public Dictionary<string, string>? CustomBaseModes { get; init; } = new(StringComparer.OrdinalIgnoreCase)
+    { ["custom1"] = "office", ["custom2"] = "gaming", ["custom3"] = "turbo" };
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; init; }
     public bool AdaptiveModeEnabled { get; init; }
     public Dictionary<string, string> PresetNames { get; init; } = [];
     public AdaptiveStrategyId ActiveAdaptiveStrategy { get; init; } = AdaptiveStrategyId.BalancedAdaptive;
@@ -118,6 +123,14 @@ public sealed class UserPreferencesStore
     private void SaveCore(UserPreferences preferences)
     {
         var path = preferencesPath;
+        if (File.Exists(path))
+        {
+            // Strict read prevents an explicit save from replacing malformed future data.
+            var existing = LoadCore(allowFallback: false);
+            var future = new Dictionary<string, JsonElement>(existing.ExtensionData ?? []);
+            foreach (var (key, value) in preferences.ExtensionData ?? []) future[key] = value.Clone();
+            preferences = preferences with { ExtensionData = future.Count == 0 ? null : future };
+        }
         var directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("Preferences directory is unavailable.");
         Directory.CreateDirectory(directory);
         var tempPath = path + ".tmp-" + Guid.NewGuid().ToString("N");

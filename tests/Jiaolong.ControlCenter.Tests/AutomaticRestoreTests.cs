@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Buffers.Binary;
 using System.IO.Pipes;
 using System.Threading.Channels;
@@ -27,8 +27,13 @@ public sealed class AutomaticRestoreTests
     {
         var presets = new ControlPresetStore(paths);
         for (int slot = 1; slot <= 3; slot++)
-            await presets.SaveAsync(new(1, ControlPageId.Performance, new(ControlModeId.Office, slot),
-                $"slot {slot}", JsonSerializer.SerializeToElement(new { frequency = 3000 + slot * 100 }), DateTimeOffset.UtcNow), Token);
+        {
+            var preset = DefaultControlPresets.Create(ControlPageId.Performance, new(ControlModeId.Office, slot));
+            var payload = preset.Payload.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.Clone());
+            payload["acMaxFrequencyMhz"] = JsonSerializer.SerializeToElement(3000 + slot * 100);
+            await presets.SaveAsync(preset with { DisplayName = $"slot {slot}", Payload = JsonSerializer.SerializeToElement(payload),
+                Settings = new(preset.Settings) { ["acMaxFrequencyMhz"] = SettingRequest.Set(3000 + slot * 100) } }, Token);
+        }
         var command = Cpu(4200, null);
         await new AppliedConfigurationRestore(paths).RecordAppliedAsync(command, Applied(command), Token);
         await Replay(new AppliedConfigurationRestore(paths));
@@ -36,7 +41,7 @@ public sealed class AutomaticRestoreTests
         for (int slot = 1; slot <= 3; slot++)
         {
             var saved = await presets.LoadAsync(ControlPageId.Performance, new(ControlModeId.Office, slot), Token);
-            Assert.AreEqual(3000 + slot * 100, saved!.Payload.GetProperty("frequency").GetInt32());
+            Assert.AreEqual(3000 + slot * 100, saved!.Payload.GetProperty("acMaxFrequencyMhz").GetInt32());
         }
     }
 
@@ -168,6 +173,17 @@ public sealed class AutomaticRestoreTests
         catch (OperationCanceledException) { }
         await Replay(new AppliedConfigurationRestore(paths));
         Assert.HasCount(0, sent);
+        using (var retained = JsonDocument.Parse(await File.ReadAllTextAsync(StatePath)))
+            Assert.AreEqual("cpu", retained.RootElement.GetProperty("pendingGroup").GetString());
+        var mode = new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced);
+        await restore.RecordAppliedAsync(mode, Applied(mode), Token);
+        var unknown = await restore.RestoreAsync((request, _) => Task.FromResult(Applied(request) with
+            { State = CommandState.RecoveryRequired, Mutation = HardwareMutation.Unknown }), () => true, false, Token);
+        Assert.IsNotNull(unknown.Warning);
+        await Replay(new AppliedConfigurationRestore(paths));
+        Assert.HasCount(0, sent);
+        using var pending = JsonDocument.Parse(await File.ReadAllTextAsync(StatePath));
+        Assert.AreEqual("mode", pending.RootElement.GetProperty("pendingGroup").GetString());
     }
 
     [TestMethod]
@@ -217,6 +233,7 @@ public sealed class AutomaticRestoreTests
         var deferred = await restore.RestoreAsync(Send, () => true, false, Token,
             command => command is not SetPerformanceModeCommand);
         Assert.AreEqual(2, deferred.Skipped);
+        Assert.IsNull(deferred.Warning, "Intentionally deferred writes are not restore failures.");
         Assert.IsInstanceOfType<SetLidLogoCommand>(sent.Single());
         sent.Clear();
         await Replay(new AppliedConfigurationRestore(paths));
@@ -231,19 +248,19 @@ public sealed class AutomaticRestoreTests
         await restore.RecordAppliedAsync(mode, Applied(mode), Token);
         var cpu = Cpu(4200, null);
         await restore.RecordAppliedAsync(cpu, Applied(cpu), Token);
-        await restore.RecordObservedModeAsync(PerformanceMode.Balanced, Token);
+        await restore.RecordObservedModeAsync(PerformanceMode.Balanced, Token, independentlyConfirmed: true);
         await Replay(restore);
         Assert.HasCount(2, sent);
         sent.Clear();
-        await restore.RecordObservedModeAsync(PerformanceMode.Quiet, Token);
+        await restore.RecordObservedModeAsync(PerformanceMode.Quiet, Token, independentlyConfirmed: true);
         await Replay(new AppliedConfigurationRestore(paths));
         Assert.AreEqual(PerformanceMode.Quiet, ((SetPerformanceModeCommand)sent.Single()).Mode);
         sent.Clear();
-        await restore.RecordObservedModeAsync(PerformanceMode.Turbo, Token, () => false);
+        await restore.RecordObservedModeAsync(PerformanceMode.Turbo, Token, () => false, independentlyConfirmed: true);
         await Replay(restore);
         Assert.AreEqual(PerformanceMode.Quiet, ((SetPerformanceModeCommand)sent.Single()).Mode);
         sent.Clear();
-        await restore.RecordObservedModeAsync(PerformanceMode.Turbo, Token);
+        await restore.RecordObservedModeAsync(PerformanceMode.Turbo, Token, independentlyConfirmed: true);
         await restore.RestoreAsync(Send, () => true, true, Token);
         Assert.AreEqual(PerformanceMode.Turbo, ((SetPerformanceModeCommand)sent.Single()).Mode);
     }
@@ -282,7 +299,7 @@ public sealed class AutomaticRestoreTests
     public async Task Session_records_real_reply_and_restores_on_start_and_only_one_wake_event()
     {
         await using var server = new RestorePipeService();
-        var command = new SetLidLogoCommand(Guid.NewGuid(), true);
+        var command = new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced);
         await using (var session = new HomeControlSession(new ControlCenterClient(server.Name),
             automaticRestore: new AppliedConfigurationRestore(paths)))
         {
@@ -295,7 +312,7 @@ public sealed class AutomaticRestoreTests
         {
             await session.StartAsync(Token);
             var startup = await server.Next();
-            Assert.IsInstanceOfType<SetLidLogoCommand>(startup);
+            Assert.IsInstanceOfType<SetPerformanceModeCommand>(startup);
             Assert.AreNotEqual(command.OperationId, startup.OperationId);
             session.HandlePowerEvent(4);
             session.HandlePowerEvent(18);
@@ -317,7 +334,8 @@ public sealed class AutomaticRestoreTests
     private static SetCpuTuningCommand Cpu(int mhz, int? curve) => new(Guid.NewGuid(),
         new CpuTuningPlan(null, null, null, mhz, null, null, null, curve), true);
     private static CommandResult Applied(HardwareCommand command) =>
-        new(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false);
+        new(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
+        { VerifiedPerformanceMode = (command as SetPerformanceModeCommand)?.Mode };
 
     // Only the out-of-process hardware boundary is simulated; client, session and disk store are real.
     private sealed class RestorePipeService : IAsyncDisposable
@@ -328,7 +346,7 @@ public sealed class AutomaticRestoreTests
         private readonly Task serving;
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-        public RestorePipeService() => serving = Serve();
+        public RestorePipeService() => serving = Task.WhenAll(Enumerable.Range(0, 3).Select(_ => Serve()));
         public async Task<HardwareCommand> Next() =>
             await Commands.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -337,7 +355,7 @@ public sealed class AutomaticRestoreTests
             var ct = lifetime.Token;
             while (!ct.IsCancellationRequested)
             {
-                await using var pipe = new NamedPipeServerStream(Name, PipeDirection.InOut, 1,
+                await using var pipe = new NamedPipeServerStream(Name, PipeDirection.InOut, 8,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                 try
                 {
@@ -365,7 +383,7 @@ public sealed class AutomaticRestoreTests
                             else
                             {
                                 var state = new HomeStateSnapshot(new CapabilitySnapshot([
-                                    new("quickSetting:lidLogo", CapabilityState.Available, null)]) { SupportState = DeviceSupportState.Ready },
+                                    new("performanceMode", CapabilityState.Available, null)]) { SupportState = DeviceSupportState.Ready },
                                     null, new HomeControlState(PerformanceMode.Balanced, false, []));
                                 payload = JsonSerializer.SerializeToElement(state, JsonOptions);
                             }

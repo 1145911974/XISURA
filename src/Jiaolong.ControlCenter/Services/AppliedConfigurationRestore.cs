@@ -19,7 +19,8 @@ public sealed class AppliedConfigurationRestore
     public AppliedConfigurationRestore(IUserPreferencesPathProvider? paths = null) =>
         this.paths = paths ?? new DefaultUserPreferencesPathProvider();
 
-    public async Task RecordAppliedAsync(HardwareCommand command, CommandResult result, CancellationToken cancellationToken)
+    public async Task RecordAppliedAsync(HardwareCommand command, CommandResult result, CancellationToken cancellationToken,
+        Func<bool>? stillCurrent = null)
     {
         if (command is SetGpuFrequencyLimitCommand or SetGpuPowerLimitCommand or SetGpuPowerPolicyCommand or SetGpuVoltageBoostCommand) return;
         // PBO is a deliberate, temperature-gated write; never replay it on startup.
@@ -33,8 +34,10 @@ public sealed class AppliedConfigurationRestore
         try
         {
             var state = await LoadAsync(cancellationToken);
+            if (stillCurrent?.Invoke() == false) return;
             if (command is SetPerformanceModeCommand)
             {
+                state.ConfirmedMode = result.VerifiedPerformanceMode;
                 // An OEM mode may reset tuning. Never replay overrides belonging to the previous mode.
                 foreach (var prior in new[] { "cpu", "gpu", "fan" })
                 {
@@ -45,6 +48,8 @@ public sealed class AppliedConfigurationRestore
             if (command is ReleaseFanControlCommand) state.Commands.Remove(group);
             else state.Commands[group] = command;
             state.BlockedGroups.Remove(group);
+            state.UnresolvedGroups.Remove(group);
+            if (state.PendingGroup == group) state.PendingGroup = null;
             state.LastGroup = group;
             state.LastOperationId = command.OperationId;
             state.LastAttemptUtc = DateTimeOffset.UtcNow;
@@ -54,9 +59,10 @@ public sealed class AppliedConfigurationRestore
         finally { storageGate.Release(); }
     }
 
-    public async Task RecordObservedModeAsync(PerformanceMode mode, CancellationToken cancellationToken, Func<bool>? stillCurrent = null)
+    public async Task RecordObservedModeAsync(PerformanceMode mode, CancellationToken cancellationToken, Func<bool>? stillCurrent = null,
+        bool independentlyConfirmed = false)
     {
-        if (!Enum.IsDefined(mode)) return;
+        if (!independentlyConfirmed || !Enum.IsDefined(mode)) return;
         await storageGate.WaitAsync(cancellationToken);
         try
         {
@@ -71,6 +77,7 @@ public sealed class AppliedConfigurationRestore
                 state.BlockedGroups.Remove(group);
             }
             state.Commands["mode"] = new SetPerformanceModeCommand(Guid.NewGuid(), mode);
+            state.ConfirmedMode = mode;
             state.BlockedGroups.Remove("mode");
             await SaveAsync(state, cancellationToken);
         }
@@ -109,6 +116,8 @@ public sealed class AppliedConfigurationRestore
             foreach (var group in Order)
             {
                 if (!state.Commands.TryGetValue(group, out var saved)) continue;
+                if (saved is SetPerformanceModeCommand savedMode && state.ConfirmedMode != savedMode.Mode)
+                { skipped++; continue; }
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!canContinue()) break;
                 bool tuning = group is "mode" or "cpu" or "gpu" or "fan";
@@ -136,11 +145,13 @@ public sealed class AppliedConfigurationRestore
                 {
                     state.LastOutcome = "transportFailed";
                     state.BlockedGroups.Add(group);
-                    state.PendingGroup = null;
+                    state.UnresolvedGroups.Add(group);
                     await SaveAsync(state, CancellationToken.None);
                     return new(applied, skipped, "自动恢复连接失败，已停止本次恢复；请检查后重新使用预设");
                 }
-                state.PendingGroup = null;
+                bool uncertain = result.State == CommandState.RecoveryRequired || result.Mutation == HardwareMutation.Unknown && !Succeeded(command, result);
+                if (uncertain) state.UnresolvedGroups.Add(group);
+                if (!uncertain) state.PendingGroup = null;
                 // A competing console refused the write before execution; it is not a damaged preset.
                 if (result.State == CommandState.Rejected &&
                     result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.ConflictDetected)
@@ -182,14 +193,13 @@ public sealed class AppliedConfigurationRestore
             {
                 state.Commands.Remove("cpu");
                 state.BlockedGroups?.Remove("cpu");
-                if (state.PendingGroup == "cpu") state.PendingGroup = null;
             }
             if (state?.Version == 1 && state.Commands?.Remove("gpu") == true)
             {
                 state.BlockedGroups?.Remove("gpu");
-                if (state.PendingGroup == "gpu") state.PendingGroup = null;
             }
             if (state is null || state.Version != 1 || state.Commands is null || state.BlockedGroups is null ||
+                state.UnresolvedGroups is null || state.UnresolvedGroups.Any(group => !Order.Contains(group)) ||
                 state.Commands.Count > Order.Length ||
                 state.Commands.Any(pair => pair.Key != Group(pair.Value) || !Valid(pair.Value)) ||
                 state.BlockedGroups.Any(group => !Order.Contains(group)) ||
@@ -198,8 +208,9 @@ public sealed class AppliedConfigurationRestore
             if (state.PendingGroup is { } interrupted)
             {
                 state.BlockedGroups.Add(interrupted);
-                state.PendingGroup = null;
+                state.UnresolvedGroups.Add(interrupted);
             }
+            state.BlockedGroups.UnionWith(state.UnresolvedGroups);
             return state;
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or ArgumentException or NullReferenceException)
@@ -228,7 +239,8 @@ public sealed class AppliedConfigurationRestore
 
     private static bool Succeeded(HardwareCommand command, CommandResult result) =>
         result.OperationId == command.OperationId && result.State == CommandState.Applied && result.Error is null &&
-        result.RequiredAction == RequiredUserAction.None && !result.IsReplay;
+        result.RequiredAction == RequiredUserAction.None && !result.IsReplay &&
+        (command is not SetPerformanceModeCommand mode || result.VerifiedPerformanceMode == mode.Mode);
 
     private static string? Group(HardwareCommand? command) => command switch
     {
@@ -262,9 +274,11 @@ public sealed class AppliedConfigurationRestore
     {
         [System.Text.Json.Serialization.JsonRequired]
         public int Version { get; set; } = 1;
+        public PerformanceMode? ConfirmedMode { get; set; }
         public Dictionary<string, HardwareCommand> Commands { get; set; } = [];
         public HashSet<string> BlockedGroups { get; set; } = [];
         public string? PendingGroup { get; set; }
+        public HashSet<string> UnresolvedGroups { get; set; } = new(StringComparer.Ordinal);
         public string? LastGroup { get; set; }
         public DateTimeOffset? LastAttemptUtc { get; set; }
         public Guid? LastOperationId { get; set; }

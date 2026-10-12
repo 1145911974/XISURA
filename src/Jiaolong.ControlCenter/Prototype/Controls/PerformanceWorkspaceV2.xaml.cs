@@ -15,6 +15,7 @@ namespace Jiaolong_ControlCenter.Prototype.Controls;
 
 public sealed partial class PerformanceWorkspaceV2 : UserControl
 {
+    public PresetCatalogController? Catalog { get; set; }
     public event Action<PresetKey>? PresetApplied;
     public event Action<PresetKey>? PresetSaved;
     public Func<Task<bool>>? PrepareManualControlAsync { get; set; }
@@ -50,7 +51,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly ControlPresetStore presetStore = new();
+    private readonly ControlPresetStore presetStore;
     private readonly UserPreferencesStore followPreferences = new();
     private PresetKey selectedPreset = PresetKey.Create(ControlModeId.Office, 1);
     private HomeControlSession? session;
@@ -85,7 +86,13 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     public PerformanceWorkspaceV2()
     {
+        presetStore = new(capabilities: () => session?.State?.Capabilities);
         InitializeComponent();
+        PresetToolbar.PresetRenamed += async (_, key) =>
+        {
+            try { if (Catalog is not null) await Catalog.RenameAsync(key); }
+            catch (Exception error) { AppRuntimeLog.Write($"Preset rename: {error}"); await PresetToolbar.ShowStatusAsync("名称保存未完成，请重试"); }
+        };
         IsFollowingPreset = followPreferences.Load().PerformanceFollowPreset;
         BoostHelpButton.Help = new ParameterHelpContent(
             "允许处理器在功耗、温度与电流限制内自动提高频率；开启后短时响应更快，也可能更热、更吵。",
@@ -144,6 +151,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
 
         ApplyFollowPresetState(enabled);
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(enabled);
         FollowPresetChanged?.Invoke(this, enabled);
     }
 
@@ -164,6 +172,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         else
         {
             if (dirty && TryCreateDraft() is { } retained) editorDrafts[selectedPreset] = retained;
+            await (Catalog?.FlushAsync() ?? Task.CompletedTask);
             dirty = false;
             presetEditorLoading = false;
             ApplyHardwareState(currentState, useRecommendations: false, preservePresetState: true);
@@ -209,7 +218,11 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         try
         {
             if (PrepareManualControlAsync is { } prepare && !await prepare()) return;
+            Catalog?.RecordManualLive(ControlPageId.Performance);
+            ApplyFollowPresetState(false);
+            PresetToolbar.SetFollowPreset(false);
             await ApplySavedDraftAsync(draft, XamlRoot, requireComplete: false, presetKey: null);
+            if (Catalog is not null) await Catalog.PublishManualLiveAsync();
         }
         catch (Exception ex)
         {
@@ -237,7 +250,17 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (PresetToolbar.IsEditingPreset)
         {
             SetDirty(true);
-            if (TryCreateDraft() is { } retained) editorDrafts[selectedPreset] = retained;
+            if (TryCreateDraft() is { } retained)
+            {
+                editorDrafts[selectedPreset] = retained;
+                var key = selectedPreset;
+                Catalog?.ScheduleSave(ControlPageId.Performance, key, PresetToolbar.DisplayNameFor(key),
+                    JsonSerializer.SerializeToElement(retained, PresetJson), () =>
+                    {
+                        if (selectedPreset == key && editorDrafts.GetValueOrDefault(key) == retained)
+                        { selectedSavedDraft = retained; editorDrafts.Remove(key); SetDirty(false); _ = PresetToolbar.ShowSavedStatusAsync(); }
+                    });
+            }
         }
         else
         {
@@ -328,7 +351,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         SetConnectionState(available, currentState is not null);
         ControlSourceText.Text = PresetToolbar.IsEditingPreset ? "正在编辑预设 · 尚未应用" : currentState is not null ? "硬件回读" : available ? "等待读回" : "未连接";
 
-        if (!PresetToolbar.IsEditingPreset && !applyInProgress && !liveEditApplying && !liveEditPending)
+        if (!PresetToolbar.IsEditingPreset && !applyInProgress && !liveEditApplying && !liveEditPending &&
+            !TemperatureRow.IsInputPending && !SustainedPowerRow.IsInputPending && !BurstPowerRow.IsInputPending && !FrequencyRow.IsInputPending && !CurveOptimizerRow.IsInputPending)
             ApplyHardwareState(available ? currentState : null, useRecommendations: false, preservePresetState: true);
 
         RefreshBoundaryFromEditor();
@@ -567,7 +591,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         SetInteractionAvailability(false);
         try
         {
+            await (Catalog?.FlushAsync() ?? Task.CompletedTask);
             var envelope = await presetStore.ResetPerformanceAsync(key, CancellationToken.None);
+            if (Catalog is not null && session?.IsServiceConnected == true) await Catalog.PublishAsync(Catalog.CurrentLogicalMode(), CancellationToken.None);
             PresetSaved?.Invoke(key);
             editorDrafts.Remove(key);
             if (selectedPreset == key && PresetToolbar.IsEditingPreset)
@@ -597,9 +623,10 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             var envelope = await presetStore.LoadAsync(ControlPageId.Performance, key, CancellationToken.None);
             if (selectedPreset.Mode != mode) return;
             var draft = envelope is null ? null : SavedPerformancePreset.ReadDraft(envelope, key);
+            string Frequency(string field, string power) => envelope?.Settings.GetValueOrDefault(field) is
+                { Intent: SettingIntent.Set, Value: { } value } ? $"{power} {value.GetInt32() / 1000d:0.0}GHz" : $"{power} 沿用";
             PresetToolbar.SetSlotSummary(slot, draft is null ? "未配置" :
-                draft.UseOfficialCpuPolicy ? $"官方调度 · {draft.AcMaxFrequencyMhz / 1000d:0.0}GHz" :
-                $"{draft.TemperatureLimitC}°C · {draft.SplWatts}W · {draft.AcMaxFrequencyMhz / 1000d:0.0}GHz");
+                $"{(draft.UseOfficialCpuPolicy ? "厂商功耗" : $"{draft.TemperatureLimitC}°C · {draft.SplWatts}W")} · {Frequency("acMaxFrequencyMhz", "AC")} / {Frequency("dcMaxFrequencyMhz", "DC")}");
         }
     }
 
@@ -614,12 +641,15 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (applyInProgress || liveEditApplying || liveEditPending || presetEditorLoading) return false;
         PerformanceDraft? draft = TryCreateDraft();
         if (draft is null) { await ShowOperationFailureAsync("当前设置尚未读回完整，未保存。请重试或进入预设编辑。"); return false; }
+        if (!PresetToolbar.IsEditingPreset) draft = draft.CaptureCurrentPbo(currentState?.PboScalar);
         applyInProgress = true;
         SetInteractionAvailability(false);
         try
         {
-            await presetStore.SaveAsync(new PagePresetEnvelope(1, ControlPageId.Performance, key,
-                PresetToolbar.DisplayNameFor(key), JsonSerializer.SerializeToElement(draft, PresetJson), DateTimeOffset.UtcNow), CancellationToken.None);
+            if (Catalog is null) return false;
+            await Catalog.FlushAsync();
+            await Catalog.SavePayloadAsync(ControlPageId.Performance, key, PresetToolbar.DisplayNameFor(key),
+                JsonSerializer.SerializeToElement(draft, PresetJson), CancellationToken.None, copyCurrent: !PresetToolbar.IsEditingPreset);
             editorDrafts.Remove(key);
             if (key == selectedPreset)
             {
@@ -659,56 +689,17 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         Func<bool>? isCurrentRequest = null,
         CancellationToken queueCancellationToken = default)
     {
-        PresetKey.Create(key.Mode, key.Slot);
-        if (applyInProgress)
-            return false;
-
-        PagePresetEnvelope? envelope;
-        try
-        {
-            envelope = await presetStore.LoadAsync(ControlPageId.Performance, key, CancellationToken.None);
-        }
-        catch
-        {
-            await PresetToolbar.ShowStatusAsync("性能预设读取失败");
-            return false;
-        }
-
-        PerformanceDraft? draft = null;
-        try
-        {
-            draft = envelope is null ? null : SavedPerformancePreset.ReadDraft(envelope, key);
-        }
-        catch (Exception error) when (error is JsonException or InvalidOperationException)
-        {
-        }
-        if (draft is null)
-        {
-            string profile = key.Mode switch
-            {
-                ControlModeId.Office => "办公",
-                ControlModeId.Gaming => "游戏",
-                ControlModeId.Turbo => "狂飙",
-                ControlModeId.Custom1 => "自定义 1",
-                ControlModeId.Custom2 => "自定义 2",
-                _ => "自定义 3"
-            };
-            await PresetToolbar.ShowStatusAsync($"请先保存{profile}预设 {key.Slot}");
-            return false;
-        }
-
-        if (isCurrentRequest?.Invoke() == false) return false;
-        bool applied = await ApplySavedDraftAsync(draft, confirmationRoot, beforeApply, requireComplete: true, presetKey: key,
-            isCurrentRequest: isCurrentRequest, queueCancellationToken: queueCancellationToken);
-        if (applied)
-        {
-            lastSubmittedPresetKey = key;
-            lastSubmittedPresetDraft = draft;
-            currentState = session?.State?.Controls.CpuTuning ?? currentState;
-            if (PresetMatchesReadback(draft)) PresetToolbar.SetCurrentPreset(key);
-            else SetSubmittedPreset(key);
-        }
-        return applied;
+        if (Catalog is null) return false;
+        var result = await Catalog.ApplyAsync(key.Mode, Catalog.NativeModeFor(key), ControlOrigin.PresetUse,
+            ControlPageId.Performance, key, queueCancellationToken, isCurrentRequest);
+        if (result is null) return false;
+        var envelope = await presetStore.LoadAsync(ControlPageId.Performance, key, CancellationToken.None);
+        lastSubmittedPresetKey = key;
+        lastSubmittedPresetDraft = envelope is null ? null : SavedPerformancePreset.ReadDraft(envelope, key);
+        var page = result.ExecutionState?.Pages.FirstOrDefault(p => p.Page == ControlPageId.Performance);
+        bool confirmed = page?.State == Jiaolong.Contracts.Models.ApplyState.Confirmed;
+        if (confirmed) PresetToolbar.SetCurrentPreset(key); else SetSubmittedPreset(key);
+        return result.State == CommandState.Applied && result.Error is null;
     }
 
     private async Task<bool> ApplySavedDraftAsync(
@@ -965,6 +956,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private async void OnPresetKeyChanged(object? sender, PresetKey key)
     {
         if (PresetToolbar.IsEditingPreset && dirty && TryCreateDraft() is { } retained) editorDrafts[selectedPreset] = retained;
+        await (Catalog?.FlushAsync() ?? Task.CompletedTask);
         selectedPreset = key;
         selectedSavedDraft = null;
         long revision = presetLoadRevision + 1;
@@ -1026,7 +1018,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         else FrequencyRow.SetValue(editingAc ? acFrequencyMhz : dcFrequencyMhz);
         AdvancedWorkspace.ApplyDraft(draft.AdvancedCpuTuning, draft.NegativeCurveOptimizer,
             draft.AcMinActiveCoresPercent, draft.DcMinActiveCoresPercent);
-        AdvancedWorkspace.SetAllCoreCurveOffset(Math.Clamp(AdvancedWorkspace.AllCoreCurveValue, -30, 0));
+        AdvancedWorkspace.SetAllCoreCurveOffset(Math.Clamp(AdvancedWorkspace.AllCoreCurveValue, -30, 0), userEdited: false);
         BoostToggle.IsOn = draft.IsBoostEnabled;
         synchronizing = false;
         RefreshBoundaryFromEditor();
@@ -1049,9 +1041,14 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         int burst = (int)Math.Round(BurstPowerRow.Value ?? BurstPowerRow.RecommendedValue);
         int ac = acFrequencyMhz ?? currentState.AcFrequency() ?? (int)Math.Round(FrequencyRow.RecommendedValue);
         int dc = dcFrequencyMhz ?? currentState.DcFrequency() ?? (int)Math.Round(FrequencyRow.RecommendedValue);
+        bool managing = PresetToolbar.IsEditingPreset;
+        var parking = AdvancedWorkspace.ReadCoreParking(preserveLoaded: managing);
 
         return new PerformanceDraft
         {
+            Mode = PresetToolbar.IsEditingPreset
+                ? Catalog?.NativeModeFor(selectedPreset) ?? selectedSavedDraft?.Mode ?? PerformanceMode.Balanced
+                : session?.State?.Controls.PerformanceMode ?? PerformanceMode.Balanced,
             UseOfficialCpuPolicy = PresetToolbar.IsEditingPreset ? useOfficialCpuPolicy : currentState.OemCustomPowerMode is false,
             TemperatureLimitC = temperature,
             SplWatts = sustained,
@@ -1060,10 +1057,10 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             DcMaxFrequencyMhz = dc,
             IsBoostEnabled = BoostToggle.IsOn,
             WindowsPowerSchemeId = windowsPowerSchemeDraftId ?? currentState.WindowsPowerSchemeId ?? Guid.Empty,
-            AcMinActiveCoresPercent = AdvancedWorkspace.DraftCoreParking?.Ac,
-            DcMinActiveCoresPercent = AdvancedWorkspace.DraftCoreParking?.Dc,
-            NegativeCurveOptimizer = null,
-            AdvancedCpuTuning = AdvancedWorkspace.ReadDraft()
+            AcMinActiveCoresPercent = parking?.Ac,
+            DcMinActiveCoresPercent = parking?.Dc,
+            NegativeCurveOptimizer = managing ? AdvancedWorkspace.LegacyCurveOptimizer : null,
+            AdvancedCpuTuning = AdvancedWorkspace.ReadDraft(preserveLoaded: managing)
         };
     }
 
@@ -1101,7 +1098,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     {
         if (!synchronizing)
         {
-            useOfficialCpuPolicy = false;
+            if (AdvancedWorkspace.BasicAliasesEdited) useOfficialCpuPolicy = false;
             synchronizing = true;
             var advanced = AdvancedWorkspace.ReadDraft();
             if (advanced?.FastPptWatts is double fast) BurstPowerRow.SetValue(fast);
@@ -1251,10 +1248,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         AdvancedWorkspace.SetCoreCount(enabledCores);
     }
 
-    private bool IsCapabilityAvailable(HomeStateSnapshot snapshot, string key) =>
-        snapshot.Capabilities.Items.Any(item =>
-            string.Equals(item.Key, key, StringComparison.Ordinal) &&
-            (item.State == CapabilityState.Available || session?.IsServiceConnected == true));
+    private static bool IsCapabilityAvailable(HomeStateSnapshot snapshot, string key) =>
+        snapshot.Capabilities.IsAvailable(key);
 
     private static Brush Brush(string key) =>
         (Brush)Application.Current.Resources[key];

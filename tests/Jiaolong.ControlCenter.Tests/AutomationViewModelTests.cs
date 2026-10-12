@@ -62,8 +62,12 @@ public sealed class AutomationViewModelTests
             map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Office, PresetKey.Create(ControlModeId.Turbo, 1)));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
             map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, PresetKey.Create(ControlModeId.Custom3, 2)));
-        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
-            map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, PresetKey.Create(ControlModeId.Custom2, 3)));
+        var customBalanced = PresetKey.Create(ControlModeId.Custom2, 3);
+        map = map.WithTarget(AdaptivePowerSource.Dc, AdaptiveStage.Game, customBalanced);
+        Assert.AreEqual(customBalanced, map.DcGame);
+        Assert.AreEqual(PerformanceMode.Balanced, AdaptiveTargetMap.HardwareModeFor(customBalanced));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => map.WithTarget(AdaptivePowerSource.Dc,
+            AdaptiveStage.Game, customBalanced, new Dictionary<string, string> { ["Custom2"] = "Turbo" }));
     }
 
     [TestMethod]
@@ -73,16 +77,19 @@ public sealed class AutomationViewModelTests
         var balanced = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.BalancedAdaptive);
         var responsive = AdaptiveTriggerPolicy.Recommended(AdaptiveStrategyId.ResponseFirst);
 
-        Assert.AreEqual((55, 45, 15, false, 30),
+        Assert.AreEqual((60, 45, 6, false, 15),
             (quiet.GameCpuPercent, quiet.GameGpuPercent, quiet.GameSeconds, quiet.TurboEnabled, quiet.OfficeSeconds));
-        Assert.AreEqual((40, 35, 8, true, 85, 90, 30, 20),
+        Assert.AreEqual((45, 35, 3, true, 90, 92, 25, 20),
             (balanced.GameCpuPercent, balanced.GameGpuPercent, balanced.GameSeconds,
              balanced.TurboEnabled, balanced.TurboCpuPercent, balanced.TurboGpuPercent,
              balanced.TurboSeconds, balanced.OfficeSeconds));
-        Assert.AreEqual((30, 25, 4, 75, 85, 15, 15),
+        Assert.AreEqual((30, 25, 2, 85, 85, 12, 30),
             (responsive.GameCpuPercent, responsive.GameGpuPercent, responsive.GameSeconds,
              responsive.TurboCpuPercent, responsive.TurboGpuPercent, responsive.TurboSeconds,
              responsive.OfficeSeconds));
+        Assert.AreEqual(3, quiet.TurboExitSeconds);
+        Assert.AreEqual((70, 75, 12), (balanced.TurboExitCpuPercent, balanced.TurboExitGpuPercent, balanced.TurboExitSeconds));
+        Assert.AreEqual((65, 70, 20), (responsive.TurboExitCpuPercent, responsive.TurboExitGpuPercent, responsive.TurboExitSeconds));
     }
 
     [TestMethod]

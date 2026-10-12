@@ -31,6 +31,21 @@ public sealed class AdvancedCpuContractTests
         Assert.AreEqual(45, command.Plan.Advanced!.StapmWatts);
         Assert.AreEqual(2, command.Plan.Advanced.PboScalar);
         Assert.AreEqual(-15, command.Plan.Advanced.CurveOptimizerAll);
+        var capture = draft.CaptureCurrentPbo(3);
+        Assert.AreEqual(3, capture.AdvancedCpuTuning!.PboScalar);
+        Assert.AreEqual(-15, capture.AdvancedCpuTuning.CurveOptimizerAll);
+        Assert.AreEqual(2, advanced.PboScalar, "Capturing current state must not mutate the original draft");
+        var windowsOnly = new PerformanceDraft { AdvancedCpuTuning = null, NegativeCurveOptimizer = null };
+        foreach (int? scalar in new int?[] { null, 0, 11 })
+            Assert.AreSame(windowsOnly, windowsOnly.CaptureCurrentPbo(scalar));
+        foreach (int scalar in new[] { 1, 10 })
+        {
+            var known = windowsOnly.CaptureCurrentPbo(scalar);
+            Assert.AreEqual(scalar, known.AdvancedCpuTuning!.PboScalar);
+            Assert.IsNull(known.AdvancedCpuTuning.CurveOptimizerAll);
+            Assert.IsNull(known.AdvancedCpuTuning.StapmWatts);
+            Assert.IsNull(windowsOnly.AdvancedCpuTuning);
+        }
         var legacy = System.Text.Json.JsonSerializer.Deserialize<AdvancedCpuTuningDraft>("{\"OverclockEnabled\":true,\"OcClockMhz\":3800,\"OcVoltageMillivolts\":1000,\"PboScalar\":2}")!;
         Assert.IsNull(legacy.OverclockEnabled);
         Assert.IsNull(legacy.OcClockMhz);
@@ -60,7 +75,8 @@ public sealed class AdvancedCpuContractTests
             var step = curvePlan.Steps.Single(item => item.Label.Contains("Curve Optimizer"));
             Assert.IsNotNull(step.ReadbackPlan);
             Assert.IsFalse(PerformanceCommandFactory.MatchesReadBack(state, step.ReadbackPlan));
-            var actual = state with { PerCoreCurveOptimizer = Enumerable.Range(0, 8).ToDictionary(core => core, _ => -15) };
+            var actual = state with { EnabledCoreCount = 8,
+                PerCoreCurveOptimizer = Enumerable.Range(0, 8).ToDictionary(core => core, _ => -15) };
             Assert.IsTrue(PerformanceCommandFactory.MatchesReadBack(actual, step.ReadbackPlan));
             Assert.IsFalse(PerformanceCommandFactory.MatchesReadBack(actual with {
                 PerCoreCurveOptimizer = Enumerable.Range(0, 8).ToDictionary(core => core, _ => -14) }, step.ReadbackPlan));

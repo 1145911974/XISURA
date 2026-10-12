@@ -76,10 +76,35 @@ public sealed record CpuTuningTransactionResult(
     ServiceError? Error,
     bool HardwareReadBackConfirmed = true);
 
+internal sealed class HardwareLifecycleInterruptedException() : Exception("hardwareAccessPaused");
+
 public sealed class PerformanceController(
     IPerformanceTransport? transport = null,
-    ICpuTuningTransport? cpuTransport = null) : IPerformanceController
+    ICpuTuningTransport? cpuTransport = null,
+    Func<bool>? hardwareAccessAllowed = null) : IPerformanceController
 {
+    private bool IsHardwareAccessAllowed() => hardwareAccessAllowed?.Invoke() != false;
+
+    private void EnsureHardwareAccess()
+    {
+        if (!IsHardwareAccessAllowed()) throw new HardwareLifecycleInterruptedException();
+    }
+
+    private async Task AccessHardwareAsync(Func<Task> call)
+    {
+        EnsureHardwareAccess();
+        await call();
+        EnsureHardwareAccess();
+    }
+
+    private async Task<T> AccessHardwareAsync<T>(Func<Task<T>> call)
+    {
+        EnsureHardwareAccess();
+        var result = await call();
+        EnsureHardwareAccess();
+        return result;
+    }
+
     public async Task<CpuTuningTransactionResult> ApplyCpuOemLimitAsync(
         Guid operationId,
         CpuTuningField field,
@@ -169,7 +194,7 @@ public sealed class PerformanceController(
             (prepareNativeMode is not null && verifyNativeMode is null))
             return Rejected(operationId, ErrorCode.ValidationFailed);
 
-        if (!isAcConnected && (prepareNativeMode is not null || plans.Any(HasHighPowerField)))
+        if (!isAcConnected && plans.Any(HasHighPowerField))
         {
             return Rejected(operationId, ErrorCode.ValidationFailed);
         }
@@ -185,21 +210,26 @@ public sealed class PerformanceController(
         var nativeModeAttempted = false;
         var hardwareReadBackConfirmed = true;
         var failureStage = "Capture";
-        ServiceError Failure(ErrorCode code, Exception error) => ServiceError.Create(code, operationId, false) with
-        { Details = new() { ["stage"] = failureStage, ["cause"] = error.Message } };
+        ServiceError Failure(ErrorCode code, Exception error)
+        {
+            var details = new Dictionary<string, string> { ["stage"] = failureStage, ["cause"] = error.Message };
+            foreach (var key in new[] { "pmTableId", "pmTableResolutionSucceeded", "pmTableAddressAvailable" })
+                if (error.Data[key] is string value) details[key] = value;
+            return ServiceError.Create(code, operationId, false) with { Details = details };
+        }
         try
         {
-            await cpuTransport.CaptureTransactionAsync(plans, prepareNativeMode is not null, cancellationToken);
+            await AccessHardwareAsync(() => cpuTransport.CaptureTransactionAsync(plans, prepareNativeMode is not null, cancellationToken));
             foreach (var (field, value) in requested)
             {
-                snapshots[field] = await cpuTransport.ReadFieldAsync(field, cancellationToken);
+                snapshots[field] = await AccessHardwareAsync(() => cpuTransport.ReadFieldAsync(field, cancellationToken));
                 if (cpuTransport.IsReadBackRequired(field) && snapshots[field] is null)
                 {
                     return new CpuTuningTransactionResult(
                         operationId,
                         CommandState.Rejected,
                         new Dictionary<CpuTuningField, object?>(snapshots),
-                        ServiceError.Create(ErrorCode.HardwareReadFailed, operationId, false),
+                        Failure(ErrorCode.HardwareReadFailed, new InvalidOperationException($"baselineUnavailable:{field}")),
                         HardwareReadBackConfirmed: false);
                 }
             }
@@ -207,11 +237,12 @@ public sealed class PerformanceController(
             if (prepareNativeMode is not null)
             {
                 failureStage = "NativeMode";
+                EnsureHardwareAccess();
                 nativeModeAttempted = true;
-                await prepareNativeMode(cancellationToken);
+                await AccessHardwareAsync(() => prepareNativeMode(cancellationToken));
             }
             // Mode selection can reset the burst ceiling; order against its fresh hardware value.
-            await OrderPowerFieldsAsync(requested, cpuTransport, cancellationToken);
+            await AccessHardwareAsync(() => OrderPowerFieldsAsync(requested, cpuTransport, cancellationToken));
             foreach (var (field, value) in requested)
             {
                 failureStage = field.ToString();
@@ -219,17 +250,18 @@ public sealed class PerformanceController(
                 if (cpuTransport.IsReadBackRequired(field) &&
                     cpuTransport.IsReadBackMatch(field, value,
                         prepareNativeMode is not null || attempted.Count > 0
-                            ? await cpuTransport.ReadFieldAsync(field, cancellationToken) : snapshots[field]))
+                            ? await AccessHardwareAsync(() => cpuTransport.ReadFieldAsync(field, cancellationToken)) : snapshots[field]))
                     continue;
+                EnsureHardwareAccess();
                 attempted.Add(field);
-                await cpuTransport.WriteFieldAsync(field, value, cancellationToken);
+                await AccessHardwareAsync(() => cpuTransport.WriteFieldAsync(field, value, cancellationToken));
                 if (!cpuTransport.IsReadBackRequired(field))
                 {
                     hardwareReadBackConfirmed = false;
                     continue;
                 }
 
-                var readBack = await cpuTransport.ReadFieldAsync(field, cancellationToken);
+                var readBack = await AccessHardwareAsync(() => cpuTransport.ReadFieldAsync(field, cancellationToken));
                 if (!cpuTransport.IsReadBackMatch(field, value, readBack))
                 {
                     throw new CpuTuningReadBackException($"expected {value}; got {readBack}");
@@ -237,13 +269,20 @@ public sealed class PerformanceController(
             }
 
             failureStage = "NativeModeVerify";
-            if (verifyNativeMode is not null && !await verifyNativeMode(cancellationToken))
+            if (verifyNativeMode is not null && !await AccessHardwareAsync(() => verifyNativeMode(cancellationToken)))
                 throw new CpuTuningReadBackException("nativeModeMismatch");
             var finalValues = requested.ToDictionary(
                 item => item.Field,
                 item => item.Value);
             return new CpuTuningTransactionResult(
                 operationId, CommandState.Applied, finalValues, null, hardwareReadBackConfirmed);
+        }
+        catch (HardwareLifecycleInterruptedException error)
+        {
+            bool attemptedMutation = nativeModeAttempted || attempted.Count > 0;
+            return new CpuTuningTransactionResult(operationId,
+                attemptedMutation ? CommandState.RecoveryRequired : CommandState.Rejected, snapshots,
+                Failure(attemptedMutation ? ErrorCode.HardwareWriteFailed : ErrorCode.CancelledBeforeApply, error), false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -257,11 +296,11 @@ public sealed class PerformanceController(
                 nativeModeAttempted ? restoreNativeMode : null);
             return new CpuTuningTransactionResult(
                 operationId,
-                CommandState.RolledBack,
+                rollbackFailed && !IsHardwareAccessAllowed() ? CommandState.RecoveryRequired : CommandState.RolledBack,
                 new Dictionary<CpuTuningField, object?>(snapshots),
                 Failure(
                     rollbackFailed ? ErrorCode.RollbackFailed : ErrorCode.ReadBackMismatch,
-                    error));
+                    error), HardwareReadBackConfirmed: !rollbackFailed);
         }
         catch (Exception error)
         {
@@ -272,11 +311,11 @@ public sealed class PerformanceController(
                 nativeModeAttempted ? restoreNativeMode : null);
             return new CpuTuningTransactionResult(
                 operationId,
-                CommandState.RolledBack,
+                rollbackFailed && !IsHardwareAccessAllowed() ? CommandState.RecoveryRequired : CommandState.RolledBack,
                 new Dictionary<CpuTuningField, object?>(snapshots),
                 Failure(
                     rollbackFailed ? ErrorCode.RollbackFailed : ErrorCode.HardwareWriteFailed,
-                    error));
+                    error), HardwareReadBackConfirmed: !rollbackFailed);
         }
     }
 
@@ -286,23 +325,27 @@ public sealed class PerformanceController(
         CancellationToken cancellationToken,
         Func<CancellationToken, Task>? restoreNativeMode = null)
     {
+        // Recovery ignores ordinary cancellation, but must still respect the power lifecycle gate.
         var succeeded = true;
         var restoring = fields.Reverse().Select(field => (Field: field, Value: snapshots[field])).ToArray();
-        try { await OrderPowerFieldsAsync(restoring, cpuTransport!, cancellationToken); }
+        try { await AccessHardwareAsync(() => OrderPowerFieldsAsync(restoring, cpuTransport!, cancellationToken)); }
+        catch (HardwareLifecycleInterruptedException) { return false; }
         catch { succeeded = false; }
         foreach (var (field, _) in restoring)
         {
             try
             {
-                await cpuTransport!.RestoreFieldAsync(field, snapshots[field], cancellationToken);
+                await AccessHardwareAsync(() => cpuTransport!.RestoreFieldAsync(field, snapshots[field], cancellationToken));
             }
+            catch (HardwareLifecycleInterruptedException) { return false; }
             catch
             {
                 succeeded = false;
             }
         }
 
-        try { await cpuTransport!.RestoreTransactionAsync(restoreNativeMode, cancellationToken); }
+        try { await AccessHardwareAsync(() => cpuTransport!.RestoreTransactionAsync(restoreNativeMode, cancellationToken)); }
+        catch (HardwareLifecycleInterruptedException) { return false; }
         catch { succeeded = false; }
 
         return succeeded;
@@ -326,11 +369,8 @@ public sealed class PerformanceController(
     private static bool HasHighPowerField(CpuTuningPlan plan) =>
         plan.SplWatts is not null
         || plan.SpptWatts is not null
-        || plan.MaxFrequencyMhz is not null
-        || plan.AcMaxFrequencyMhz is not null
-        || plan.DcMaxFrequencyMhz is not null
-        || plan.BoostEnabled is true
-        || plan.WindowsPowerSchemeId is not null
+        || plan.TemperatureLimitC is not null
+        || plan.NegativeCurveOptimizer is not null
         || plan.Advanced is not null;
 
     private static IEnumerable<(CpuTuningField Field, object? Value)> Fields(CpuTuningPlan plan)

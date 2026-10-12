@@ -19,7 +19,9 @@ public static class SavedPerformancePreset
         PresetKey.Create(requestedKey.Mode, requestedKey.Slot);
         if (envelope is null)
             throw new InvalidOperationException($"未读取到 {requestedKey.Mode} 的预设 {requestedKey.Slot}。");
-        if (envelope.Page != ControlPageId.Performance || envelope.Key != requestedKey || envelope.SchemaVersion != 1)
+        if (envelope.SchemaVersion > PagePresetEnvelope.CurrentSchemaVersion)
+            throw new InvalidOperationException("预设来自更新版本，请升级应用；原文件未修改，未应用。");
+        if (envelope.Page != ControlPageId.Performance || envelope.Key != requestedKey || envelope.SchemaVersion is < 1 or > PagePresetEnvelope.CurrentSchemaVersion)
             throw new InvalidOperationException("性能预设身份或版本不匹配，未应用。");
         var payload = envelope.Payload;
         if (payload.ValueKind != JsonValueKind.Object || RequiredFields.Any(field => !payload.TryGetProperty(field, out _)))
@@ -43,6 +45,7 @@ public static class SavedPerformancePreset
         if (draft.AcMinActiveCoresPercent.HasValue != draft.DcMinActiveCoresPercent.HasValue ||
             draft.AcMinActiveCoresPercent is < 0 or > 100 || draft.DcMinActiveCoresPercent is < 0 or > 100)
             throw new InvalidOperationException("AC/DC 核心停泊比例必须成对保存且在 0–100% 之间。");
+        if (envelope.Settings.Count > 0) draft.SettingRequests = new(envelope.Settings, StringComparer.OrdinalIgnoreCase);
         return draft;
     }
 }

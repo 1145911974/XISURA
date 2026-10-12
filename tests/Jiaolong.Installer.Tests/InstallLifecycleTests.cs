@@ -11,4 +11,13 @@ public sealed class InstallLifecycleTests
         Assert.IsTrue(msi.IsPerMachine);
         Assert.IsFalse(msi.TableExists("WixFirewallException"));
     }
+
+    [TestMethod]
+    public void Repair_does_not_run_uninstall_cleanup_actions()
+    {
+        using var msi = MsiFixture.OpenCandidate();
+
+        StringAssert.Contains(msi.SequenceCondition("JiaolongRemoveStartupTasks"), "NOT REINSTALL");
+        StringAssert.Contains(msi.SequenceCondition("JiaolongRemoveProgramData"), "NOT REINSTALL");
+    }
 }

@@ -1104,7 +1104,7 @@ public sealed partial class PerformanceWorkspace : UserControl
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close
         };
-        if (await confirmation.ShowAsync() != ContentDialogResult.Primary)
+        if (await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(confirmation) != ContentDialogResult.Primary)
             return;
 
         var draft = CreateDefaultPresets(selectedProfile)[Math.Clamp(selectedPresetIndex, 0, 2)];

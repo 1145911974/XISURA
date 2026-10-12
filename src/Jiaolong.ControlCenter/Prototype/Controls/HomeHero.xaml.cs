@@ -41,7 +41,16 @@ public sealed partial class HomeHero : UserControl
 
     public void SetBrandingState(string style, ControlModeId? mode, bool animate)
     {
-        bool explore = style != "classic";
+        bool explore = style != "classic" || mode is null;
+        if (mode is ControlModeId.Custom1 or ControlModeId.Custom2 or ControlModeId.Custom3)
+            LogoVisual.CustomProfile = $"Profile{(int)mode.Value - (int)ControlModeId.Custom1 + 1}";
+        LogoVisual.Mode = mode switch
+        {
+            ControlModeId.Office => PrototypePerformanceMode.Office,
+            ControlModeId.Gaming => PrototypePerformanceMode.Gaming,
+            ControlModeId.Turbo => PrototypePerformanceMode.Turbo,
+            _ => PrototypePerformanceMode.Custom
+        };
         LogoVisual.Visibility = explore ? Visibility.Collapsed : Visibility.Visible;
         WaveLogoVisual.Visibility = explore ? Visibility.Visible : Visibility.Collapsed;
         LogoVisualHost.Width = LogoVisualHost.Height = explore ? 320 : LogoProfile.Size;
@@ -125,9 +134,6 @@ public sealed partial class HomeHero : UserControl
         var mode = theme.Mode;
         LogoVisual.ReducedMotion = ReducedMotion;
         LogoVisual.TransitionDuration = duration;
-        if (mode == PrototypePerformanceMode.Custom && customProfile is not null)
-            LogoVisual.CustomProfile = customProfile;
-        LogoVisual.Mode = mode;
         ApplyPerformanceProfile(
             PerformanceRadarProfile.ForMode(mode, turboTier, customProfile),
             duration,

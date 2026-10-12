@@ -10,7 +10,7 @@ public sealed partial class PerformanceWorkspace
     public async Task<AdaptiveAutomationPreset[]> ReadAutomaticServicePresetsAsync(
         IReadOnlyCollection<PresetKey> keys, CancellationToken cancellationToken)
     {
-        var currentStore = new ControlPresetStore();
+        var currentStore = new ControlPresetStore(capabilities: () => session?.State?.Capabilities);
         var result = new List<AdaptiveAutomationPreset>();
         foreach (var key in keys.Distinct())
         {

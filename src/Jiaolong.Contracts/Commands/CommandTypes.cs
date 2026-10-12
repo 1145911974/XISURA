@@ -26,6 +26,10 @@ namespace Jiaolong.Contracts.Commands;
 [JsonDerivedType(typeof(SetAutomationProfileCommand), "setAutomationProfile")]
 [JsonDerivedType(typeof(SetAdaptiveAutomationConfigurationCommand), "setAdaptiveAutomationConfiguration")]
 [JsonDerivedType(typeof(UpdateAdaptiveAutomationContextCommand), "updateAdaptiveAutomationContext")]
+[JsonDerivedType(typeof(PublishPresetCatalogCommand), "publishPresetCatalog")]
+[JsonDerivedType(typeof(ApplyControlRequestCommand), "applyControlRequest")]
+[JsonDerivedType(typeof(ApplyTurboBranchCommand), "applyTurboBranch")]
+[JsonDerivedType(typeof(ReleaseTurboBranchCommand), "releaseTurboBranch")]
 public abstract record HardwareCommand(Guid OperationId);
 
 public sealed record SetPerformanceModeCommand(Guid OperationId, PerformanceMode Mode) : HardwareCommand(OperationId);

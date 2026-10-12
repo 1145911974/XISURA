@@ -27,6 +27,7 @@
         <controls:HomeSidebar x:Name="Sidebar" Canvas.Left="0" Canvas.Top="0" Width="292" Height="1045" />
         <controls:HomeHero x:Name="Hero" Canvas.Left="292" Canvas.Top="158" Width="609" Height="835" />
         <controls:HomeMonitorGrid x:Name="HomeMonitorGrid" Canvas.Left="901" Canvas.Top="88" Width="729" Height="728" />
+        <TextBlock x:Name="HomeModeVerificationText" Canvas.Left="901" Canvas.Top="817" Width="729" Height="15" Text="模式未读取" TextAlignment="Right" FontSize="12" Foreground="#B8FFFFFF" IsHitTestVisible="False" />
         <controls:HomeModeBar x:Name="HomeModeBar" Canvas.Left="901" Canvas.Top="832" Width="729" Height="168" />
         <controls:PerformanceWorkspace x:Name="PerformanceWorkspace" Canvas.Left="292" Canvas.Top="0" Width="1380" Height="1045" Visibility="Collapsed" />
         <controls:PerformanceWorkspaceV2 x:Name="PerformanceWorkspaceV2Preview" Canvas.Left="292" Canvas.Top="0" Width="1380" Height="1045" Visibility="Collapsed" />

@@ -199,6 +199,13 @@ public sealed partial class PrototypePageWorkspace : UserControl
     public void StopAutomationClient() => AutomationWorkspace.StopServiceClient();
 
 
+    public void AttachPresetCatalog(PresetCatalogController catalog)
+    {
+        FanWorkspace.Catalog = catalog;
+        LightingWorkspace.Catalog = catalog;
+        catalog.FollowChanged += () => AutomationWorkspace.RefreshFollowConfiguration();
+    }
+
     public void SetAutomaticPresetReader(Func<IReadOnlyCollection<PresetKey>, CancellationToken, Task<AdaptiveAutomationPreset[]>> readPresets) =>
         AutomationWorkspace.SetServicePresetReader(readPresets);
 
@@ -551,7 +558,10 @@ public sealed partial class PrototypePageWorkspace : UserControl
                         serviceExport = await client.StageDiagnosticsAsync(new Jiaolong_ControlCenter.ViewModels.DiagnosticExportRequest(Guid.NewGuid()), serviceDeadline.Token);
                     }
                     catch (Exception error) when (!deadline.IsCancellationRequested)
-                    { entries["service-export-error.txt"] = error.ToString(); }
+                    {
+                        entries["service-export-error.txt"] = error.ToString();
+                        SupportDiagnosticCollector.AddServiceLogFallback(entries);
+                    }
                 }
                 else entries["service-export-status.txt"] = "IPC 未连接；已导出本地诊断，服务端遥测未收集。";
                 temporary = Path.Combine(Path.GetTempPath(), $"xisura-diagnostics-{Guid.NewGuid():N}.zip");
@@ -785,13 +795,12 @@ public sealed partial class PrototypePageWorkspace : UserControl
     private async Task ShowOperationFailureAsync(string message)
     {
         if (XamlRoot is null) return;
-        await new ContentDialog { XamlRoot = XamlRoot, Title = "操作未完成", Content = message, CloseButtonText = "知道了" }.ShowAsync();
+        await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "操作未完成", Content = message, CloseButtonText = "知道了" });
     }
 
     private static string Format(double? value, string suffix) =>
         value is double number && double.IsFinite(number) ? $"{number:0} {suffix}" : $"-- {suffix}";
 
     private static bool IsCapabilityAvailable(HomeStateSnapshot snapshot, string key) =>
-        snapshot.Capabilities.Items.Any(item =>
-            string.Equals(item.Key, key, StringComparison.Ordinal));
+        snapshot.Capabilities.IsAvailable(key);
 }

@@ -11,6 +11,10 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
     private IReadOnlyDictionary<int, int>? hardwareCurveOptimizer;
     private bool synchronizing;
     private bool touched;
+    private bool advancedEdited;
+    public bool BasicAliasesEdited { get; private set; }
+    private AdvancedCpuTuningDraft? loadedDraft;
+    private int? loadedLegacyAllCore;
     private int selectedCore;
     private CpuCurveOptimizerMode curveMode;
     private int allCoreCurveValue;
@@ -103,6 +107,9 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
     public (int Ac, int Dc)? DraftCoreParking =>
         CoreParkingAcRow.Value is double ac && CoreParkingDcRow.Value is double dc
             ? ((int)Math.Round(ac), (int)Math.Round(dc)) : null;
+    public (int Ac, int Dc)? ReadCoreParking(bool preserveLoaded = false) =>
+        preserveLoaded && !parkingDraftSpecified ? null : DraftCoreParking;
+    public int? LegacyCurveOptimizer => advancedEdited ? null : loadedLegacyAllCore;
 
     public void SetAvailability(bool available, bool advancedAvailable, bool pboScalarAvailable = false)
     {
@@ -152,13 +159,17 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
 
     public void SynchronizeBasicAliases(double? temperature, double? fastPpt)
     {
-        if (temperature is double limit && (Mp1Row.Value is not null || RsmuRow.Value is not null))
+        if (temperature is double limit && (Mp1Row.Value is not null || RsmuRow.Value is not null) &&
+            (Mp1Row.Value != limit || RsmuRow.Value != limit))
         {
+            advancedEdited = touched = BasicAliasesEdited = true;
             Mp1Row.SetValue(limit);
             RsmuRow.SetValue(limit);
         }
-        if (fastPpt is double watts && (FastPptRow.Value is not null || PptRow.Value is not null))
+        if (fastPpt is double watts && (FastPptRow.Value is not null || PptRow.Value is not null) &&
+            (FastPptRow.Value != watts || PptRow.Value != watts))
         {
+            advancedEdited = touched = BasicAliasesEdited = true;
             FastPptRow.SetValue(watts);
             PptRow.SetValue(watts);
         }
@@ -218,7 +229,11 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         int? coreParkingDc = null)
     {
         synchronizing = true;
-        touched = draft is not null;
+        touched = draft is not null || legacyAllCore.HasValue;
+        advancedEdited = false;
+        BasicAliasesEdited = false;
+        loadedDraft = draft;
+        loadedLegacyAllCore = legacyAllCore;
         perCoreCurveOptimizer.Clear();
 
         if (draft?.PerCoreCurveOptimizer is not null)
@@ -249,9 +264,10 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         synchronizing = false;
     }
 
-    public AdvancedCpuTuningDraft? ReadDraft()
+    public AdvancedCpuTuningDraft? ReadDraft(bool preserveLoaded = false)
     {
-        if (!touched && Rows().All(row => row.Value is null)) return null;
+        if (preserveLoaded && !advancedEdited) return loadedDraft;
+        if (!touched) return null;
         return new AdvancedCpuTuningDraft
         {
             CurveOptimizerMode = curveMode,
@@ -298,6 +314,10 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         if (ReferenceEquals(sender, Mp1Row)) RsmuRow.SetValue(value);
         if (ReferenceEquals(sender, RsmuRow)) Mp1Row.SetValue(value);
         synchronizing = false;
+        if (!ReferenceEquals(sender, CoreParkingAcRow) && !ReferenceEquals(sender, CoreParkingDcRow))
+            advancedEdited = true;
+        if (ReferenceEquals(sender, FastPptRow) || ReferenceEquals(sender, PptRow) ||
+            ReferenceEquals(sender, Mp1Row) || ReferenceEquals(sender, RsmuRow)) BasicAliasesEdited = true;
         if (ReferenceEquals(sender, PboScalarRow))
         {
             pboDraftDirty = true;
@@ -305,7 +325,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
             touched = true;
             RefreshPboStatus();
         }
-        else touched = true;
+        else if (!ReferenceEquals(sender, CoreParkingAcRow) && !ReferenceEquals(sender, CoreParkingDcRow)) touched = true;
         if (ReferenceEquals(sender, CoreParkingAcRow) || ReferenceEquals(sender, CoreParkingDcRow))
             parkingDraftSpecified = true;
         if (ReferenceEquals(sender, PerCoreCurveRow) && value is double curve)
@@ -341,10 +361,12 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
     public int AllCoreCurveValue => allCoreCurveValue;
     public IReadOnlyDictionary<int, int> PerCoreCurveValues => new Dictionary<int, int>(perCoreCurveOptimizer);
 
-    public void SetAllCoreCurveOffset(double value)
+    public void SetAllCoreCurveOffset(double value, bool userEdited = true)
     {
         if (curveMode != CpuCurveOptimizerMode.AllCore || !double.IsFinite(value)) return;
         allCoreCurveValue = (int)Math.Round(Math.Clamp(value, -30, 30));
+        if (!userEdited) return;
+        advancedEdited = true;
         touched = true;
         UnsavedText.Visibility = Visibility.Visible;
         Changed?.Invoke(this, EventArgs.Empty);
@@ -356,6 +378,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         if (curveMode == mode) return;
         curveMode = mode;
         UpdateCurveMode();
+        advancedEdited = true;
         touched = true;
         UnsavedText.Visibility = Visibility.Visible;
         Changed?.Invoke(this, EventArgs.Empty);

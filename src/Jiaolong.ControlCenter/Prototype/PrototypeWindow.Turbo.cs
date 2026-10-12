@@ -9,10 +9,13 @@ public sealed partial class PrototypeWindow
 
     private async Task ExitTurboBranchAsync(CancellationToken token)
     {
-        if (turboBranch is not null) await turboBranch.ReleaseAsync(token);
-        GpuWorkspaceV2.ResumePresetFollowing();
-        PageWorkspace.ResumeFanPresetFollowing();
-        SetTurboTierVisual("Normal");
+        try { if (turboBranch is not null) await turboBranch.ReleaseAsync(token); }
+        finally
+        {
+            GpuWorkspaceV2.ResumePresetFollowing();
+            PageWorkspace.ResumeFanPresetFollowing();
+            SetTurboTierVisual("Normal");
+        }
     }
 
     private async Task ReleaseInvalidatedTurboBranchAsync()
@@ -54,6 +57,7 @@ public sealed partial class PrototypeWindow
     private async Task ApplyTurboTierAsync(string tier)
     {
         if (tier is not ("Normal" or "Quiet" or "Extreme")) return;
+        if (isModeCommandPending) { queuedTurboTier = tier; return; }
         isModeCommandPending = true;
         HomeModeBar.IsCommandPending = true;
         trayQuickConsole?.SetModeBusy(true);
@@ -74,8 +78,14 @@ public sealed partial class PrototypeWindow
                     PageWorkspace.PauseFanPresetFollowingAsync(lifetimeCancellation.Token));
                 await turboBranch.ApplyAsync(tier, lifetimeCancellation.Token);
                 state.Mode = PrototypePerformanceMode.Turbo;
-                appliedMode.Confirm(state.Mode);
-                PublishConfirmedMode(ControlModeId.Turbo, null, animate: true);
+                bool confirmed = turboBranch.LastResult is { VerifiedPerformanceMode: PerformanceMode.Turbo,
+                    ExecutionState.NativeModeApplyState: Jiaolong.Contracts.Models.ApplyState.Confirmed };
+                if (confirmed)
+                {
+                    appliedMode.Confirm(state.Mode);
+                    PublishConfirmedMode(ControlModeId.Turbo, null, animate: true);
+                }
+                else if (!allowClose) _ = ShowCustomProfileStatusAsync("已提交，实际生效未确认", WindowSurface.XamlRoot);
                 RequestModeVisuals(state.Mode, animate: true);
                 SetTurboTierVisual(tier);
             }
@@ -91,6 +101,9 @@ public sealed partial class PrototypeWindow
         {
             if (turboBranch?.ActiveTier is null)
             {
+                if (turboBranch?.HasOwnership == true)
+                    try { await turboBranch.ReleaseAsync(CancellationToken.None); }
+                    catch (Exception error) { AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Turbo branch cleanup: {error}\n"); }
                 GpuWorkspaceV2.ResumePresetFollowing();
                 PageWorkspace.ResumeFanPresetFollowing();
             }
