@@ -24,6 +24,8 @@
 
 发布源码在独立`publish110`工作树整理，只纳入R3冻结的1413份相关输入和本版交付文档；原release108大量既有改动/索引保留。完整源码树SHA由GitHub tag及`source-lock.json`记录；运行核心DLL SHA仍为[R3报告](2026-10-27-usable-release-r3.md)所列值，不能把原R3 ZIP SHA当本次离线包SHA。
 
+正式发布已完成：源码提交及v1.0.110标签为`46e1b50ea2e946d1b0c5e495c346d98ba6df3ada`；5项发布资产均逐项核对GitHub大小及SHA-256通过，匿名latest确认v1.0.110且非草稿。正式下载：[v1.0.110](https://github.com/1145911974/XISURA/releases/tag/v1.0.110)。main随后仅同步最终交付文档；标签、源码冻结清单和发布包不改动。
+
 ## 证据与限制
 
 证据根`C:/Users/Administrator/AppData/Local/Temp/XisuraUsableRelease-20261026/`：

@@ -4,7 +4,7 @@
 
 **最新交付决定（2026-10-27）：** 后续每个正式可用版本完成必要回归及实际运行验收后，必须安装到本机并上传既有项目GitHub仓库，记录版本、源码/产物SHA、安装验证与GitHub链接；包括必要提交/推送，持续授权不再逐版询问。禁止夹带无关既有改动、更改仓库可见性或覆盖用户配置；其他硬件、恢复和禁测边界继续有效。
 
-**安装/上传实况（2026-10-27实际执行）：** 本机已从109升级至1.0.110.0，MSI退出0、无需重启，已装文件逐项匹配离线payload。实际GUI/Windows服务两轮及服务停止/重启通过；原配置和13组控制值不变。183份原journal完整迁移至`C:/ProgramData/JiaolongControlCenter/control-journal-110`，原Temp证据保留；服务Auto/Running并绑定持久目录。GitHub上传执行中，未验证远端资产前不记完成。[安装发布记录](../verification/2026-10-27-install-github-release.md)。
+**安装/上传实况（2026-10-27实际执行）：** 本机已从109升级至1.0.110.0，MSI退出0、无需重启，已装文件逐项匹配离线payload。实际GUI/Windows服务两轮及服务停止/重启通过；原配置和13组控制值不变。183份原journal完整迁移至`C:/ProgramData/JiaolongControlCenter/control-journal-110`，原Temp证据保留；服务Auto/Running并绑定持久目录。GitHub正式[v1.0.110](https://github.com/1145911974/XISURA/releases/tag/v1.0.110)已发布，5项资产大小及服务端SHA逐项一致，匿名latest复核通过；冻结源码`46e1b50ea2e946d1b0c5e495c346d98ba6df3ada`，main后续仅同步交付文档。[安装发布记录](../verification/2026-10-27-install-github-release.md)。
 
 - **R0 3/3**：原33失败独立复现；真实调用/授权/退出路径核对；实际Release构建并启动。
 - **R1 3/3**：EC写前持久化、管理员IPC、Keep持久化/Freeze重试、灯光读回/退出停动态及idle风扇交还假ownership修复；原会话按用户保留决定安全退役。
@@ -25,4 +25,4 @@ MRID6-23／7745HX／RTX4070 Laptop／V35、EC0.35。风扇仅空闲交还实机�
 
 数值点立即恢复鲜读准确试前值并独立核验，失败/取消也一样；Keep不豁免。原journal/恢复证据保留，不建空日志绕冲突。全部输出C盘。不reset/clean；提交推送仅限已授权版本交付，不启动109旧服务。禁游戏/跑分/轨迹/MUX/睡眠/自行重启/EC盲写/驱动安装。
 
-本机安装已完成，GitHub交付执行中；持续授权不再重复询问。R4按[后续计划](2026-10-27-post-release-roadmap.md)围绕反馈和延期功能推进。历史报告保留当时事实，不倒改旧包。自动审批曾以“blocked by policy”拦截旧生成候选及MST临时验证文件的清理，未绕过，暂留C盘证据目录，不作发布资产。
+本机安装及GitHub正式发布2/2完成；持续授权不再重复询问。R4按[后续计划](2026-10-27-post-release-roadmap.md)围绕反馈和延期功能推进。历史报告保留当时事实，不倒改旧包。自动审批曾以“blocked by policy”拦截旧生成候选及MST临时验证文件的清理，未绕过，暂留C盘证据目录，不作发布资产。
