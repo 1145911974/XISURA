@@ -2,7 +2,7 @@
 
 更新2026-10-27。唯一当前状态；[目标](FEATURE-COMPLETION-GOAL.md)、[固定台账](FEATURE-COMPLETION-LEDGER.csv)。用户最新决定优先。
 
-**79项：完成28，剩余51，35.4%；本目标新增3/54（EXT-07、SET-06、CPU-21），本轮新增0。** 配置保存、Partial、声明不支持不计完成。EC/OEM/NVIDIA协议及禁测依赖未闭合，全量ETA暂不可可靠估算。
+**79项：完成29，剩余50，36.7%；本目标新增4/54（EXT-07、SET-06、CPU-21、HOME-09），本轮新增1（HOME-09）。** 配置保存、Partial、声明不支持不计完成。EC/OEM/NVIDIA协议及禁测依赖未闭合，全量ETA暂不可可靠估算。
 
 **本机113已安装验收；GitHub正式[1.0.113](https://github.com/1145911974/XISURA/releases/tag/v1.0.113)已发布，五项资产大小/SHA经服务端核验；冻结源码`daa4ea5b6254e8f120cafad19592319d27852a30`，MSI SHA256 `22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A`。旧113候选及重复MSI清理被自动审批以`blocked by policy`拒绝，暂留C盘；原恢复证据保留。** Release自包含GUI/Service/Diagnostics，1369/1369软件测试通过、零跳过、构建源SHA前后一致。MSI退出0、无需重启、用户文件及13组控制保持；安装后两轮副屏启动/托盘/正常退出重开、服务停止/重启通过，当前Automatic/Running。MSI SHA256：22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A。
 
@@ -25,4 +25,6 @@ CPU-21已闭合为B级配置能力：已安装113的index1至7分别−50→−4
 
 本轮SET-02：首轮助手路径比较失败，配置未动且主会正常退出；第二轮UIA缩放后失去唯一可见主窗，目标1280×800而退出保存848×531。只读证实helper系统DPI144、副屏96，改初始化前PMv2的run3退出保存准确1280×800，但可见UIA查询仍失败，未完成记忆重开。两轮主会均按同一Completed会话/GUI0/非目标字段一致/独占SHA检查，恢复偏好原字节（SHA256 0AEA2036B1278756E5AC797E6FCD3E018EE03B02B6DF1EF07D0025DB49CAC74E），独立13组受控配置及最终权威检查Passed；详见[尝试与恢复](../verification/2026-10-27-set02-window-size-attempt.md)。SET-02保持Open，停止重复此Transform路径；手动拖拽、跨DPI未验。原始证据feature-completion-r3-gpu07、feature-completion-r3-settings保留在C盘；本轮无产品源码改动及新构建。
 
-下一步：SET-02尺寸倍率已定位助手DPI，剩UIA可见性/枚举，先静态查明再有界修正验收路径；并推进EC风扇、AMD/OEM、NVIDIA最小实现缺口。缺协议和禁测部分保留未完成，不重复已过数值点。
+HOME-09本轮闭合：继承10-16用户左Win关/开实际确认；补齐113冻结controller/UI调用与安装DLL SHA关联，真实副屏UIA最终“Win键已开启”、正常退出及配置保持。未重新按键或屏蔽输入。10-16原临时候选/原始UIA目录已缺，不宣称旧新二进制逐字相同，详见[安装关联](../verification/2026-10-27-home09-installed-association.md)。本轮仅证据闭合，无产品新构建。
+
+下一步：SET-02尺寸倍率已定位助手DPI，剩UIA可见性/枚举，用既有HWND只读分层诊断，不重复Resize；并推进AUTO-11自然应用触发及EC/AMD/OEM/NVIDIA最小实现缺口。缺协议和禁测部分保留未完成，不重复已过数值点。
