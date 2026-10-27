@@ -58,7 +58,7 @@ public sealed class AdaptiveProcessCpuReader
         return double.IsFinite(percent) && percent is >= 0 and <= 100 ? percent : null;
     }
 
-    private static AdaptiveProcessCpuSnapshot[]? Capture(string executable, string ownerSid, int sessionId)
+    internal static AdaptiveProcessCpuSnapshot[]? Capture(string executable, string ownerSid, int sessionId)
     {
         if (!OperatingSystem.IsWindows()) return null;
         var result = new List<AdaptiveProcessCpuSnapshot>();

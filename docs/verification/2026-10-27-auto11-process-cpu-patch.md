@@ -2,6 +2,8 @@
 
 状态：本地补丁已接线并验证；**AUTO-11仍Open**。79项完成29、剩余50、36.7%，本轮新增完成0；全量ETA仍受协议/禁测/实机验收依赖限制。当前安装和正式发布仍为113，未生成新MSI、未替换本机服务或GUI。
 
+后续增量已补GPU输入，见[GPU补丁及581项回归](2026-10-27-auto11-process-gpu-patch.md)。本文保留CPU轮次当时的证据与限制。
+
 ## 实现
 
 - 新增`AdaptiveProcessCpuReader`，按匹配规则进程名枚举；同一打开句柄校验映像名、Token SID/Windows Session、创建/退出时间及kernel+user累计CPU。被采样应用无需管理员身份；句柄逐次释放。

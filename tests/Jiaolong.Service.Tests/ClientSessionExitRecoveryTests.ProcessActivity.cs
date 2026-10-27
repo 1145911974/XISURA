@@ -32,8 +32,10 @@ public sealed partial class ClientSessionExitRecoveryTests
     }
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
     [Timeout(30000)]
-    public async Task Application_activity_uses_owned_process_cpu_and_disable_stops_sampling()
+    public async Task Application_activity_uses_owned_process_cpu_or_gpu_and_disable_stops_sampling(bool gpuOnly)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var token = deadline.Token;
@@ -66,19 +68,31 @@ public sealed partial class ClientSessionExitRecoveryTests
         var clock = new IdleWorkerClock(DateTimeOffset.UtcNow);
         double processSeconds = 0;
         int captures = 0;
+        int gpuCaptures = 0;
+        ulong gpuTicks = 0;
         var reader = new AdaptiveProcessCpuReader(clock, 1, executable =>
         {
             captures++;
             Assert.AreEqual("app.exe", executable);
             return [new(70, 1, executable, fixture.Owner.UserSid, fixture.Owner.SessionId, TimeSpan.FromSeconds(processSeconds))];
         });
+        var gpuReader = new AdaptiveProcessGpuReader(clock,
+            (executable, sid, session) => [new(70, 1, executable, sid, session, TimeSpan.Zero)],
+            pids =>
+            {
+                gpuCaptures++;
+                CollectionAssert.AreEqual(new[] { 70 }, pids);
+                return [new("pid_70_luid_0x00000000_0x00000001_phys_0_eng_0_engtype_3D",
+                    gpuTicks, (ulong)clock.Now.ToFileTime(), 10_000_000)];
+            });
         using var worker = new AdaptiveAutomationWorker(store, runtime, bridge,
-            NullLogger<AdaptiveAutomationWorker>.Instance, clock, reader);
+            NullLogger<AdaptiveAutomationWorker>.Instance, clock, reader, gpuReader);
         var tick = typeof(AdaptiveAutomationWorker).GetMethod("TickAsync", flags)!;
         async Task Observe(bool submitContext = true)
         {
             clock.Now = clock.Now.AddSeconds(1);
-            processSeconds += .1;
+            processSeconds += gpuOnly ? 0 : .1;
+            gpuTicks += gpuOnly ? 2_000_000UL : 0;
             fixture.Provider.TelemetryOverride = new(clock.Now, "fake", 60, 50, 8, 0)
             {
                 CpuUsagePercent = 10, GpuUsagePercent = 10, AcPowerConnected = true, BatteryPercent = 95, BatterySaver = false,
@@ -92,23 +106,27 @@ public sealed partial class ClientSessionExitRecoveryTests
         for (int i = 0; i < 8; i++) await Observe();
         var active = await store.ReadAsync(token);
         Assert.AreEqual(turbo, active.Status?.SubmittedTarget,
-            "The real worker must feed process activity; global load stays below every upward threshold.");
+            $"The real worker must feed process {(gpuOnly ? "GPU" : "CPU")} activity; global load stays below every upward threshold.");
         Assert.AreEqual(PerformanceMode.Turbo, fixture.Provider.Mode);
         Assert.IsTrue(captures >= 4);
         await store.SetConfigurationAsync(config, token, expectedRevision: active.Revision,
             intent: AutomationConfigurationIntent.Disable, ownerSid: fixture.Owner.UserSid);
-        int captured = captures, writes = fixture.Provider.WriteCount;
+        Assert.IsTrue(gpuCaptures >= 4);
+        int captured = captures, gpuCaptured = gpuCaptures, writes = fixture.Provider.WriteCount;
         await Observe();
         Assert.AreEqual(captured, captures, "Disabled scheduling must not sample application CPU.");
+        Assert.AreEqual(gpuCaptured, gpuCaptures, "Disabled scheduling must not sample application GPU.");
         Assert.AreEqual(writes, fixture.Provider.WriteCount);
         await store.SetConfigurationAsync(config, token, intent: AutomationConfigurationIntent.Enable, ownerSid: fixture.Owner.UserSid);
         clock.Now = clock.Now.AddSeconds(6);
         await Observe(submitContext: false);
         Assert.AreEqual(captured, captures, "Expired client context cannot select a process to sample.");
+        Assert.AreEqual(gpuCaptured, gpuCaptures);
         Assert.AreEqual(CommandState.Applied, (await runtime.FreezeClientSessionWritesAsync(
             Guid.NewGuid(), handle.SessionId, fixture.Owner, token)).State);
         await Observe();
         Assert.AreEqual(captured, captures, "Closing the authoritative session must stop process sampling.");
+        Assert.AreEqual(gpuCaptured, gpuCaptures);
         Assert.AreEqual(CommandState.Applied, (await runtime.EndClientControlSessionAsync(
             Guid.NewGuid(), handle.SessionId, fixture.Owner, token)).State);
         Assert.AreEqual(PerformanceMode.Balanced, fixture.Provider.Mode);

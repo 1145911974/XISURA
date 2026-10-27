@@ -11,7 +11,8 @@ public sealed class AdaptiveAutomationWorker(
     AdaptiveAutomationHardwareProvider hardware,
     ILogger<AdaptiveAutomationWorker> logger,
     TimeProvider? timeProvider = null,
-    AdaptiveProcessCpuReader? processCpuReader = null) : BackgroundService
+    AdaptiveProcessCpuReader? processCpuReader = null,
+    AdaptiveProcessGpuReader? processGpuReader = null) : BackgroundService
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan TelemetryMaxAge = TimeSpan.FromSeconds(3);
@@ -21,6 +22,7 @@ public sealed class AdaptiveAutomationWorker(
     private readonly AdaptiveRuleSession ruleSession = new();
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly AdaptiveProcessCpuReader processCpu = processCpuReader ?? new(timeProvider);
+    private readonly AdaptiveProcessGpuReader processGpu = processGpuReader ?? new(timeProvider);
     private readonly long startedAt = (timeProvider ?? TimeProvider.System).GetTimestamp();
     private long publishedRevision = -1;
     private readonly Dictionary<PresetKey, PageSelection[]> publishedSelections = new();
@@ -154,11 +156,17 @@ public sealed class AdaptiveAutomationWorker(
         var executable = matchedApplication?.Executable ?? context?.ForegroundExecutable ?? string.Empty;
         var idleSeconds = policy.Advanced.IdleReturnEnabled ? context?.IdleSeconds ?? 0 : 0;
         double? processCpuPercent = null;
+        double? processGpuPercent = null;
         if (context is not null && matchedApplication is { RequireActivity: true } &&
             runtime.GetClientAutomationProcessScope(saved.OwnerSid) is { } processOwner)
+        {
+            var processScope = $"{processOwner.ClientSessionId:N}/{saved.Revision}/{runtime.Execution.HardwareEpoch}";
             processCpuPercent = processCpu.Read(matchedApplication.Executable, processOwner.OwnerSid, processOwner.SessionId,
-                $"{processOwner.ClientSessionId:N}/{saved.Revision}/{runtime.Execution.HardwareEpoch}");
-        else processCpu.Reset();
+                processScope);
+            processGpuPercent = processGpu.Read(matchedApplication.Executable, processOwner.OwnerSid, processOwner.SessionId,
+                processScope);
+        }
+        else { processCpu.Reset(); processGpu.Reset(); }
         var input = new AdaptiveTrialInput
         {
             CpuObservedAtUtc = telemetry.CpuUsageObservedAtUtc ?? telemetry.CapturedAtUtc,
@@ -173,6 +181,7 @@ public sealed class AdaptiveAutomationWorker(
             BatteryPercent = telemetry.BatteryPercent,
             BatterySaver = telemetry.BatterySaver,
             ProcessCpuPercent = processCpuPercent,
+            ProcessGpuPercent = processGpuPercent,
             Executable = executable,
             Foreground = context?.ForegroundExecutable is { } foreground && string.Equals(executable, foreground, StringComparison.OrdinalIgnoreCase),
             IdleSeconds = idleSeconds,
@@ -474,5 +483,6 @@ public sealed class AdaptiveAutomationWorker(
     {
         ruleSession.Reset();
         processCpu.Reset();
+        processGpu.Reset();
     }
 }
