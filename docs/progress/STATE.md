@@ -4,7 +4,7 @@
 
 **79项：完成27，剩余52，34.2%；本目标新增2/54（EXT-07、SET-06）。** 配置保存、Partial、声明不支持不计完成。EC/OEM/NVIDIA协议及禁测依赖未闭合，全量ETA暂不可可靠估算。
 
-**本机113已安装验收；GitHub113交付进行中，当前公开仍111。** Release自包含GUI/Service/Diagnostics，1369/1369软件测试通过、零跳过、构建源SHA前后一致。MSI退出0、无需重启、用户文件及13组控制保持；安装后两轮副屏启动/托盘/正常退出重开、服务停止/重启通过，当前Automatic/Running。MSI SHA256：22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A。
+**本机113已安装验收；GitHub正式[1.0.113](https://github.com/1145911974/XISURA/releases/tag/v1.0.113)已发布，五项资产大小/SHA经服务端核验；冻结源码`daa4ea5b6254e8f120cafad19592319d27852a30`，MSI SHA256 `22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A`。旧113候选及重复MSI清理被自动审批以`blocked by policy`拒绝，暂留C盘；原恢复证据保留。** Release自包含GUI/Service/Diagnostics，1369/1369软件测试通过、零跳过、构建源SHA前后一致。MSI退出0、无需重启、用户文件及13组控制保持；安装后两轮副屏启动/托盘/正常退出重开、服务停止/重启通过，当前Automatic/Running。MSI SHA256：22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A。
 
 113移除启动/激活强制微软拼音和释放豆包的整个主动层。后续测试GUI固定`--accept-secondary`，主窗/托盘菜单使用副屏；后台助手Hidden，不改输入法、显示布局或鼠标。不要启动旧112GUI触发输入法。
 
@@ -19,4 +19,4 @@
 
 证据根：C:/Users/Administrator/AppData/Local/Temp/XisuraUsableRelease-20261026/；最终构建completion113/final-20261027-170255-196、feature-completion-r1/keep-release113-run6、install-publish-113。详见[113说明](../verification/2026-10-27-release113.md)、[本轮证据](../verification/2026-10-27-feature-completion-r1.md)。权威journal= C:/ProgramData/JiaolongControlCenter/control-journal-110。
 
-下一步：冻结源码并核验五项GitHub资产，交付113；随后按EC风扇、AMD/OEM、NVIDIA的最小缺口逐项闭合，不重复已有调查。
+下一步：113已交付；随后按EC风扇、AMD/OEM、NVIDIA的最小缺口逐项闭合，不重复已有调查。

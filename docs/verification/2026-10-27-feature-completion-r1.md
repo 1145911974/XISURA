@@ -72,3 +72,5 @@
 - 113安装链完整Passed：MSI exit0、无需重启、UserFilesUnchanged、Controls13Unchanged、InstalledVersion=1.0.113.0；已安装GUI两轮副屏主窗/托盘隐藏重开/正常退出，ServiceStop/Restart及ProtectedConfig均Passed；服务Automatic/Running。
 - MSI SHA256 `22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A`，bytes=182996503。证据：`install-publish-113/installation-result.json`、`install-chain-result.json`、`installed-lifecycle/result.json`。
 - GitHub发布仍在准备，尚未公开。台账27/79、52剩余、34.2%不变。
+
+公开交付：1.0.113 [GitHub Release](https://github.com/1145911974/XISURA/releases/tag/v1.0.113)，五项资产的服务端大小/SHA均已核验。冻结源码commit `daa4ea5b6254e8f120cafad19592319d27852a30`；MSI SHA256 `22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A`。

@@ -6,7 +6,7 @@ XISURA 将性能模式、CPU 与 GPU 调校、风扇、灯光和实时监测集�
 
 这是独立开发的设备控制项目，**不是机械革命官方软件，也不代表硬件厂商提供兼容性承诺**。仓库、界面与项目标识使用 XISURA；部分程序集、服务及安装包仍保留 `Jiaolong` 内部名称，以维持已有安装与配置的兼容性。
 
-安装包见 [Releases](https://github.com/1145911974/XISURA/releases)。当前正式版本 **1.0.111 Stable**，已在本机安装并完成实际运行验收。适用于 Windows 11 x64。
+安装包见 [Releases](https://github.com/1145911974/XISURA/releases)。当前正式版本 **1.0.113 Stable**，已在本机安装并完成实际运行验收。适用于 Windows 11 x64。
 
 兼容性按 Windows、厂商 MI、NVIDIA、CPU 和风扇接口分别检测，不因单项缺失禁用整机。目前实机为 **7745HX＋RTX 4070、MRID6-23、V35 BIOS／EC0.35**，旧V39结果不代表当前固件。111恢复高级风扇及GPU手动上限入口，接回独立OEM原生强冷；V35高级EC映射尚未生效，GPU上限无当前值getter，任意电压未实现。详细支持及限制见[功能恢复记录](docs/verification/2026-10-27-feature-restoration.md)。界面入口或WMI成功回包不能单独证明硬件实际效果。
 
