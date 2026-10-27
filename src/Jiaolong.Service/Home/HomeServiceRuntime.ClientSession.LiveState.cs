@@ -111,8 +111,8 @@ public sealed partial class HomeServiceRuntime
         var scope = new FanEcRecoveryScope(session.ServiceSessionId, session.Handle.HardwareEpoch, session.Handle.SessionId, session.OwnerSid, session.Identity);
         return saved.Current!.Fields.Keys.Any(key => key.StartsWith("fan.")) &&
             (saved.FanEcRecovery?.Scope == scope || ControlExecutionJournal.IsFanFirmwareOnlyRecovery(session, saved)) &&
-            session.Baseline.StrongCooling is bool original && (original ? saved.FanFirmwareRecovery?.Scope == scope &&
-                saved.FanFirmwareRecovery.OriginalBefore == 1 : saved.FanFirmwareRecovery?.Scope != scope);
+            session.Baseline.StrongCooling is bool original && (saved.FanFirmwareRecovery?.Scope == scope
+                ? saved.FanFirmwareRecovery.OriginalBefore == (original ? 1 : 0) : !original);
     }
 
     private async Task<bool> PriorWindowsLiveStateMatchesAsync(WindowsScopeSession? windows, CancellationToken token,

@@ -22,10 +22,10 @@ public sealed record FanEcRecoverySnapshot(FanEcRecoveryScope Scope, FanEcRecove
 public sealed partial class ControlExecutionJournal
 {
     internal static bool IsFanFirmwareOnlyRecovery(ClientControlSessionSnapshot capture, ControlJournalSnapshot saved) =>
-        capture.Baseline.StrongCooling == true && (saved.FanEcRecovery is null ||
+        capture.Baseline.StrongCooling is bool original && (saved.FanEcRecovery is null ||
             saved.FanEcRecovery.Scope.ClientSessionId != capture.Handle.SessionId &&
             saved.FanEcRecovery.Scope.Identity == capture.Identity && FanCheckpointComplete(saved.FanEcRecovery.Checkpoint)) &&
-        saved.FanFirmwareRecovery is { OriginalBefore: 1 } firmware && firmware.Scope ==
+        saved.FanFirmwareRecovery is { } firmware && firmware.OriginalBefore == (original ? 1 : 0) && firmware.Scope ==
             new FanEcRecoveryScope(capture.ServiceSessionId, capture.Handle.HardwareEpoch, capture.Handle.SessionId, capture.OwnerSid, capture.Identity);
 
     internal async Task RecordFanEcCheckpointAsync(FanEcRecoveryScope scope, FanEcRecoveryCheckpoint checkpoint, CancellationToken token)

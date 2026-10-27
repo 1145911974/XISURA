@@ -137,6 +137,7 @@ public sealed partial class HomeServiceRuntime
             throw new InvalidDataException("exitRetentionJournalChanged");
         // The explicit restart acknowledgement owns no lighting and must perform no hardware operation.
         if (plan.IdleFanRestart is null) await provider.StopClientLightingDynamicsAsync(token);
+        if (plan.IdleFanRestart is null) await provider.RetainClientNativeCoolingAsync(token);
         await journal!.ReleaseRetainedSessionAsync(plan.RetainedJournal!, released, token);
         ownedFields.Clear();
         lastSubmittedModeClientSessionId = null; lastSubmittedMode = null;

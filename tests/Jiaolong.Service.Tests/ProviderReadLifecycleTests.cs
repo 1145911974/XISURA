@@ -102,7 +102,7 @@ public sealed class ProviderReadLifecycleTests
     }
 
     [TestMethod]
-    public void Gpu_clock_range_without_current_lock_readback_rejects_direct_write()
+    public void Gpu_clock_capability_without_a_probed_driver_envelope_rejects_direct_write()
     {
         using var provider = new WindowsHomeHardwareProvider(TimeProvider.System,
             _ => Task.FromResult(new NvidiaClockDevice("GPU-fake", 300, 2400)));
@@ -113,7 +113,9 @@ public sealed class ProviderReadLifecycleTests
         var result = (CommandResult)Invoke(provider, "ExecuteGpuClockLocked", command, CancellationToken.None)!;
         Assert.AreEqual(CommandState.Rejected, result.State);
         Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation);
-        Assert.AreEqual("gpuClockLimitReadbackUnavailable", result.Error?.Details["reason"]);
+        Assert.AreEqual("gpuClockSubmissionUnavailable", result.Error?.Details["reason"]);
+        Assert.IsNull(typeof(WindowsHomeHardwareProvider).GetField("gpuClockState", Private)!.GetValue(provider),
+            "A capability flag alone must not authorize driver submission without a probed envelope.");
     }
 
     private static object? Invoke(WindowsHomeHardwareProvider provider, string method, params object?[] args) =>

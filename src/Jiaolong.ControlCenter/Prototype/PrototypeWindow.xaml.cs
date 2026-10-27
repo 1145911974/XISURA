@@ -1646,7 +1646,6 @@ public sealed partial class PrototypeWindow : Window
             if (homeSession.State is { } state) ApplyHomeState(state);
             return;
         }
-        if (pendingQuickSettings.ShouldPreserve(QuickSettingKind.StrongCooling, null)) return;
         var requestVersion = pendingQuickSettings.Set(QuickSettingKind.StrongCooling, enabled);
         trayQuickConsole?.SetQuickSettingBusy(QuickSettingKind.StrongCooling, true);
         strongCoolingCommandTask = strongCoolingCommands.RequestAsync(enabled, lifetimeCancellation.Token);

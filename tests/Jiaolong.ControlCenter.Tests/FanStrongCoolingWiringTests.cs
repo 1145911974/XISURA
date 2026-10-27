@@ -22,5 +22,9 @@ public sealed class FanStrongCoolingWiringTests
         StringAssert.Contains(fan, "StrongCoolingRequested?.Invoke");
         StringAssert.Contains(fan, "if (syncingStrongCooling) return");
         Assert.IsFalse(fan.Contains("Temporary UI override"));
+        var handler = window[window.IndexOf("private void OnStrongCoolingChanged(bool enabled)")..
+            window.IndexOf("private void OnQuickSettingChanged(")];
+        Assert.IsFalse(handler.Contains("pendingQuickSettings.ShouldPreserve"),
+            "The shared coordinator must receive the latest toggle while an earlier request is pending.");
     }
 }

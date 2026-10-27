@@ -95,14 +95,14 @@ public sealed partial class ControlExecutionJournal
     internal static bool HasPendingGpuRecovery(UnresolvedControlOperation item) => item.GpuRecovery is not null ||
         item.CommandKind is nameof(Jiaolong.Contracts.Commands.SetGpuVfCurveCommand) or
             nameof(Jiaolong.Contracts.Commands.SetGpuCoreOffsetCommand) or nameof(Jiaolong.Contracts.Commands.SetGpuMemoryOffsetCommand) or
-            nameof(Jiaolong.Contracts.Commands.SetGpuFrequencyLimitCommand) or nameof(Jiaolong.Contracts.Commands.SetGpuPowerLimitCommand) or
+            nameof(Jiaolong.Contracts.Commands.SetGpuPowerLimitCommand) or
             nameof(Jiaolong.Contracts.Commands.SetGpuPowerPolicyCommand) ||
         item.State.Pages.Any(page => page.Page == ControlPageId.Gpu && page.State == ApplyState.Unknown) ||
         item.State.Fields.Any(field => field.Key.StartsWith("gpu.", StringComparison.OrdinalIgnoreCase) &&
             field.Value.WriteState == ApplyState.Unknown);
     internal static bool RequiresGpuRecoveryCheck(Jiaolong.Contracts.Commands.HardwareCommand command) => command is
         Jiaolong.Contracts.Commands.SetGpuVfCurveCommand or Jiaolong.Contracts.Commands.SetGpuCoreOffsetCommand or
-        Jiaolong.Contracts.Commands.SetGpuMemoryOffsetCommand or Jiaolong.Contracts.Commands.SetGpuFrequencyLimitCommand or
+        Jiaolong.Contracts.Commands.SetGpuMemoryOffsetCommand or
         Jiaolong.Contracts.Commands.SetGpuPowerLimitCommand or Jiaolong.Contracts.Commands.SetGpuPowerPolicyCommand or
         Jiaolong.Contracts.Commands.ApplyTurboBranchCommand or Jiaolong.Contracts.Commands.ReleaseTurboBranchCommand ||
         command is Jiaolong.Contracts.Commands.ApplyControlRequestCommand request &&

@@ -552,7 +552,7 @@ public sealed partial class HomeServiceRuntime
             if (target && fanIdleNoMutation) return step.FanStrongCoolingTarget == false && IdleFanReleaseLive(controls);
             // No EC write was recorded for this branch; never invent or clear EC ownership.
             if (target && step.FanFirmwareOnly) return controls.ActiveFanControlPlan is null &&
-                step.FanStrongCoolingTarget == true && controls.StrongCooling == true;
+                step.FanStrongCoolingTarget is bool nativeTarget && controls.StrongCooling == nativeTarget;
             if (target && step.FanMappingOriginalInitialization is byte original)
                 return controls.ActiveFanControlPlan is null && step.FanStrongCoolingTarget is bool firmwareTarget &&
                     controls.StrongCooling == firmwareTarget && step.FanMappingTargetWritesStarted is bool started &&

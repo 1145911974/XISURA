@@ -196,7 +196,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
             "日常页面调整当前电脑；管理预设时仅编辑，保存并应用才下发。EC 自动目标上限状态以服务报告为准。",
             "日常优先 EC 自动，或使用当前模式的推荐曲线；固定目标及 EC 上限软件范围 1800–5800 RPM。",
             "保留 EC 自动；降低噪声时逐步调整并观察温度，不把低转速直接当作安全值。",
-            "5800 RPM 仅为目标输入上限；CPU 达 95°C 或 GPU 达 87°C 会立即交还 EC，保护优先。强冷采用风扇支持的最高目标。",
+            "5800 RPM 仅为目标输入上限；CPU 达 95°C 或 GPU 达 87°C 会立即交还 EC，保护优先。强冷使用原生固件开关，实际转速随当前性能模式决定。",
             "EC 上限不是实际转速硬上限：超过目标 100 RPM 才临时接管，降温 3°C 后交还 EC。能力和启用状态以服务报告为准，强冷不改变性能模式。");
         Loaded += OnLoaded;
         PresetToolbar.SelectedKey = editingKey;

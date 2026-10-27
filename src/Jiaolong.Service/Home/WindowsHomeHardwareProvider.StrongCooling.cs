@@ -8,18 +8,25 @@ namespace Jiaolong.Service.Home;
 public sealed partial class WindowsHomeHardwareProvider
 {
     private long fanFirmwareWriteAttempts;
-    private bool? ReadStrongCoolingStateLocked(bool? firmwareEnabled)
+    private byte? fanExpectedStrongCooling;
+    private byte? fanPendingStrongCoolingBefore;
+    public Task RetainClientNativeCoolingAsync(CancellationToken token)
     {
-        if (!strongCoolingActive) return firmwareEnabled;
-        var ec = ReadFanEcControlLocked();
-        return ec is null ? null : IsStrongCoolingEcConfirmed(ec);
+        lock (commandGate) lock (gate)
+        {
+            token.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            if (fanPreviousStrongCooling is null || fanTransport is not null || activeFanPlan is not null || fanTouched)
+                return Task.CompletedTask;
+            if (!TryReadControlByte(StrongCoolingBinding(), out var current, token) || current != fanExpectedStrongCooling)
+                throw new IOException("strongCoolingRetainedOwnershipChanged");
+            fanTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+            strongCoolingActive = false;
+            fanPreviousStrongCooling = fanExpectedStrongCooling = fanPendingStrongCoolingBefore = null;
+            return Task.CompletedTask;
+        }
     }
-
-    private static bool IsStrongCoolingEcConfirmed(FanEcControlState ec) =>
-        // Firmware consumes the control request bits after accepting the targets.
-        ec.CpuTarget == 68 && ec.GpuTarget == 68 &&
-        DateTimeOffset.UtcNow - ec.CapturedAtUtc is var age &&
-        age >= TimeSpan.FromSeconds(-1) && age <= TimeSpan.FromSeconds(3);
+    private bool? ReadStrongCoolingStateLocked(bool? firmwareEnabled) => firmwareEnabled;
 
     private VerifiedWmiBinding StrongCoolingBinding()
     {
@@ -32,6 +39,8 @@ public sealed partial class WindowsHomeHardwareProvider
     {
         var scope = FanFirmwareScopeLocked(token);
         if (scope is not null) controlJournal!.RecordFanFirmwareAsync(scope, before, value, null, restoring, token).GetAwaiter().GetResult();
+        fanExpectedStrongCooling = value;
+        fanPendingStrongCoolingBefore = before;
         var binding = StrongCoolingBinding();
         EnsureFanRecoveryAccess();
         MiReadResult write;
@@ -42,6 +51,7 @@ public sealed partial class WindowsHomeHardwareProvider
         if (write.Quality != DataQuality.Good || !TryReadControlByte(binding, out var after, token) || after != value)
             throw new IOException("strongCoolingWriteNotConfirmed");
         if (scope is not null) controlJournal!.RecordFanFirmwareAsync(scope, before, value, value, restoring, token).GetAwaiter().GetResult();
+        fanPendingStrongCoolingBefore = null;
     }
 
     private FanEcRecoveryScope? FanFirmwareScopeLocked(CancellationToken token)
@@ -67,7 +77,11 @@ public sealed partial class WindowsHomeHardwareProvider
             throw new IOException("strongCoolingRestoreReadFailed");
         if (current != previous)
         {
-            if (current != 0) throw new IOException("strongCoolingOwnershipChanged");
+            var record = controlJournal?.ReadAsync(CancellationToken.None).GetAwaiter().GetResult().FanFirmwareRecovery;
+            byte? expected = record is not null && record.Scope == FanFirmwareScopeLocked(CancellationToken.None) ? record.Target : fanExpectedStrongCooling;
+            bool pendingBefore = record is { Observed: null } ? current == record.Before :
+                record is null && current == fanPendingStrongCoolingBefore;
+            if (current != expected && !pendingBefore) throw new IOException("strongCoolingOwnershipChanged");
             WriteStrongCoolingLocked(previous, CancellationToken.None, current, restoring: true);
         }
         else if (controlJournal is not null)
@@ -82,12 +96,16 @@ public sealed partial class WindowsHomeHardwareProvider
             }
         }
         fanPreviousStrongCooling = null;
+        fanExpectedStrongCooling = null;
+        fanPendingStrongCoolingBefore = null;
     }
 
     private CommandResult ExecuteStrongCoolingLocked(SetStrongCoolingCommand command, CancellationToken token)
     {
         if (BackgroundWorkPaused) return Rejected(command.OperationId, ErrorCode.CancelledBeforeApply) with { Mutation = HardwareMutation.NoMutation };
-        if (command.Enabled && !HasFanEcProtocol())
+        if (!string.Equals(identity.BoardProduct, "MRID6-23", StringComparison.OrdinalIgnoreCase) ||
+            compatibilityDecision?.Mode != Jiaolong.Hardware.Abstractions.Compatibility.CompatibilityMode.Writable ||
+            !MiHomeControlBindingFactory.TryCreate(compatibilityDecision, MiHomeControlKind.StrongCooling, out _))
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
         if (ThirdPartyFanWriterRunning()) return Rejected(command.OperationId, ErrorCode.ConflictDetected) with { Mutation = HardwareMutation.NoMutation };
         try
@@ -105,35 +123,21 @@ public sealed partial class WindowsHomeHardwareProvider
                 { Details = new() { ["reason"] = error.Message, ["writeAttempted"] = bool.FalseString } }
             };
         }
-        if (command.Enabled)
-        {
-            if (!HasSafeFanTelemetry(ReadTelemetryLocked(token)))
-                return Rejected(command.OperationId, ErrorCode.ValidationFailed) with { Mutation = HardwareMutation.NoMutation };
-            // Open modifies the EC initialization bit; dependency preflight must remain read-only.
-            if (fanTransport is null && !PawnIoLpcEcPorts.HasTrustedDependency())
-                return Rejected(command.OperationId, ErrorCode.DependencyMissing) with { Mutation = HardwareMutation.NoMutation };
-        }
         try
         {
-            // Replace an earlier fan owner before claiming both EC channels for full cooling.
+            // Release an owned curve before handing control to the firmware's mode-dependent boost.
             DiscardCompletedFanTransport();
-            if (activeFanPlan is not null || fanTouched || strongCoolingActive || fanTransport is not null) ReleaseFanLocked();
-            if (command.Enabled)
-            {
-                // The firmware strong flag clamps Quiet mode near 3500 RPM on MRID6-23.
-                // Use the verified EC targets independently of the performance preset.
-                PrepareFanStrongCoolingLocked(token);
-                fanTransport = RetainOrCreateFanTransport();
-                fanTransport.Open();
-                fanTouched |= fanTransport.HasWritten;
-                fanTransport.SetTargets(68, 68);
-                fanTouched = true;
-                activeFanPlan = null;
-            }
-            else PrepareFanStrongCoolingLocked(token, captureUnchanged: false);
+            if (activeFanPlan is not null || fanTouched || fanTransport is not null) FinishFanLocked();
+            if (!TryReadControlByte(StrongCoolingBinding(), out byte current, token) || current > 1)
+                throw new IOException("strongCoolingReadFailed");
+            if (fanExpectedStrongCooling is byte expected && current != expected)
+                throw new IOException("strongCoolingOwnershipChanged");
+            byte target = command.Enabled ? (byte)1 : (byte)0;
+            if (current == target) return FanSubmitted(command.OperationId) with { Mutation = HardwareMutation.NoMutation };
+            fanPreviousStrongCooling ??= current;
+            WriteStrongCoolingLocked(target, token, current, restoring: false);
             strongCoolingActive = command.Enabled;
-            fanTimer ??= new Timer(_ => FanTick(), null, Timeout.Infinite, Timeout.Infinite);
-            fanTimer.Change(command.Enabled ? 1000 : Timeout.Infinite, command.Enabled ? 1000 : Timeout.Infinite);
+            fanTimer?.Change(Timeout.Infinite, Timeout.Infinite);
             return FanSubmitted(command.OperationId);
         }
         catch (Exception ex)

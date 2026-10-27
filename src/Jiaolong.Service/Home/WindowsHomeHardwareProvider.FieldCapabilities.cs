@@ -43,18 +43,21 @@ public sealed partial class WindowsHomeHardwareProvider
             CanWriteDirectTdcLimit(smuLimitCache) && cpu?.AdvancedLimits?.TdcCurrentMilliamps == smuLimitCache?.Limits.TdcCurrentMilliamps);
         Add("edcCurrentMilliamps", "cpuTuning:smu", cpu?.AdvancedLimits?.EdcCurrentMilliamps is not null, 1000, 200000, "mA", "hardwareReadback",
             CanWriteDirectEdcLimit(smuLimitCache) && cpu?.AdvancedLimits?.EdcCurrentMilliamps == smuLimitCache?.Limits.EdcCurrentMilliamps);
-        Add("coreFrequencyLimitMhz", "gpuFrequencyLimit", false, gpuClockState?.MinimumMhz, gpuClockState?.MaximumMhz, "MHz", "nvidiaSmiRangeOnly", false);
+        Add("coreFrequencyLimitMhz", "gpuFrequencyLimit", false, gpuClockState?.MinimumMhz, gpuClockState?.MaximumMhz, "MHz", "nvidiaSmiSubmission",
+            gpuClockState is { Error: null, MinimumMhz: > 0 } clock && clock.MaximumMhz >= clock.MinimumMhz);
         Add("coreOffsetKhz", "gpuCoreOffset", coreReadable, coreRange?.MinimumKhz, coreRange?.MaximumKhz, "kHz",
             coreReadable ? "nvapiReadback" : gpuVfCache?.Error ?? "gpuCoreOffsetReadFailed", coreReadable);
         Add("memoryOffsetKhz", "gpuMemoryOffset", memoryReadable, memoryRange?.MinimumKhz, memoryRange?.MaximumKhz, "kHz",
             memoryReadable ? "nvapiReadback" : gpuVfCache?.Error ?? "gpuMemoryOffsetReadFailed", memoryReadable);
         Add("vfOffsetsKhz", "gpuVfCurve", vfReadable, null, null, "kHz",
             vfReadable ? "nvapiReadback" : gpuVfCache?.Error ?? "gpuVfReadFailed", vfReadable);
-        Add("strategy", "fanControl", false, null, null, "", "firmwareRelease");
+        Add("strategy", "fanControl", false, null, null, "", "ecFanControl");
         foreach (string field in new[] { "maximumRpm", "fixedRpm", "cpu", "gpu", "shared", "isShared" })
-            Add(field, "fanControl", false, field is "maximumRpm" or "fixedRpm" ? 1500 : null,
-                field is "maximumRpm" or "fixedRpm" ? 6000 : null, "", "fanAdvancedControlNotSupportedInRelease", false);
-        Add("strongCooling", "strongCooling", false, null, null, "", "fanAdvancedControlNotSupportedInRelease", false);
+            Add(field, "fanControl", false, field is "maximumRpm" or "fixedRpm" ? 1800 : null,
+                field is "maximumRpm" or "fixedRpm" ? 5800 : null,
+                field is "maximumRpm" or "fixedRpm" ? "RPM" : "", "ecFanControl",
+                step: field is "maximumRpm" or "fixedRpm" ? 100 : null);
+        Add("strongCooling", "strongCooling", false, null, null, "", "oemAndEcFanControl");
         foreach (string field in new[] { "effect", "brightness", "hex" })
             Add(field, "keyboardLighting", Available("keyboardLighting"), field == "brightness" ? 0 : null,
                 field == "brightness" ? 3 : null, "", field == "effect" ? "oemModeOrSoftwareEffectReadback" : "oemLightingReadback");

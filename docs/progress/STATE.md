@@ -1,28 +1,32 @@
 # XISURA 当前状态
 
-更新：2026-10-27。唯一当前状态；执行[首版目标](USABLE-RELEASE-GOAL.md)，用户最新决定优先。
+更新：2026-10-27。唯一当前状态；[目标](USABLE-RELEASE-GOAL.md)，用户最新决定优先。
 
-**最新交付决定（2026-10-27）：** 后续每个正式可用版本完成必要回归及实际运行验收后，必须安装到本机并上传既有项目GitHub仓库，记录版本、源码/产物SHA、安装验证与GitHub链接；包括必要提交/推送，持续授权不再逐版询问。禁止夹带无关既有改动、更改仓库可见性或覆盖用户配置；其他硬件、恢复和禁测边界继续有效。
+**功能恢复 2/3：** 接线/软件回归完成；实机往返及安装完成；GitHub交付待完成。用户已批准复用已有/同设备接口、恢复入口后继续优化，不因缺效果遥测统一禁用。恢复、权限及禁测边界仍有效。
 
-**安装/上传实况（2026-10-27实际执行）：** 本机已从109升级至1.0.110.0，MSI退出0、无需重启，已装文件逐项匹配离线payload。实际GUI/Windows服务两轮及服务停止/重启通过；原配置和13组控制值不变。183份原journal完整迁移至`C:/ProgramData/JiaolongControlCenter/control-journal-110`，原Temp证据保留；服务Auto/Running并绑定持久目录。GitHub正式[v1.0.110](https://github.com/1145911974/XISURA/releases/tag/v1.0.110)已发布，5项资产大小及服务端SHA逐项一致，匿名latest复核通过；冻结源码`46e1b50ea2e946d1b0c5e495c346d98ba6df3ada`，main后续仅同步交付文档。[安装发布记录](../verification/2026-10-27-install-github-release.md)。
+**当前本机1.0.111.0／Release。** MSI退出0、无需重启；已装文件匹配最终自包含payload，配置和13组控制未变。安装后GUI两轮启动/托盘/退出重开、Windows服务停止/重启通过；服务Automatic/Running，延续原权威journal。GitHub当前公开版仍为[v1.0.110](https://github.com/1145911974/XISURA/releases/tag/v1.0.110)，111正在准备发布。持续授权包含每正式版本机安装及GitHub上传、必要提交/推送，无需再次确认；不夹无关改动、不改仓库可见性。
 
-- **R0 3/3**：原33失败独立复现；真实调用/授权/退出路径核对；实际Release构建并启动。
-- **R1 3/3**：EC写前持久化、管理员IPC、Keep持久化/Freeze重试、灯光读回/退出停动态及idle风扇交还假ownership修复；原会话按用户保留决定安全退役。
-- **R2 3/3**：AMD/OEM按字段收敛；高级风扇/强冷、GPU锁频/任意电压D并关闭直间接写入口；GPU功率C。保留可靠常用功能及不依赖未知字段的路径。
-- **R3 4/4**：1.0.110.0／Release／R3冻结构建；1358/1358、0失败0跳过；正式GUI/Service两轮默认退出重开、空闲交还与Keep三会话通过；SHA/矩阵/短用法/清单齐备，ZIP共918文件逐项哈希校验通过。
-- **R4未开始**：用户反馈、高级功能、兼容性和深入优化；原71项库存未全部完成。主页18/18为Partial流程观察；旧10/18及旧阶段4的1/6只为历史。
+## 111已完成与限制
 
-## 产物与证据
+- 原生强冷接回OEM method20，独立WMI确认GUI 0→1→0，立即恢复鲜读原0。不依赖高级EC映射；只证明固件开关，不承诺各模式满转速。修复第二次点击被丢弃、同步完成后队列滞留。Keep/Dispose软件覆盖，111原生强冷Keep未另做实机点。
+- 恢复固定RPM、曲线、联动、自动上限入口/接口。V35的1060.bit7映射，PawnIO/既有WinRing各4次读回均0；各点2次值写（开启/恢复），准确恢复原0、零转速目标写。本机高级调速尚未生效，不能将开放入口记为完成。
+- GPU手动频率上限/解除接回nvidia-smi，权限、审计、丢确认/退出软件路径通过；无当前锁值getter，不伪造读回，手动提交不入自动预设/跟随，不在退出时默认reset。未做数值实机点；任意电压参考为空实现，功率只读。
+- CPU/Windows可靠字段、GPU偏移/VF、常亮/渐变灯光、预设、设置、诊断沿用。OEM未知温限/SPL/SPPT单位/恢复未闭合，不阻断独立可靠字段。
 
-- 当前安装包：`artifacts/install-release-1.0.110/XISURA-1.0.110-Stable.msi`，SHA-256 `76C5CDE71CA2D6C6440B171981F7DD6284C0653A693935CF599007FCD20CFB8B`；离线产物`artifacts/usable-release-1.0.110-offline`。原R3 ZIP保留为历史验收证据，其“自包含”旧说明不准确；本次显式补齐运行库且核心应用DLL SHA不变，不使用原ZIP SHA指代离线包。
-- [构建与实机报告](../verification/2026-10-27-usable-release-r3.md)列版本/SHA及边界；[支持矩阵](../verification/2026-10-26-usable-release-support.md)、[用户清单](../verification/2026-10-26-usable-release-user-checklist.md)。
-- 证据根：`C:/Users/Administrator/AppData/Local/Temp/XisuraUsableRelease-20261026/`。最终构建`final-r3-20261027-004158-896`；`published-lifecycle3`、`published-keep-logo1`均Passed/HostExit0。最终859产物/1413源码零差异，Completed、零owner/未决项/候选进程，旧Service Stopped。
-- 用户主动重启并要求保留当前状态；`external-restart-retirement/result.json`证明13控制/配置未变、Completed。OldBaselineRestored=false，不覆盖用户重启后Turbo/灯光，不写旧65W。
+## 构建与验收证据
 
-## 边界与下一步
+证据根：`C:/Users/Administrator/AppData/Local/Temp/XisuraUsableRelease-20261026/`。
 
-MRID6-23／7745HX／RTX4070 Laptop／V35、EC0.35。风扇仅空闲交还实机通过，不外推高级接管；CPU/GPU窄B不宣称性能实效/稳定性。Keep默认关闭；开启只保留已应用值，完全退出停止Follow/AUTO，渐变停在最后静态帧。
+- 最终`unlock111/final-20261027-140212-794`：1368/1368、零失败/跳过；1417项源码前后零变化。GUI/Service/Diagnostics Release自包含发布，版本1.0.111.0。
+- `unlock111-lifecycle2`：原生强冷准确往返、两轮生命周期、13组对账Passed，HostExit0。原始result的HardwareTestWrites=false为旧脚本字段；`native-control-summary.json`明确2次OEM写、零EC目标写。
+- `unlock111-lifecycle1`原关闭超时及失败保留；cleanup独立确认强冷回0、13组恢复，候选协作退出。完成fanFirmwareRecovery是归档证据，不能删除或一律视为待办。
+- `install-publish-111/installation-result.json`及`installed-lifecycle/result.json`均Passed。
+- 产物：`artifacts/usable-release-1.0.111-native3`；MSI：`artifacts/install-release-1.0.111/XISURA-1.0.111-Stable.msi`；SHA256 `8E130EF4CEAD3EAE0A3833A73672FB61CC437A7F68C1AC268D701DEAC33A54D2`。
+- GUI DLL SHA256 `58B3911A4C770D3CDBF9E3C101CD087C6649A4EE1C6377BDDB550EB1CD799DBE`；Service DLL `89297965A451AA4D219364B9F5EEEC4FEAFD0674059FD9518C2887799B1683EC`。
+- [功能/限制/后续方向](../verification/2026-10-27-feature-restoration.md)。110历史证据保持原状；R0 3/3、R1 3/3、R2 3/3、R3 4/4为110历史阶段。原71项仍是后续库存；主页18/18仅Partial，旧阶段4的1/6不是整体百分比。
 
-数值点立即恢复鲜读准确试前值并独立核验，失败/取消也一样；Keep不豁免。原journal/恢复证据保留，不建空日志绕冲突。全部输出C盘。不reset/clean；提交推送仅限已授权版本交付，不启动109旧服务。禁游戏/跑分/轨迹/MUX/睡眠/自行重启/EC盲写/驱动安装。
+## 边界与接续
 
-本机安装及GitHub正式发布2/2完成；持续授权不再重复询问。R4按[后续计划](2026-10-27-post-release-roadmap.md)围绕反馈和延期功能推进。历史报告保留当时事实，不倒改旧包。自动审批曾以“blocked by policy”拦截旧生成候选及MST临时验证文件的清理，未绕过，暂留C盘证据目录，不作发布资产。
+MRID6-23／7745HX／RTX4070 Laptop／V35 BIOS、EC0.35。用户主动重启并要求保留的新状态有效，不写旧65W。数值点立即恢复准确试前值并独立核验，失败/取消同样；Keep不豁免。Keep默认关闭，开启保留已应用静态值；完全退出停止Follow/AUTO及软件动态控制。
+
+不reset/clean，不删原始恢复凭据，不建空journal绕冲突；111凭据不可交110解析，不直接降级启动旧服务。禁游戏/跑分/轨迹/MUX/睡眠/自行重启/EC盲写/驱动安装，不启动109。全部输出C盘。下一步：精确源码锁→MSI/便携/源码ZIP逐字节核验→GitHub交付→按反馈补V35风扇/OEM/NVIDIA。

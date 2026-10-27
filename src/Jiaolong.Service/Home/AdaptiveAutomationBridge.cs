@@ -444,6 +444,7 @@ public sealed partial class AdaptiveAutomationHardwareProvider(
     public Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false) =>
         inner.ReadControlBaselineAsync(token, includeCpuAdvanced);
     public Task StopClientLightingDynamicsAsync(CancellationToken token) => inner.StopClientLightingDynamicsAsync(token);
+    public Task RetainClientNativeCoolingAsync(CancellationToken token) => inner.RetainClientNativeCoolingAsync(token);
     public Task<OemCpuConfigurationSnapshot?> ReadOemCpuConfigurationAsync(CancellationToken token) =>
         inner.ReadOemCpuConfigurationAsync(token);
     public Task<string?> ReadDeviceRecoveryKeyAsync(HardwareIdentity identity, CancellationToken token) =>

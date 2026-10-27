@@ -12,7 +12,9 @@ public sealed class PrototypeStrongCoolingCommandCoordinator(
         lock (gate)
         {
             pending = enabled;
-            return processing ??= ProcessAsync(cancellationToken);
+            if (processing is null || processing.IsCompleted)
+                processing = ProcessAsync(cancellationToken);
+            return processing;
         }
     }
 

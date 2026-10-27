@@ -343,6 +343,8 @@ public sealed partial class HomeServiceRuntime
 
     private async Task<CommandResult> ExecuteTrackedCommandAsync(HardwareCommand command, CancellationToken token, Guid connectionId)
     {
+        if (command is SetGpuFrequencyLimitCommand clock)
+            return await ExecuteClockSubmissionAsync(clock, token, connectionId);
         if (command is SetPerformanceModeCommand modeCommand)
         {
             var modeBefore = await ReadControlBaselineForExecutionAsync(token, true);

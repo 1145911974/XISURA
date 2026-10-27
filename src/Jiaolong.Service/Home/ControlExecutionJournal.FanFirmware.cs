@@ -11,8 +11,8 @@ public sealed partial class ControlExecutionJournal
     private static bool ValidFanFirmware(FanFirmwareRecoverySnapshot record) =>
         record.Scope is { ServiceSessionId: var service, HardwareEpoch: > 0, ClientSessionId: var client, Identity: not null } scope &&
         service != Guid.Empty && client != Guid.Empty && !string.IsNullOrWhiteSpace(scope.OwnerSid) &&
-        // This provider only writes the firmware flag to disable a pre-read 1, then restores that 1.
-        record.OriginalBefore == 1 && record.Before <= 1 && record.Target == (record.Restoring ? 1 : 0) &&
+        record.OriginalBefore <= 1 && record.Before <= 1 && record.Target <= 1 &&
+        (!record.Restoring || record.Target == record.OriginalBefore) &&
         (record.Observed is null || record.Observed == record.Target);
 
     internal async Task RecordFanFirmwareAsync(FanEcRecoveryScope scope, byte before, byte target, byte? observed,
@@ -21,7 +21,8 @@ public sealed partial class ControlExecutionJournal
         var capture = await ValidateFanCaptureAsync(scope.Identity, token);
         if (scope != new FanEcRecoveryScope(capture.ServiceSessionId, capture.Handle.HardwareEpoch,
             capture.Handle.SessionId, capture.OwnerSid, capture.Identity)) throw new InvalidDataException("fanFirmwareCaptureMismatch");
-        var record = new FanFirmwareRecoverySnapshot(scope, 1, before, target, observed, restoring);
+        if (capture.Baseline.StrongCooling is not bool original) throw new InvalidDataException("fanFirmwareBaselineUnavailable");
+        var record = new FanFirmwareRecoverySnapshot(scope, original ? (byte)1 : (byte)0, before, target, observed, restoring);
         if (!ValidFanFirmware(record)) throw new InvalidDataException("fanFirmwareCheckpointInvalid");
         await gate.WaitAsync(token);
         try
@@ -37,9 +38,13 @@ public sealed partial class ControlExecutionJournal
                 await VerifyArchivedFanFirmwareAsync(prior, token);
                 prior = null;
             }
-            if (prior is null && (restoring || before != 1 || observed is not null) || prior is not null && observed is not null &&
+            if (prior is null && (restoring || before != record.OriginalBefore || observed is not null) ||
+                prior is not null && prior.OriginalBefore != record.OriginalBefore || prior is not null && observed is not null &&
                 (prior.Before != before || prior.Target != target || prior.Restoring != restoring))
                 throw new InvalidDataException("fanFirmwareAttemptChanged");
+            if (prior is not null && observed is null && before != prior.Target &&
+                !(prior.Observed is null && before == prior.Before) && !(restoring && before == record.OriginalBefore))
+                throw new InvalidDataException("fanFirmwareOwnershipChanged");
             var next = Clone(saved with { FanFirmwareRecovery = record });
             await WriteSnapshotAsync(next, token);
             snapshot = next;

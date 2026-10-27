@@ -142,6 +142,7 @@ public sealed partial class MiProviderLifecycleTests
             var saved = type.GetField("fanPreviousStrongCooling", Private)!;
             byte target = stage is "external" or "invalid" or "already" ? (byte)0 : (byte)1;
             saved.SetValue(provider, target);
+            type.GetField("fanExpectedStrongCooling", Private)!.SetValue(provider, (byte)0);
             Action restore = () => type.GetMethod("RestoreStrongCoolingLocked", Private)!.Invoke(provider, null);
             try
             {
@@ -178,6 +179,7 @@ public sealed partial class MiProviderLifecycleTests
             using var provider = new WindowsHomeHardwareProvider();
             var bus = new FakeBus(_ => { }) { Value = original };
             var type = typeof(WindowsHomeHardwareProvider);
+            type.GetField("identity", Private)!.SetValue(provider, new HardwareIdentity("MRID6-23", "MRID6_23_P_V35", "cpu", "gpu"));
             type.GetField("miInterface", Private)!.SetValue(provider, new MiCommonInterfaceClient(bus, bus));
             type.GetField("compatibilityDecision", Private)!.SetValue(provider,
                 new CompatibilityDecision(CompatibilityMode.Writable,

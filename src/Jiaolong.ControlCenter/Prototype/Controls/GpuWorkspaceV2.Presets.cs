@@ -276,8 +276,8 @@ public sealed partial class GpuWorkspaceV2
         if (preset.ResetCoreFrequencyLimit || preset.CoreFrequencyLimitMhz is not null)
         {
             int? clock = preset.ResetCoreFrequencyLimit ? null : preset.CoreFrequencyLimitMhz;
-            if (!state.Capabilities.Fields.Any(item => item.Key == "coreFrequencyLimitMhz" && item.Readable && item.Writable))
-                skipped.Add("频率上限：当前锁频无法独立读回，已暂停写入");
+            if (!state.Capabilities.Fields.Any(item => item.Key == "coreFrequencyLimitMhz" && item.Writable && (livePreset is not null || item.Readable)))
+                skipped.Add("频率上限：仅支持手动提交，预设跟随需要独立读回");
             else if (!CapabilityAvailable(state, "gpuFrequencyLimit") || state.Controls.GpuClockLimit is not { Error: null } range) skipped.Add("频率上限：能力不可用");
             else if (clock is not null && (clock < range.MinimumMhz || clock > range.MaximumMhz)) skipped.Add("频率上限：超出当前驱动范围");
             else actions.Add(("频率上限", () => activeSession.ExecuteAsync(new SetGpuFrequencyLimitCommand(Guid.NewGuid(), clock, true), CancellationToken.None)));

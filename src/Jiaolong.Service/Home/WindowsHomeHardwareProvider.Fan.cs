@@ -166,10 +166,8 @@ public sealed partial class WindowsHomeHardwareProvider
             if (disposed || BackgroundWorkPaused) return;
             if (strongCoolingActive)
             {
-                if (fanTransport is null || ThirdPartyFanWriterRunning() ||
-                    !HasSafeFanTelemetry(ReadTelemetryLocked(CancellationToken.None)))
-                { ReleaseFanLocked(); return; }
-                fanTransport.SetTargets(68, 68);
+                // Native firmware boost owns its policy; no EC target refresh is required.
+                fanTimer?.Change(Timeout.Infinite, Timeout.Infinite);
                 return;
             }
             if (activeFanPlan is null)

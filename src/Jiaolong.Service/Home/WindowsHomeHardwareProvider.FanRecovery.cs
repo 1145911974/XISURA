@@ -43,7 +43,7 @@ public sealed partial class WindowsHomeHardwareProvider
             if (capture.Phase != ClientControlSessionPhase.Closing || scope != expectedScope ||
                 !saved.Unresolved.Any(item => item.OperationId == id && item.OwnerSid == scope.OwnerSid && item.Identity == identity) ||
                 !firmwareOnly && saved.FanEcRecovery?.Scope != scope || capture.Baseline.StrongCooling is not bool original ||
-                firmwareOnly && (transport is not null || activeFanPlan is not null || fanTouched || strongCoolingActive) ||
+                firmwareOnly && (transport is not null || activeFanPlan is not null || fanTouched) ||
                 transport is not null && fanRecoveryOperation != operation && !completedTransport && !originalTransport || ThirdPartyFanWriterRunning())
                 throw new InvalidDataException("fanRecoveryOriginalAuthorityMismatch");
             controlJournal.VerifyFanFirmwareOnlyHistoryAsync(capture, saved, token).GetAwaiter().GetResult();
@@ -57,9 +57,11 @@ public sealed partial class WindowsHomeHardwareProvider
                 (controlJournal.CurrentFanRecoveryOperation == operation || transport?.LeaseCompleted == true);
             void Check() { fanRecoveryCancellation.ThrowIfCancellationRequested(); if (!Current()) throw new IOException("fanRecoveryLifecycleChanged"); }
             Check();
+            var firmwareRecord = saved.FanFirmwareRecovery?.Scope == scope ? saved.FanFirmwareRecovery : null;
             if (!TryReadControlByte(StrongCoolingBinding(), out var firmware, token) || firmware > 1 ||
-                (original ? saved.FanFirmwareRecovery is not { } record || record.Scope != scope || record.OriginalBefore != 1 ||
-                    ControlExecutionJournal.FanFirmwareComplete(record) && firmware != 1 : saved.FanFirmwareRecovery?.Scope == scope || firmware != 0))
+                (firmwareRecord is not null ? firmwareRecord.OriginalBefore != (original ? 1 : 0) ||
+                    firmware != firmwareRecord.Target && (firmwareRecord.Observed is not null || firmware != firmwareRecord.Before) :
+                    original || firmware != 0))
                 throw new InvalidDataException("fanRecoveryFirmwareOwnershipChanged");
             fanTimer?.Change(Timeout.Infinite, Timeout.Infinite);
             fanRecoveryOperation = operation;
@@ -91,7 +93,7 @@ public sealed partial class WindowsHomeHardwareProvider
             RestoreStrongCoolingLocked();
             var completed = controlJournal.ReadAsync(token).GetAwaiter().GetResult();
             if ((!firmwareOnly && (completed.FanEcRecovery is not { } ec || ec.Scope != scope || !ControlExecutionJournal.FanCheckpointComplete(ec.Checkpoint))) ||
-                original && (completed.FanFirmwareRecovery is not { } fw || fw.Scope != scope || !ControlExecutionJournal.FanFirmwareComplete(fw)))
+                (original || firmwareRecord is not null) && (completed.FanFirmwareRecovery is not { } fw || fw.Scope != scope || !ControlExecutionJournal.FanFirmwareComplete(fw)))
                 throw new InvalidDataException("fanRecoveryNotVerified");
             Check();
             fanRecoveryOperation = null;

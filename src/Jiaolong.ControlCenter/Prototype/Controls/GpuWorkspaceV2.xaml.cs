@@ -272,7 +272,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         RouteDiagram.SetGpuName(gpuName);
         bool muxAvailable = CapabilityAvailable(snapshot, "muxMode");
         bool tuningAvailable = CapabilityAvailable(snapshot, "gpuFrequencyLimit") &&
-            snapshot.Capabilities.Fields.Any(item => item.Key == "coreFrequencyLimitMhz" && item.Readable && item.Writable) &&
+            snapshot.Capabilities.Fields.Any(item => item.Key == "coreFrequencyLimitMhz" && item.Writable) &&
             snapshot.Controls.GpuClockLimit is { Error: null, MaximumMhz: > 0 };
         RouteDiagram.SetAvailable(muxAvailable);
         if (muxAvailable && snapshot.Controls.MuxMode is MuxMode mode)
@@ -286,7 +286,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
             : "支持范围未知 · 当前上限未知";
         CoreLiveUnknown.Visibility = tuningAvailable && clockDirty ? Visibility.Collapsed : Visibility.Visible;
         PresetToolbar.SetActionAvailability(!GpuWritePending, gpuVfDirty && !GpuWritePending);
-        TuningStateText.Text = tuningAvailable ? "可调节" : "只读";
+        TuningStateText.Text = tuningAvailable ? "手动调节" : "只读";
         var unavailable = new List<string>(2);
         if (!muxAvailable) unavailable.Add("MUX");
         if (!tuningAvailable) unavailable.Add("GPU 绝对限频");

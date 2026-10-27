@@ -29,9 +29,10 @@ public sealed partial class ClientSessionExitRecoveryTests
         if (saved.FanEcRecovery is { Checkpoint.Unchanged: false } ec && ec.Scope == scope)
         await journal.RecordFanEcCheckpointAsync(scope, ec.Checkpoint with { Expected = new(ec.Checkpoint.Expected)
             { [0x1060] = 0, [0x0B20] = 0, [0xC83C] = 0, [0xC83D] = 0 }, Pending = new(), Released = true }, token);
-        await journal.RecordFanFirmwareAsync(scope, 0, 1, null, true, token);
+        byte before = fixture.Provider.FirmwareStrongCooling ? (byte)1 : (byte)0;
+        await journal.RecordFanFirmwareAsync(scope, before, 1, null, true, token);
         fixture.Provider.CompleteFanRecovery(true);
-        await journal.RecordFanFirmwareAsync(scope, 0, 1, 1, true, token);
+        await journal.RecordFanFirmwareAsync(scope, before, 1, 1, true, token);
         return new(operation, CommandState.Applied, null, RequiredUserAction.None, null, false) { Mutation = HardwareMutation.Changed };
     }
 

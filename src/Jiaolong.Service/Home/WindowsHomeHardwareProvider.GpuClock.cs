@@ -51,12 +51,12 @@ public sealed partial class WindowsHomeHardwareProvider
             !compatibilityDecision.Capabilities.Items.Any(item => item.Key == "gpuFrequencyLimit" && item.State == CapabilityState.Available))
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
         if (!CreateFieldCapabilities(compatibilityDecision.Capabilities.Items, null)
-            .Any(item => item.Key == "coreFrequencyLimitMhz" && item.Readable && item.Writable))
+            .Any(item => item.Key == "coreFrequencyLimitMhz" && item.Writable))
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with
             {
                 Mutation = HardwareMutation.NoMutation,
                 Error = ServiceError.Create(ErrorCode.CapabilityUnavailable, command.OperationId, false) with
-                { Details = new() { ["reason"] = "gpuClockLimitReadbackUnavailable" } }
+                { Details = new() { ["reason"] = "gpuClockSubmissionUnavailable" } }
             };
         bool writeAttempted = false;
         try
@@ -74,7 +74,8 @@ public sealed partial class WindowsHomeHardwareProvider
             gpuClockTransport.ApplyAsync(gpuClockDevice, command.Megahertz, token).GetAwaiter().GetResult();
             if (BackgroundWorkPaused) throw new IOException("hardwareAccessPaused");
             gpuClockState = state! with { SubmittedMhz = command.Megahertz, HasSubmission = true };
-            return new(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false);
+            return new CommandResult(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
+            { Mutation = HardwareMutation.Changed };
         }
         catch (Exception ex)
         {

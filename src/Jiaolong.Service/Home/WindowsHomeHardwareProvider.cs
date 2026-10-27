@@ -164,11 +164,6 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                     .Select(key => new CapabilityDescriptor(key, CapabilityState.Unavailable, "hardwareInterfaceUnavailable")))
                 .Select(item => item.Key switch
                 {
-                    "strongCooling" => item with
-                    {
-                        State = CapabilityState.Unavailable,
-                        Reason = "fanAdvancedControlNotSupportedInRelease"
-                    },
                     "cpuTuning" when !HasReadableCpuTuning(cpuTuningState) => item with
                     {
                         State = CapabilityState.Unavailable,
@@ -282,7 +277,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 KeyboardLightingNativeCycleAvailable = false,
                     KeyboardLightingPreviewActive = lightingPreview.Original is not null,
                     FanTargetCeilingAvailable = true,
-                    FanAutomaticCeilingAvailable = false,
+                    FanAutomaticCeilingAvailable = HasFanEcProtocol(),
                     GpuCurveFactoryResetAvailable = true,
                     FanAutomaticCeilingActive = activeFanPlan?.Strategy == "Auto",
                     ActiveFanControlPlan = activeFanPlan,
@@ -399,7 +394,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 KeyboardLightingNativeCycleAvailable = false,
                 KeyboardLightingPreviewActive = lightingPreview.Original is not null,
                 FanTargetCeilingAvailable = true,
-                FanAutomaticCeilingAvailable = false,
+                FanAutomaticCeilingAvailable = HasFanEcProtocol(),
                 GpuCurveFactoryResetAvailable = true,
                 FanAutomaticCeilingActive = activeFanPlan?.Strategy == "Auto",
                 ActiveFanControlPlan = activeFanPlan,

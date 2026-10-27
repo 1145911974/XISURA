@@ -29,5 +29,25 @@ public sealed class PrototypeStrongCoolingCommandCoordinatorTests
         await Task.WhenAll(first, latest);
 
         CollectionAssert.AreEqual(new[] { true, false }, sent);
+
+        sent.Clear();
+        var synchronous = new PrototypeStrongCoolingCommandCoordinator((enabled, _) =>
+        {
+            sent.Add(enabled);
+            return Task.CompletedTask;
+        });
+        await synchronous.RequestAsync(true, CancellationToken.None);
+        await synchronous.RequestAsync(false, CancellationToken.None);
+        CollectionAssert.AreEqual(new[] { true, false }, sent);
+
+        sent.Clear();
+        var retry = new PrototypeStrongCoolingCommandCoordinator((enabled, _) =>
+        {
+            sent.Add(enabled);
+            return enabled ? Task.FromException(new IOException("write failed")) : Task.CompletedTask;
+        });
+        await Assert.ThrowsAsync<IOException>(() => retry.RequestAsync(true, CancellationToken.None));
+        await retry.RequestAsync(false, CancellationToken.None);
+        CollectionAssert.AreEqual(new[] { true, false }, sent);
     }
 }

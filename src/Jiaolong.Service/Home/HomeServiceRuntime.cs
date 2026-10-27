@@ -30,6 +30,7 @@ public interface IHomeHardwareProvider
     Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false) => ReadControlsAsync(token);
     // Retry-safe: stop software lighting without hardware writes; throw InvalidDataException if the final frame cannot be verified.
     Task StopClientLightingDynamicsAsync(CancellationToken token) { token.ThrowIfCancellationRequested(); return Task.CompletedTask; }
+    Task RetainClientNativeCoolingAsync(CancellationToken token) { token.ThrowIfCancellationRequested(); return Task.CompletedTask; }
     Task<OemCpuConfigurationSnapshot?> ReadOemCpuConfigurationAsync(CancellationToken token)
     { token.ThrowIfCancellationRequested(); return Task.FromResult<OemCpuConfigurationSnapshot?>(null); }
     Task<bool> ReconcileGpuRecoveryAsync(CancellationToken token) { token.ThrowIfCancellationRequested(); return Task.FromResult(true); }

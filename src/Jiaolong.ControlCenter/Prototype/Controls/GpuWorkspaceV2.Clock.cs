@@ -13,6 +13,22 @@ public sealed partial class GpuWorkspaceV2
     private bool clockReady;
     private bool clockInitialized;
 
+    private async void OnResetClockLimitClick(object sender, RoutedEventArgs e)
+    {
+        if (!clockReady || clockPending || gpuEditorLoading || session?.State is not { } state ||
+            !CapabilityAvailable(state, "gpuFrequencyLimit")) return;
+        // Cancel queued slider submissions so they cannot reapply a ceiling after this explicit reset.
+        ++liveGpuRevision;
+        liveGpuQueued = false;
+        try
+        {
+            await ApplyGpuPresetAsync(new GpuWorkspacePreset(null, null, null, null)
+                { ResetCoreFrequencyLimit = true }, automatic: true);
+        }
+        catch (Exception)
+        { await PresetToolbar.ShowStatusAsync("解除限频结果未确认，请检查设备或服务状态"); }
+    }
+
     private void UpdateClockDraft(double? value, bool fromRail)
     {
         if (clockSynchronizing || gpuPresetLoading || value is null) return;
@@ -36,8 +52,7 @@ public sealed partial class GpuWorkspaceV2
         if (!available || state is null)
         {
             CoreRail.SetValue(null);
-            SetGpuHelpState(CoreFrequencyHelp, state is { Error: null, MaximumMhz: > 0 }
-                ? "当前锁频无法独立读回，已暂停写入" : "驱动限频不可用");
+            SetGpuHelpState(CoreFrequencyHelp, "驱动限频不可用，请检查设备或服务状态");
             return;
         }
         if (CoreRail.Minimum != state.MinimumMhz || CoreRail.Maximum != state.MaximumMhz || !clockInitialized)
@@ -56,8 +71,8 @@ public sealed partial class GpuWorkspaceV2
             clockSynchronizing = false;
         }
         if (!clockDirty && !clockPending)
-            SetGpuHelpState(CoreFrequencyHelp, !state.HasSubmission ? "范围已读取 · 当前限制未读回" :
-                state.SubmittedMhz is int mhz ? $"已提交 {mhz} MHz · 未读回" : "驱动已接受恢复默认");
+            SetGpuHelpState(CoreFrequencyHelp, !state.HasSubmission ? "手动设置上限 · 当前限制未读回 · 退出后保留，需手动重置" :
+                state.SubmittedMhz is int mhz ? $"驱动已接受 {mhz} MHz · 未独立读回 · 退出后保留" : "驱动已接受解除限频 · 未独立读回");
     }
 
 }

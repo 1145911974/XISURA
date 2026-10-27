@@ -36,13 +36,13 @@ public sealed class FanCeilingTests
         Assert.IsTrue((bool)method.Invoke(null, args)!); Assert.AreEqual((byte)58, args[2]);
         args = [plan, telemetry with { CapturedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-10) }, (byte)0, (byte)0];
         Assert.IsFalse((bool)method.Invoke(null, args)!);
-        var strongReadback = typeof(WindowsHomeHardwareProvider).GetMethod("IsStrongCoolingEcConfirmed", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var ec = new FanEcControlState(DateTimeOffset.UtcNow, 0x80, 0x0A, 68, 68, null);
-        Assert.IsTrue((bool)strongReadback.Invoke(null, [ec])!);
-        Assert.IsFalse((bool)strongReadback.Invoke(null, [ec with { CpuTarget = 58 }])!);
-        Assert.IsTrue((bool)strongReadback.Invoke(null, [ec with { Control = 4 }])!);
-        Assert.IsFalse((bool)strongReadback.Invoke(null, [ec with { GpuTarget = 0 }])!);
-        Assert.IsFalse((bool)strongReadback.Invoke(null, [ec with { CapturedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-10) }])!);
+        using var provider = new WindowsHomeHardwareProvider();
+        var strongReadback = typeof(WindowsHomeHardwareProvider).GetMethod("ReadStrongCoolingStateLocked", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        typeof(WindowsHomeHardwareProvider).GetField("strongCoolingActive", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(provider, true);
+        Assert.AreEqual(true, strongReadback.Invoke(provider, [true]));
+        Assert.AreEqual(false, strongReadback.Invoke(provider, [false]));
+        Assert.IsNull(strongReadback.Invoke(provider, [null]), "Unknown OEM readback must remain unknown, regardless of the submitted enable request.");
+        typeof(WindowsHomeHardwareProvider).GetField("strongCoolingActive", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(provider, false);
     }
 
     [TestMethod]
