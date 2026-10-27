@@ -304,9 +304,11 @@ public sealed class AdaptiveAutomationWorker(
             return;
         }
         submittedTarget = key; submittedRevision = saved.Revision;
-        unverifiedNativeMode = applied.VerifiedPerformanceMode != preset.PerformanceMode;
-        targetApplyState = unverifiedNativeMode ? ApplyState.SubmittedUnverified : ApplyState.Confirmed;
-        if (!unverifiedNativeMode)
+        bool modeVerified = applied.VerifiedPerformanceMode == preset.PerformanceMode;
+        // Retaining the current mode creates no new uncertain write, but cannot clear an earlier one.
+        unverifiedNativeMode = !modeVerified && (unverifiedNativeMode || applied.Mutation != HardwareMutation.NoMutation);
+        targetApplyState = modeVerified ? ApplyState.Confirmed : ApplyState.SubmittedUnverified;
+        if (modeVerified)
         {
             currentTarget = key;
             currentStageOverride = target;

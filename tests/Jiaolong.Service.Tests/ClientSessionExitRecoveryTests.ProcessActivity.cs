@@ -103,7 +103,22 @@ public sealed partial class ClientSessionExitRecoveryTests
                 { RunningExecutables = ["app.exe"] }, token);
             await bridge.RunAutomationCycleAsync(ct => (Task)tick.Invoke(worker, [ct])!, token);
         }
-        for (int i = 0; i < 8; i++) await Observe();
+        int beforeRetention = fixture.Provider.WriteCount;
+        bool retainedObserved = false;
+        for (int i = 0; i < 8; i++)
+        {
+            await Observe();
+            var observed = await store.ReadAsync(token);
+            if (!retainedObserved && observed.Status?.SubmittedTarget is not null)
+            {
+                Assert.AreEqual(game, observed.Status.SubmittedTarget);
+                Assert.AreEqual(ApplyState.SubmittedUnverified, observed.Status.TargetApplyState);
+                Assert.IsNull(observed.Status.CurrentTarget, "A no-write retention cannot claim effective confirmation.");
+                Assert.AreEqual(beforeRetention, fixture.Provider.WriteCount);
+                retainedObserved = true;
+            }
+        }
+        Assert.IsTrue(retainedObserved);
         var active = await store.ReadAsync(token);
         Assert.AreEqual(turbo, active.Status?.SubmittedTarget,
             $"The real worker must feed process {(gpuOnly ? "GPU" : "CPU")} activity; global load stays below every upward threshold.");

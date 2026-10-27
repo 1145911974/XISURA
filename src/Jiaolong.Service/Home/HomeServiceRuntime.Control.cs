@@ -84,21 +84,26 @@ public sealed partial class HomeServiceRuntime
         CommandResult? modeResult = null;
         bool changed = false;
         if (!await FreshAsync()) return Rejected(command, ErrorCode.CancelledBeforeApply);
-        bool nativeConfirmed = !modeFollow && ((!applyNativeMode && controls.PerformanceMode == request.NativeMode &&
+        bool adaptiveSameMode = applyNativeMode && request.Origin == ControlOrigin.Adaptive &&
+            plan.Pages.Length == 0 && controls.PerformanceMode == request.NativeMode;
+        bool nativeConfirmed = !modeFollow && !adaptiveSameMode && ((!applyNativeMode && controls.PerformanceMode == request.NativeMode &&
             controls.ModeEvidence?.ParsedMode == request.NativeMode) || CanReuseNativeConfirmation(request.NativeMode, controls));
-        bool presetModeAlreadySelected = false;
-        if (applyNativeMode && !nativeConfirmed && request.Origin == ControlOrigin.PresetUse &&
-            plan.Pages is [{ Selection.Page: ControlPageId.Gpu or ControlPageId.Performance }])
+        bool modeAlreadySelected = false;
+        PerformanceModeEvidence? retainedModeEvidence = null;
+        if (applyNativeMode && !nativeConfirmed && (adaptiveSameMode || request.Origin == ControlOrigin.PresetUse &&
+            plan.Pages is [{ Selection.Page: ControlPageId.Gpu or ControlPageId.Performance }]))
         {
             var observed = await provider.ReadNativeModeEvidenceAsync(token);
             var age = observed is null ? TimeSpan.MaxValue : DateTimeOffset.UtcNow - observed.CapturedAtUtc;
-            // Applying a single CPU/GPU page must not reset an already selected OEM mode.
+            // Retaining a mode or applying one CPU/GPU page must not reset already selected OEM settings.
             // Request-state readback still does not confirm effective performance settings.
-            presetModeAlreadySelected = controls.PerformanceMode == request.NativeMode && observed?.ParsedMode == request.NativeMode &&
+            modeAlreadySelected = controls.PerformanceMode == request.NativeMode && observed?.ParsedMode == request.NativeMode &&
                 observed.RawValue.HasValue && age >= TimeSpan.Zero && age <= TimeSpan.FromSeconds(1);
+            if (adaptiveSameMode && !modeAlreadySelected) return Rejected(command, ErrorCode.CancelledBeforeApply);
+            retainedModeEvidence = observed;
             if (!await FreshAsync()) return Rejected(command, ErrorCode.CancelledBeforeApply);
         }
-        if (applyNativeMode && !nativeConfirmed && !presetModeAlreadySelected)
+        if (applyNativeMode && !nativeConfirmed && !modeAlreadySelected)
         {
             var modeBefore = await ReadControlBaselineForExecutionAsync(token, true);
             Volatile.Write(ref controlExecutionState, new(admission.Generation, Execution.HardwareEpoch, plan.CatalogRevision,
@@ -120,14 +125,16 @@ public sealed partial class HomeServiceRuntime
             await RecordNativeModeEffectsAsync(command.OperationId, request.NativeMode, modeBefore, modeResult, token);
         }
         controls = await ReadControlBaselineForExecutionAsync(token, RequiresAdvanced(plan));
-        if (modeFollow || presetModeAlreadySelected)
+        if (modeFollow || modeAlreadySelected)
         {
             var observed = await provider.ReadNativeModeEvidenceAsync(token);
             var age = observed is null ? TimeSpan.MaxValue : DateTimeOffset.UtcNow - observed.CapturedAtUtc;
             // A page may follow or retain a selected mode, never apply after that mode has changed.
             if (controls.PerformanceMode != request.NativeMode || observed?.ParsedMode != request.NativeMode ||
-                observed.RawValue is null || age < TimeSpan.Zero || age > TimeSpan.FromSeconds(1) || !await FreshAsync())
+                observed.RawValue is null || adaptiveSameMode && observed.RawValue != retainedModeEvidence?.RawValue ||
+                age < TimeSpan.Zero || age > TimeSpan.FromSeconds(1) || !await FreshAsync())
                 return Rejected(command, ErrorCode.CancelledBeforeApply);
+            retainedModeEvidence = observed;
         }
         foreach (var page in plan.Pages)
         {
@@ -274,7 +281,8 @@ public sealed partial class HomeServiceRuntime
         return new(command.OperationId, pages.Any(page => page.State == ApplyState.Unknown) ? CommandState.RecoveryRequired : CommandState.Applied,
             null, RequiredUserAction.None, null, false)
         { Mutation = changed ? HardwareMutation.Changed : HardwareMutation.NoMutation, ExecutionState = executionState,
-          ModeEvidence = modeResult?.ModeEvidence ?? controls.ModeEvidence, VerifiedPerformanceMode = nativeConfirmed ? request.NativeMode : null };
+          ModeEvidence = modeResult?.ModeEvidence ?? retainedModeEvidence ?? controls.ModeEvidence,
+          VerifiedPerformanceMode = nativeConfirmed ? request.NativeMode : null };
     }
 
     private bool CanReuseNativeConfirmation(PerformanceMode mode, HomeControlState controls) =>
