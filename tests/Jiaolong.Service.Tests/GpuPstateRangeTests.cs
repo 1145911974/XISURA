@@ -22,7 +22,7 @@ public sealed class GpuPstateRangeTests
         FieldCapability[] Fields(GpuVfState value)
         {
             cache.SetValue(provider, value);
-            return (FieldCapability[])create.Invoke(provider, [items, null])!;
+            return (FieldCapability[])create.Invoke(provider, [items, null, null])!;
         }
         foreach (int currentCore in new[] { 0, 500_000 })
         {

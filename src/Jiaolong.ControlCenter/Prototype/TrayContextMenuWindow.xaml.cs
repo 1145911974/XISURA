@@ -13,6 +13,7 @@ public sealed partial class TrayContextMenuWindow : Window
     private readonly Action openClient;
     private readonly Action exit;
     private bool closing;
+    private bool hasBeenShown;
 
     public TrayContextMenuWindow(Action openClient, Action exit)
     {
@@ -33,6 +34,7 @@ public sealed partial class TrayContextMenuWindow : Window
         ApplyChrome();
         Activated += (_, args) =>
         {
+            Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] TrayMenu Activated {args.WindowActivationState}, closing={closing}\n");
             if (!closing && args.WindowActivationState == WindowActivationState.Deactivated) HideImmediately();
         };
         MenuSurface.KeyDown += (_, args) =>
@@ -50,22 +52,33 @@ public sealed partial class TrayContextMenuWindow : Window
 
     public void ShowNearCursor(PointInt32 cursor)
     {
+        // Reopen the XAML host before repositioning a menu that was previously activated.
+        if (hasBeenShown) AppWindow.Show(false);
         var area = PrototypeWindowChrome.CandidateWorkArea() ??
             DisplayArea.GetFromPoint(cursor, DisplayAreaFallback.Primary).WorkArea;
+        Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] TrayMenu MoveToArea {area.X},{area.Y}\n");
         AppWindow.Move(new PointInt32(area.X, area.Y));
+        Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] TrayMenu ResizeClient\n");
         double scale = Math.Max(96u, GetDpiForWindow(WindowNative.GetWindowHandle(this))) / 96d;
         AppWindow.ResizeClient(new SizeInt32((int)Math.Ceiling(136 * scale), (int)Math.Ceiling(62 * scale)));
+        Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] TrayMenu MoveToCursor\n");
         AppWindow.Move(new PointInt32(
             Math.Clamp(cursor.X + 2, area.X, Math.Max(area.X, area.X + area.Width - AppWindow.Size.Width)),
             Math.Clamp(cursor.Y - AppWindow.Size.Height - 2, area.Y, Math.Max(area.Y, area.Y + area.Height - AppWindow.Size.Height))));
         ApplyChrome();
+        Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] TrayMenu Show\n");
         AppWindow.Show();
+        hasBeenShown = true;
         Activate();
         SetForegroundWindow(WindowNative.GetWindowHandle(this));
         OpenItem.Focus(FocusState.Programmatic);
     }
 
-    public void HideImmediately() => AppWindow.Hide();
+    public void HideImmediately()
+    {
+        Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] TrayMenu Hide\n");
+        AppWindow.Hide();
+    }
     public void CloseForExit()
     {
         closing = true;

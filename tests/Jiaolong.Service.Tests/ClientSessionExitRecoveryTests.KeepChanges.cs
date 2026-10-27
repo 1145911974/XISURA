@@ -19,14 +19,16 @@ public sealed partial class ClientSessionExitRecoveryTests
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var productionFields = (FieldCapability[])typeof(WindowsHomeHardwareProvider).GetMethod("CreateFieldCapabilities", flags)!
             .Invoke(capabilityProvider, [new CapabilityDescriptor[] { new("keyboardLighting", CapabilityState.Available, null),
-                new("quickSetting:lidLogo", CapabilityState.Available, null) }, null])!;
+                new("quickSetting:lidLogo", CapabilityState.Available, null),
+                new("strongCooling", CapabilityState.Available, null) }, null, false])!;
         var runtimeFields = fixture.Runtime.State.Capabilities.Fields;
         for (int index = 0; index < runtimeFields.Length; index++)
-            if (runtimeFields[index].Key is "effect" or "brightness" or "hex" or "speed" or "logo")
+            if (runtimeFields[index].Key is "effect" or "brightness" or "hex" or "speed" or "logo" or "strongCooling")
                 runtimeFields[index] = productionFields.Single(field => field.Key == runtimeFields[index].Key)
                     with { HardwareEpoch = fixture.Runtime.Execution.HardwareEpoch };
         await fixture.Write(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Quiet), handle);
-        await fixture.Write(new SetStrongCoolingCommand(Guid.NewGuid(), true), handle);
+        var cooling = await fixture.Write(new SetStrongCoolingCommand(Guid.NewGuid(), true), handle);
+        Assert.AreEqual(ApplyState.Confirmed, cooling.ExecutionState!.Fields["fan.strongCooling"].WriteState);
         await fixture.Write(new SetCpuTuningCommand(Guid.NewGuid(), CpuPlan(4600, -5), true), handle);
         var logo = await fixture.Write(new SetLidLogoCommand(Guid.NewGuid(), false), handle);
         Assert.AreEqual(ApplyState.Confirmed, logo.ExecutionState!.Fields["lighting.logo"].WriteState);
@@ -59,6 +61,7 @@ public sealed partial class ClientSessionExitRecoveryTests
         Assert.AreEqual(CommandState.Applied, result.State, JsonSerializer.Serialize(result.Error));
         Assert.AreEqual(2, fixture.Provider.LightingDynamicsStops);
         Assert.AreEqual(writes, fixture.Provider.WriteCount);
+        Assert.IsTrue(fixture.Runtime.State.Controls.StrongCooling!.Value);
         Assert.AreEqual(4600, fixture.Provider.Cpu.AcFrequency());
         Assert.AreEqual(-5, fixture.Provider.Cpu.PerCoreCurveOptimizer![0]);
         Assert.AreEqual((byte)12, fixture.Provider.Light.Red);
@@ -76,6 +79,7 @@ public sealed partial class ClientSessionExitRecoveryTests
         Assert.AreEqual(writes, fixture.Provider.WriteCount);
         var capture = await new ClientControlSessionStore(fixture.Root).ReadAsync(CancellationToken.None);
         Assert.AreEqual(4600, capture!.Baseline.CpuTuning!.AcFrequency());
+        Assert.IsTrue(capture.Baseline.StrongCooling!.Value);
         using var archive = JsonDocument.Parse(File.ReadAllText(Path.Combine(fixture.Root, "completed-client-sessions", handle.SessionId.ToString("N") + ".json")));
         Assert.IsTrue(archive.RootElement.GetProperty("recovery").GetProperty("keepChanges").GetBoolean());
         Assert.AreEqual(CommandState.Applied, (await restarted.ConfigureClientSessionExitAsync(Guid.NewGuid(),
@@ -88,6 +92,33 @@ public sealed partial class ClientSessionExitRecoveryTests
         Assert.AreEqual(4600, fixture.Provider.Cpu.AcFrequency());
         Assert.AreEqual(-5, fixture.Provider.Cpu.PerCoreCurveOptimizer![0]);
         Assert.AreEqual(0, fixture.Provider.Gpu.MemoryOffsetKhz);
+    }
+
+    [TestMethod]
+    public async Task Keep_validation_failure_allows_authenticated_default_exit_without_unfreezing_writes()
+    {
+        using var fixture = new Fixture();
+        var handle = await fixture.Begin(null);
+        var fields = fixture.Runtime.State.Capabilities.Fields;
+        int index = Array.FindIndex(fields, field => field.Key == "strongCooling");
+        fields[index] = fields[index] with { Readable = false };
+        var cooling = await fixture.Write(new SetStrongCoolingCommand(Guid.NewGuid(), true), handle);
+        Assert.AreEqual(ApplyState.SubmittedUnverified, cooling.ExecutionState!.Fields["fan.strongCooling"].WriteState);
+        Assert.AreEqual(CommandState.RecoveryRequired, (await fixture.Runtime.EndClientControlSessionAsync(Guid.NewGuid(),
+            handle.SessionId, fixture.Owner, CancellationToken.None, keepChanges: true)).State);
+        Assert.IsFalse(File.Exists(Path.Combine(fixture.Root, "client-session-recovery.json")));
+        Assert.IsFalse(fixture.Runtime.CanRunClientAutomation(fixture.Owner.UserSid));
+        int writes = fixture.Provider.WriteCount;
+        Assert.AreEqual(CommandState.Rejected,
+            (await fixture.Write(new SetStrongCoolingCommand(Guid.NewGuid(), false), handle)).State);
+        Assert.AreEqual(CommandState.Rejected, (await fixture.Runtime.ConfigureClientSessionExitAsync(Guid.NewGuid(),
+            new(handle.SessionId, null), fixture.Owner, CancellationToken.None)).State);
+        Assert.AreEqual(writes, fixture.Provider.WriteCount);
+        Assert.AreEqual(CommandState.Applied, (await fixture.End(handle)).State);
+        Assert.IsFalse(fixture.Runtime.State.Controls.StrongCooling!.Value);
+        Assert.AreEqual(ClientControlSessionPhase.Completed,
+            (await new ClientControlSessionStore(fixture.Root).ReadAsync(CancellationToken.None))!.Phase);
+        Assert.AreEqual(0, (await fixture.Journal.ReadAsync(CancellationToken.None)).Current!.Fields.Count);
     }
 
     [TestMethod]

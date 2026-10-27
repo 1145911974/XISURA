@@ -50,7 +50,7 @@ public sealed partial class WindowsHomeHardwareProvider
         if (!command.RiskConfirmed || compatibilityDecision?.Mode != CompatibilityMode.Writable ||
             !compatibilityDecision.Capabilities.Items.Any(item => item.Key == "gpuFrequencyLimit" && item.State == CapabilityState.Available))
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
-        if (!CreateFieldCapabilities(compatibilityDecision.Capabilities.Items, null)
+        if (!CreateFieldCapabilities(compatibilityDecision.Capabilities.Items, null, null)
             .Any(item => item.Key == "coreFrequencyLimitMhz" && item.Writable))
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with
             {

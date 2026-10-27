@@ -4,7 +4,7 @@ namespace Jiaolong.Service.Home;
 
 public sealed partial class WindowsHomeHardwareProvider
 {
-    private FieldCapability[] CreateFieldCapabilities(CapabilityDescriptor[] items, CpuTuningState? cpu)
+    private FieldCapability[] CreateFieldCapabilities(CapabilityDescriptor[] items, CpuTuningState? cpu, bool? strongCooling)
     {
         bool Available(string key) => items.Any(item => item.Key == key && item.State == CapabilityState.Available);
         // Capability snapshots outlive individual curve edits; advertise the driver envelope.
@@ -57,7 +57,7 @@ public sealed partial class WindowsHomeHardwareProvider
                 field is "maximumRpm" or "fixedRpm" ? 5800 : null,
                 field is "maximumRpm" or "fixedRpm" ? "RPM" : "", "ecFanControl",
                 step: field is "maximumRpm" or "fixedRpm" ? 100 : null);
-        Add("strongCooling", "strongCooling", false, null, null, "", "oemAndEcFanControl");
+        Add("strongCooling", "strongCooling", strongCooling.HasValue, null, null, "", "oemFirmwareReadback");
         foreach (string field in new[] { "effect", "brightness", "hex" })
             Add(field, "keyboardLighting", Available("keyboardLighting"), field == "brightness" ? 0 : null,
                 field == "brightness" ? 3 : null, "", field == "effect" ? "oemModeOrSoftwareEffectReadback" : "oemLightingReadback");

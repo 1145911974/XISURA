@@ -815,6 +815,18 @@ public sealed class PrototypeContractTests
     }
 
     [TestMethod]
+    public void Startup_and_window_activation_preserve_the_users_input_method()
+    {
+        foreach (var path in new[] { new[] { "App.xaml.cs" }, new[] { "Program.cs" },
+            new[] { "Prototype", "PrototypeWindow.xaml.cs" } })
+        {
+            var source = ReadSource(new[] { "src", "Jiaolong.ControlCenter" }.Concat(path).ToArray());
+            Assert.IsFalse(source.Contains("ProcessInputMethod.UseMicrosoftPinyin(", StringComparison.Ordinal),
+                string.Join('/', path) + " must not select a different input processor for the user.");
+        }
+    }
+
+    [TestMethod]
     public void Prototype_window_prefers_a_secondary_display_when_available()
     {
         var window = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.xaml.cs");
@@ -824,6 +836,9 @@ public sealed class PrototypeContractTests
         StringAssert.Contains(window, "DisplayAreaFallback.Primary");
         StringAssert.Contains(window, "MoveToSecondaryDisplay");
         StringAssert.Contains(window, "DispatcherQueue.TryEnqueue");
+        var chrome = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindowChrome.cs");
+        StringAssert.Contains(chrome, "Environment.GetCommandLineArgs().Any");
+        StringAssert.Contains(chrome, "\"--accept-secondary\"");
     }
 
     [TestMethod]

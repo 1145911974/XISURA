@@ -23,12 +23,12 @@ public sealed class LightingCapabilityTests
         { BrightnessLevel = 3, Red = 1, Green = 2, Blue = 3, LogoEnabled = true };
         CapabilityDescriptor[] items = [new("keyboardLighting", CapabilityState.Available, null),
             new("quickSetting:lidLogo", CapabilityState.Available, null)];
-        var fields = (FieldCapability[])create.Invoke(provider, [items, null])!;
+        var fields = (FieldCapability[])create.Invoke(provider, [items, null, null])!;
         foreach (string field in new[] { "effect", "brightness", "hex", "speed", "logo" })
             Assert.IsTrue(fields.Single(item => item.Key == field).Readable, field);
-        var withoutLogo = (FieldCapability[])create.Invoke(provider, [items.Take(1).ToArray(), null])!;
+        var withoutLogo = (FieldCapability[])create.Invoke(provider, [items.Take(1).ToArray(), null, null])!;
         Assert.IsFalse(withoutLogo.Single(item => item.Key == "logo").Readable);
-        var missing = (FieldCapability[])create.Invoke(provider, [Array.Empty<CapabilityDescriptor>(), null])!;
+        var missing = (FieldCapability[])create.Invoke(provider, [Array.Empty<CapabilityDescriptor>(), null, null])!;
         Assert.IsFalse(missing.Single(item => item.Key == "speed").Readable);
 
         var runtime = new HomeServiceRuntime(provider);

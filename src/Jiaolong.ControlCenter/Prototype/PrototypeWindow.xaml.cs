@@ -273,7 +273,6 @@ public sealed partial class PrototypeWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             if (allowClose) return;
-            if (!isDeactivated) ProcessInputMethod.UseMicrosoftPinyin();
             ReapplyWindowChrome();
             RefreshBackdropActivity();
         });

@@ -36,5 +36,5 @@ public sealed class ExistingControlAvailabilityTests
     private static FieldCapability[] Fields(WindowsHomeHardwareProvider provider, CapabilityState state) =>
         (FieldCapability[])typeof(WindowsHomeHardwareProvider)
             .GetMethod("CreateFieldCapabilities", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(provider, [new CapabilityDescriptor[] { new("fanControl", state, null), new("strongCooling", state, null) }, null])!;
+            .Invoke(provider, [new CapabilityDescriptor[] { new("fanControl", state, null), new("strongCooling", state, null) }, null, null])!;
 }

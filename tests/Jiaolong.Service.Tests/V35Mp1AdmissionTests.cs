@@ -164,7 +164,7 @@ public sealed class V35Mp1AdmissionTests
         Assert.AreEqual(CapabilityState.Available, normalized.Single(item => item.Key == "cpuTuning:smu").State);
         Set(provider, "compatibilityDecision", new CompatibilityDecision(CompatibilityMode.Writable, new(normalized), null, []));
         Assert.IsTrue((bool)Invoke(provider, "CanWriteDirectMp1Limit", Get(provider, "smuLimitCache")!)!);
-        var refreshed = (FieldCapability[])Invoke(provider, "CreateFieldCapabilities", normalized, Cpu)!;
+        var refreshed = (FieldCapability[])Invoke(provider, "CreateFieldCapabilities", normalized, Cpu, null!)!;
         Assert.IsTrue(refreshed.Single(field => field.Key == "mp1TemperatureC").Writable);
         Assert.IsTrue(refreshed.Single(field => field.Key == "pptWatts").Writable);
         foreach (string key in new[] { "advancedCpuTuning", "temperatureLimitC", "splWatts", "spptWatts" })
@@ -314,7 +314,7 @@ public sealed class V35Mp1AdmissionTests
     }
 
     private static FieldCapability[] Fields(WindowsHomeHardwareProvider provider, CpuTuningState? cpu = null) =>
-        (FieldCapability[])Invoke(provider, "CreateFieldCapabilities", Items, cpu ?? Cpu)!;
+        (FieldCapability[])Invoke(provider, "CreateFieldCapabilities", Items, cpu ?? Cpu, null!)!;
     private static object? Invoke(object target, string method, params object[] args) => target.GetType().GetMethod(method, Private)!.Invoke(target, args);
     private static void Set(object target, string field, object? value) => target.GetType().GetField(field, Private)!.SetValue(target, value);
     private static object? Get(object target, string field) => target.GetType().GetField(field, Private)!.GetValue(target);

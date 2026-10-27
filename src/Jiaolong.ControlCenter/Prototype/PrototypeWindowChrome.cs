@@ -66,7 +66,8 @@ public static class PrototypeWindowChrome
         .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
         .Cast<System.Reflection.AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "XisuraBuildChannel")?.Value);
 
-    public static RectInt32? CandidateWorkArea() => IsCandidateBuild
+    public static RectInt32? CandidateWorkArea() => IsCandidateBuild || Environment.GetCommandLineArgs().Any(argument =>
+        string.Equals(argument, "--accept-secondary", StringComparison.OrdinalIgnoreCase))
         ? PrototypeWindow.SecondaryDisplayWorkArea() : null;
 
     public const uint ReferenceDpi = 144;

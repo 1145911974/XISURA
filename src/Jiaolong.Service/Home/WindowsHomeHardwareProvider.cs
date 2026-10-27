@@ -238,7 +238,9 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 .Select(group => group.Last())
                 .ToArray();
             var gpuClockLimit = ReadProviderHardware(() => ReadGpuClockLimitLocked(cancellationToken));
-            var fields = CreateFieldCapabilities(items, cpuTuningState);
+            var strongCooling = ReadStrongCoolingStateLocked(ReadProviderHardware(() => ReadBooleanControl(
+                MiHomeControlKind.StrongCooling, telemetryProvider ?? observedMiProvider, cancellationToken)));
+            var fields = CreateFieldCapabilities(items, cpuTuningState, strongCooling);
             items = HomeCapabilityCatalog.WithFieldAvailability(items, fields);
             supportState = items.Any(item => item.Key != "monitoring" && item.State == CapabilityState.Available)
                 ? DeviceSupportState.Ready : DeviceSupportState.ReadOnly;
@@ -261,7 +263,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             {
                 Controls = new HomeControlState(
                     ReadProviderHardware(() => ReadPerformanceMode(telemetryProvider ?? observedMiProvider, cancellationToken)),
-                    ReadStrongCoolingStateLocked(ReadProviderHardware(() => ReadBooleanControl(MiHomeControlKind.StrongCooling, telemetryProvider ?? observedMiProvider, cancellationToken))),
+                    strongCooling,
                     [
                         new QuickSettingStatus(QuickSettingKind.Wifi, radios.WifiEnabled, CapabilityReason(capabilities, "quickSetting:wifi")),
                         new QuickSettingStatus(QuickSettingKind.Bluetooth, radios.BluetoothEnabled, CapabilityReason(capabilities, "quickSetting:bluetooth")),

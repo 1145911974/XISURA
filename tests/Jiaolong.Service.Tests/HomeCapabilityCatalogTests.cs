@@ -9,6 +9,25 @@ namespace Jiaolong.Service.Tests;
 public sealed class HomeCapabilityCatalogTests
 {
     [TestMethod]
+    public void Strong_cooling_capability_uses_fresh_readback_without_granting_write_access()
+    {
+        using var provider = new WindowsHomeHardwareProvider(() => { }, () => { }, () => []);
+        var create = typeof(WindowsHomeHardwareProvider).GetMethod("CreateFieldCapabilities", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        foreach (var state in new[] { CapabilityState.Available, CapabilityState.Unavailable })
+        foreach (bool? readback in new bool?[] { false, true, null })
+        {
+            CapabilityDescriptor[] items = [new("strongCooling", state, null)];
+            var fields = (FieldCapability[])create.Invoke(provider, [items, null, readback])!;
+            var field = fields.Single(item => item.Key == "strongCooling");
+            Assert.AreEqual(readback.HasValue, field.Readable, $"{state}: {readback}");
+            Assert.AreEqual(state == CapabilityState.Available, field.Writable);
+            Assert.AreEqual(state == CapabilityState.Available ? CapabilityState.Available
+                : readback.HasValue ? CapabilityState.ReadOnly : CapabilityState.Unavailable, field.Availability);
+            Assert.AreEqual("oemFirmwareReadback", field.Source);
+        }
+    }
+
+    [TestMethod]
     public void Fractional_cpu_readback_is_readable_without_granting_oem_write_access()
     {
         using var provider = new WindowsHomeHardwareProvider(() => { }, () => { }, () => []);
@@ -16,7 +35,7 @@ public sealed class HomeCapabilityCatalogTests
         var cpu = new CpuTuningState(99, null, null, 0, true, 8, Guid.NewGuid(), -30, "hardwareReadback")
         { ObservedSplWatts = 40.5, AdvancedLimits = new(FastPptWatts: 58.5, PptWatts: 120.125, Mp1TemperatureC: 99) };
         var fields = (FieldCapability[])method.Invoke(provider,
-            [new CapabilityDescriptor[] { new("cpuTuning", CapabilityState.Available, null), new("cpuTuning:smu", CapabilityState.Available, null) }, cpu])!;
+            [new CapabilityDescriptor[] { new("cpuTuning", CapabilityState.Available, null), new("cpuTuning:smu", CapabilityState.Available, null) }, cpu, null])!;
         foreach (string key in new[] { "splWatts", "spptWatts" })
         {
             var field = fields.Single(item => item.Key == key);
@@ -58,7 +77,7 @@ public sealed class HomeCapabilityCatalogTests
         })
         {
             cache.SetValue(provider, state);
-            var fields = (FieldCapability[])create.Invoke(provider, [items, null])!;
+            var fields = (FieldCapability[])create.Invoke(provider, [items, null, null])!;
             var summary = HomeCapabilityCatalog.WithFieldAvailability(items, fields);
             foreach (string key in new[] { "coreOffsetKhz", "memoryOffsetKhz" })
                 Assert.AreEqual(offsetsWritable, fields.Single(field => field.Key == key).Writable, key);
@@ -76,7 +95,7 @@ public sealed class HomeCapabilityCatalogTests
         var method = typeof(WindowsHomeHardwareProvider).GetMethod("CreateFieldCapabilities", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var cpu = new CpuTuningState(99, 45, 55, 4700, true, 8, Guid.NewGuid(), -30, "hardwareReadback");
         var fields = (FieldCapability[])method.Invoke(provider,
-            [new CapabilityDescriptor[] { new("cpuTuning", CapabilityState.Available, null) }, cpu])!;
+            [new CapabilityDescriptor[] { new("cpuTuning", CapabilityState.Available, null) }, cpu, null])!;
         foreach (string key in new[] { "temperatureLimitC", "splWatts", "spptWatts" })
         {
             var field = fields.Single(item => item.Key == key);

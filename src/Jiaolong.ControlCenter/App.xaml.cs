@@ -47,7 +47,6 @@ public partial class App : Application
     {
         Services.AppRuntimeLog.EnableForApplication();
         Services.AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] client.started; version={typeof(App).Assembly.GetName().Version}; session={Guid.NewGuid():N}\n");
-        Services.ProcessInputMethod.UseMicrosoftPinyin();
         InitializeComponent();
         AppDomain.CurrentDomain.UnhandledException += (s, e) =>
         {

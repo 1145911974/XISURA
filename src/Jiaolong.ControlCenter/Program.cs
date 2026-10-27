@@ -23,8 +23,6 @@ internal static class Program
             return;
         }
         instance.Activated += OnActivated;
-        // Select the compatible TIP before WinUI creates any input-site HWNDs.
-        Services.ProcessInputMethod.UseMicrosoftPinyin();
         Application.Start(initialization =>
         {
             var dispatcher = DispatcherQueue.GetForCurrentThread();

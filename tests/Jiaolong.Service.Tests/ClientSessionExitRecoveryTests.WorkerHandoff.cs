@@ -143,9 +143,9 @@ public sealed partial class ClientSessionExitRecoveryTests
                     using var saved = JsonDocument.Parse(stream);
                     if (saved.RootElement.GetProperty("phase").GetString() == "Completed") break;
                 }
-                catch (FileNotFoundException)
+                catch (IOException error) when (error is FileNotFoundException || (error.HResult & 0xFFFF) is 32 or 33)
                 {
-                    // Observe backup rotation without locking the worker's rename; only Completed finishes the wait.
+                    // Windows replacement can briefly deny a reader; only a parsed Completed snapshot finishes the bounded wait.
                 }
                 await Task.Delay(25, deadline.Token);
             }

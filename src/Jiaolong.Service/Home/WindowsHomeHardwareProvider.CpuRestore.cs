@@ -29,7 +29,7 @@ public sealed partial class WindowsHomeHardwareProvider
                     return Rejected(id, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
                 smuLimitCacheAt = default;
                 var currentCpu = ReadCpuTuningState(token, true);
-                var capability = CreateFieldCapabilities(compatibilityDecision.Capabilities.Items, currentCpu).FirstOrDefault(item => item.Key == field);
+                var capability = CreateFieldCapabilities(compatibilityDecision.Capabilities.Items, currentCpu, null).FirstOrDefault(item => item.Key == field);
                 if (capability is not { Readable: true, Writable: true, Availability: CapabilityState.Available })
                     return Rejected(id, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
                 var current = ControlPlanCompiler.Read(ControlPageId.Performance, new(null, null, []) { CpuTuning = currentCpu }).GetValueOrDefault(field);
