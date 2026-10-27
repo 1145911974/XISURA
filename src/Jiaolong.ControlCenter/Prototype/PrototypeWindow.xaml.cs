@@ -67,7 +67,7 @@ public sealed partial class PrototypeWindow : Window
     private string activePage = "Home";
     private HardwareSnapshot? latestTelemetry;
     private Storyboard? pageTransitionStoryboard;
-    private SizeInt32 restoredClientSize;
+    private WindowSizePreference restoredClientSize;
     private PointInt32 restoredPosition;
     private WindowProcedure? sizingWindowProcedure;
     private IntPtr sizingWindowHandle;
@@ -504,12 +504,13 @@ public sealed partial class PrototypeWindow : Window
     {
         if (!userPreferences.RememberWindowSize) return;
 
-        var size = fittedToWorkArea && restoredClientSize.Width > 0 && restoredClientSize.Height > 0
-            ? restoredClientSize
-            : AppWindow.ClientSize;
-        if (size.Width <= 0 || size.Height <= 0) return;
-
-        var saved = WindowSizePersistence.FromPixels(size, GetWindowDpi());
+        var saved = restoredClientSize;
+        if (!fittedToWorkArea || !WindowSizePersistence.IsUsable(saved))
+        {
+            var size = AppWindow.ClientSize;
+            if (size.Width <= 0 || size.Height <= 0) return;
+            saved = WindowSizePersistence.FromPixels(size, GetWindowDpi());
+        }
         try
         {
             userPreferences = preferences.Update(current => current.RememberWindowSize ? current with
@@ -1863,15 +1864,15 @@ public sealed partial class PrototypeWindow : Window
     {
         if (!fittedToWorkArea)
         {
-            restoredClientSize = AppWindow.ClientSize;
+            restoredClientSize = WindowSizePersistence.FromPixels(AppWindow.ClientSize, GetWindowDpi());
             restoredPosition = AppWindow.Position;
             ResizeToWorkArea(1);
             fittedToWorkArea = true;
             return;
         }
 
-        AppWindow.ResizeClient(restoredClientSize);
         AppWindow.Move(restoredPosition);
+        AppWindow.ResizeClient(WindowSizePersistence.ToPixels(restoredClientSize, GetWindowDpi()));
         fittedToWorkArea = false;
     }
 
