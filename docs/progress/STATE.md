@@ -2,7 +2,7 @@
 
 更新2026-10-27。唯一当前状态；[目标](FEATURE-COMPLETION-GOAL.md)、[固定台账](FEATURE-COMPLETION-LEDGER.csv)。用户最新决定优先。
 
-**79项：完成27，剩余52，34.2%；本目标新增2/54（EXT-07、SET-06）。** 配置保存、Partial、声明不支持不计完成。EC/OEM/NVIDIA协议及禁测依赖未闭合，全量ETA暂不可可靠估算。
+**79项：完成28，剩余51，35.4%；本目标新增3/54（EXT-07、SET-06、CPU-21），本轮新增1。** 配置保存、Partial、声明不支持不计完成。EC/OEM/NVIDIA协议及禁测依赖未闭合，全量ETA暂不可可靠估算。
 
 **本机113已安装验收；GitHub正式[1.0.113](https://github.com/1145911974/XISURA/releases/tag/v1.0.113)已发布，五项资产大小/SHA经服务端核验；冻结源码`daa4ea5b6254e8f120cafad19592319d27852a30`，MSI SHA256 `22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A`。旧113候选及重复MSI清理被自动审批以`blocked by policy`拒绝，暂留C盘；原恢复证据保留。** Release自包含GUI/Service/Diagnostics，1369/1369软件测试通过、零跳过、构建源SHA前后一致。MSI退出0、无需重启、用户文件及13组控制保持；安装后两轮副屏启动/托盘/正常退出重开、服务停止/重启通过，当前Automatic/Running。MSI SHA256：22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A。
 
@@ -19,4 +19,6 @@
 
 证据根：C:/Users/Administrator/AppData/Local/Temp/XisuraUsableRelease-20261026/；最终构建completion113/final-20261027-170255-196、feature-completion-r1/keep-release113-run6、install-publish-113。详见[113说明](../verification/2026-10-27-release113.md)、[本轮证据](../verification/2026-10-27-feature-completion-r1.md)。权威journal= C:/ProgramData/JiaolongControlCenter/control-journal-110。
 
-下一步：113已交付；随后按EC风扇、AMD/OEM、NVIDIA的最小缺口逐项闭合，不重复已有调查。
+CPU-21已闭合为B级配置能力：已安装113的index1至7分别−50→−49→立即恢复−50，每点生产Confirmed、稀疏单核计划、独立八核读回，恢复先于退出；13组受控配置及用户配置哈希一致。index0沿用2026-10-24同V35原件；PawnIO、CpuPerCore及高级CPU XAML与113冻结输入同SHA，不把不同的UI/恢复源码说成完全一致，不宣称113同轮八核实测或负载稳定性。最终Completed、fields0/pending0/unresolved0、GUI0、113服务Auto/Running。见[CPU-21证据](../verification/2026-10-27-cpu21-per-core-closure.md)；本轮仅验收，无新构建/安装包。
+
+下一步：按EC风扇、AMD/OEM、NVIDIA最小实现缺口及可独立验证的UI/自动化路径推进；缺协议和禁测部分保留未完成，不重复已过数值点。
