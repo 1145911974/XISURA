@@ -100,6 +100,7 @@ public static class QuickMenuPreviewLayout
 public sealed record QuickMenuLayout(IReadOnlyList<QuickSettingKind> EnabledOrder)
 {
     public const int MaxEnabledItems = 9;
+    public IReadOnlyList<QuickSettingKind> Order { get; init; } = EnabledOrder;
 
     public static QuickMenuLayout Default { get; } = new(
         [
@@ -116,13 +117,10 @@ public sealed record QuickMenuLayout(IReadOnlyList<QuickSettingKind> EnabledOrde
 
     public QuickMenuLayout Toggle(QuickSettingKind kind, bool enabled, int maxItems = MaxEnabledItems)
     {
-        var result = EnabledOrder.Where(candidate => candidate != kind).ToList();
-        if (enabled && (EnabledOrder.Contains(kind) || result.Count < maxItems))
-        {
-            var index = Math.Min(EnabledOrder.Count, result.Count);
-            result.Insert(index, kind);
-        }
-        return new QuickMenuLayout(result.Take(maxItems).ToArray());
+        var order = Order.Contains(kind) ? Order : Order.Append(kind).ToArray();
+        var selected = EnabledOrder.Where(candidate => candidate != kind).ToHashSet();
+        if (enabled && selected.Count < maxItems) selected.Add(kind);
+        return new QuickMenuLayout(order.Where(selected.Contains).Take(maxItems).ToArray()) { Order = order };
     }
 
     public QuickMenuLayout Reorder(QuickSettingKind kind, int index)
@@ -130,7 +128,20 @@ public sealed record QuickMenuLayout(IReadOnlyList<QuickSettingKind> EnabledOrde
         var result = EnabledOrder.Where(candidate => candidate != kind).ToList();
         if (!EnabledOrder.Contains(kind)) return this;
         result.Insert(Math.Clamp(index, 0, result.Count), kind);
-        return new QuickMenuLayout(result.Take(MaxEnabledItems).ToArray());
+        return WithReorderedEnabled(result);
+    }
+
+    public QuickMenuLayout WithReorderedEnabled(IReadOnlyList<QuickSettingKind> enabledOrder)
+    {
+        if (enabledOrder.Count != EnabledOrder.Count || !enabledOrder.ToHashSet().SetEquals(EnabledOrder))
+            throw new ArgumentException("Reordering must keep the same enabled shortcuts.", nameof(enabledOrder));
+
+        var enabled = EnabledOrder.ToHashSet();
+        var remaining = new Queue<QuickSettingKind>(enabledOrder);
+        var order = Order.Select(kind => enabled.Contains(kind) ? remaining.Dequeue() : kind)
+            .Concat(remaining)
+            .ToArray();
+        return new QuickMenuLayout(enabledOrder.ToArray()) { Order = order };
     }
 
     public static QuickMenuLayout FromPersisted(
@@ -146,12 +157,13 @@ public sealed record QuickMenuLayout(IReadOnlyList<QuickSettingKind> EnabledOrde
         var ordered = Parse(orderIds).Where(valid.Contains).Distinct().ToList();
         var result = ordered.Where(enabled.Contains).ToList();
         result.AddRange(enabled.Where(kind => !result.Contains(kind)));
-        return new QuickMenuLayout(result.Take(maxItems).ToArray());
+        var selected = result.Take(maxItems).ToArray();
+        return new QuickMenuLayout(selected) { Order = ordered.Concat(selected.Where(kind => !ordered.Contains(kind))).ToArray() };
     }
 
     public string[] ToPersistedEnabled() => EnabledOrder.Select(kind => kind.ToString()).ToArray();
 
-    public string[] ToPersistedOrder() => EnabledOrder.Select(kind => kind.ToString()).ToArray();
+    public string[] ToPersistedOrder() => Order.Select(kind => kind.ToString()).ToArray();
 
     private static IEnumerable<QuickSettingKind> Parse(IEnumerable<string> ids) =>
         ids.Select(id => Enum.TryParse<QuickSettingKind>(id, ignoreCase: true, out var kind) ? kind : (QuickSettingKind?)null)

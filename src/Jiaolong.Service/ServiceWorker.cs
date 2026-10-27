@@ -49,7 +49,7 @@ public sealed class ServiceWorker(
             await TryWriteEventAsync(DiagnosticEventNames.ServiceStopping, CancellationToken.None);
             if (power is not null) await power.DisposeAsync();
             using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            try { await homeRuntime.HandleLifecycleAsync(false, releaseDeadline.Token); }
+            try { await homeRuntime.HandleShutdownAsync(releaseDeadline.Token); }
             catch (Exception error) { TryLogShutdown(() => logger.LogWarning(error, "Service fan release failed; pending state retained."), $"Service fan release failed; pending state retained: {error}"); }
             await pipeHost.DisposeAsync();
             TryLogShutdown(() => logger.LogInformation("Jiaolong control service stopping."), "Jiaolong control service stopping.");

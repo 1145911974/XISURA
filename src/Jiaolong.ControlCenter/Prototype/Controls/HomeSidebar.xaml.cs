@@ -115,8 +115,10 @@ public sealed partial class HomeSidebar : UserControl
     public void ApplyQuickSettingState(QuickSettingKind setting, bool? enabled, bool available)
     {
         observedQuickStates[setting] = enabled;
+        bool visibilityChanged = setting == QuickSettingKind.StrongCooling && this.availability.GetValueOrDefault(setting) != available;
         this.availability[setting] = available;
         quickMenuEditor.SetAvailability(setting, available);
+        if (visibilityChanged) ApplyQuickMenuLayout(layout);
         if (!quickToggles.TryGetValue(setting, out var toggle)) return;
 
         var uiEnabled = enabled.HasValue
@@ -153,9 +155,11 @@ public sealed partial class HomeSidebar : UserControl
         var catalog = QuickMenuCatalog.CreateDefault();
         var nextElements = new Dictionary<QuickSettingKind, FrameworkElement>();
         var nextToggles = new Dictionary<QuickSettingKind, PrototypeToggleButton>();
+        int visibleIndex = 0;
         for (var index = 0; index < layout.EnabledOrder.Count; index++)
         {
             var kind = layout.EnabledOrder[index];
+            if (kind == QuickSettingKind.StrongCooling && !availability.GetValueOrDefault(kind)) continue;
             var item = catalog.FirstOrDefault(candidate => candidate.Kind == kind);
             if (item is null) continue;
 
@@ -164,8 +168,8 @@ public sealed partial class HomeSidebar : UserControl
                 element = item.IsAction ? CreateAction(item) : CreateToggle(item);
             }
 
-            Grid.SetRow(element, index / 3);
-            Grid.SetColumn(element, index % 3);
+            Grid.SetRow(element, visibleIndex / 3);
+            Grid.SetColumn(element, visibleIndex++ % 3);
             if (!QuickSettingsGrid.Children.Contains(element)) QuickSettingsGrid.Children.Add(element);
             nextElements[kind] = element;
             if (element is PrototypeToggleButton toggle) nextToggles[kind] = toggle;
@@ -383,8 +387,13 @@ public sealed partial class HomeSidebar : UserControl
                 QuickMenuEnabled = value.ToPersistedEnabled(),
                 QuickMenuOrder = value.ToPersistedOrder()
             }));
+            quickMenuEditor.SetPersistenceStatus(null);
         }
-        catch (IOException) { }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            quickMenuEditor.SetPersistenceStatus("快捷菜单未保存；重启后将恢复上次保存的布局");
+            AppRuntimeLog.Write($"[{DateTime.Now:O}] 主快捷菜单保存失败：{error}\n");
+        }
         finally
         {
             preferenceSaveGate.Release();

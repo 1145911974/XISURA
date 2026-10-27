@@ -13,7 +13,7 @@ public static class ControlPlanCompiler
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly Dictionary<ControlPageId, string[]> Known = new()
     {
-        [ControlPageId.Performance] = ["temperatureLimitC", "splWatts", "spptWatts", "acMaxFrequencyMhz", "dcMaxFrequencyMhz", "isBoostEnabled", "windowsPowerSchemeId", "acMinActiveCoresPercent", "dcMinActiveCoresPercent", "negativeCurveOptimizer", "advancedCpuTuning", "pboScalar"],
+        [ControlPageId.Performance] = ["temperatureLimitC", "splWatts", "spptWatts", "pptWatts", "mp1TemperatureC", "tdcCurrentMilliamps", "edcCurrentMilliamps", "acMaxFrequencyMhz", "dcMaxFrequencyMhz", "isBoostEnabled", "windowsPowerSchemeId", "acMinActiveCoresPercent", "dcMinActiveCoresPercent", "negativeCurveOptimizer", "advancedCpuTuning", "pboScalar"],
         [ControlPageId.Gpu] = ["coreFrequencyLimitMhz", "coreOffsetKhz", "memoryOffsetKhz", "vfOffsetsKhz", "voltageBoost", "powerLimit", "muxMode"],
         [ControlPageId.Fan] = ["profile", "strategy", "maximumRpm", "fixedRpm", "cpu", "gpu", "shared", "isShared", "strongCooling"],
         [ControlPageId.Lighting] = ["effect", "brightness", "hex", "speed", "logo"]
@@ -80,10 +80,10 @@ public static class ControlPlanCompiler
         return new(selection, settings, skipped.ToArray());
     }
 
-    internal static AdvancedCpuTuningPlan? SmuOnly(AdvancedCpuTuningPlan? plan)
+    internal static AdvancedCpuTuningPlan? ResidualSmu(AdvancedCpuTuningPlan? plan)
     {
         if (plan is null) return null;
-        var smu = plan with { PboScalar = null, CurveOptimizerAll = null, PerCoreCurveOptimizer = null };
+        var smu = plan with { PptWatts = null, Mp1TemperatureC = null, TdcCurrentMilliamps = null, EdcCurrentMilliamps = null, PboScalar = null, CurveOptimizerAll = null, PerCoreCurveOptimizer = null };
         return smu == new AdvancedCpuTuningPlan() ? null : smu;
     }
 
@@ -93,12 +93,12 @@ public static class ControlPlanCompiler
         if (page != ControlPageId.Performance || !values.Remove("advancedCpuTuning", out var advanced)) return values;
         if (advanced.Intent == SettingIntent.Official)
         {
-            foreach (var field in new[] { "advancedCpuTuning", "pboScalar", "negativeCurveOptimizer" })
+            foreach (var field in new[] { "advancedCpuTuning", "pptWatts", "mp1TemperatureC", "tdcCurrentMilliamps", "edcCurrentMilliamps", "pboScalar", "negativeCurveOptimizer" })
                 values.TryAdd(field, SettingRequest.Official);
         }
         if (advanced.Intent != SettingIntent.Set) return values;
         var plan = advanced.Value!.Value.Deserialize<AdvancedCpuTuningPlan>(Json) ?? throw new InvalidDataException("advancedPlanMissing");
-        if (SmuOnly(plan) is { } smu) values.Add("advancedCpuTuning", SettingRequest.Set(smu));
+        if (ResidualSmu(plan) is { } smu) values.Add("advancedCpuTuning", SettingRequest.Set(smu));
         void Add(string field, object? value)
         {
             if (value is null) return;
@@ -107,6 +107,10 @@ public static class ControlPlanCompiler
                 throw new InvalidDataException("conflictingAdvancedField:" + field);
             values[field] = setting;
         }
+        Add("pptWatts", plan.PptWatts);
+        Add("mp1TemperatureC", plan.Mp1TemperatureC);
+        Add("tdcCurrentMilliamps", plan.TdcCurrentMilliamps);
+        Add("edcCurrentMilliamps", plan.EdcCurrentMilliamps);
         Add("pboScalar", plan.PboScalar);
         Add("negativeCurveOptimizer", plan.CurveOptimizerAll);
         // Older readback snapshots retain both representations of the same all-core target.
@@ -122,11 +126,14 @@ public static class ControlPlanCompiler
         void Add(string name, object? value) { if (value is not null) result[name] = new(SettingIntent.Set, JsonSerializer.SerializeToElement(value, Json)); }
         if (page == ControlPageId.Performance && state.CpuTuning is { } cpu)
         {
-            Add("temperatureLimitC", cpu.TemperatureLimitC); Add("splWatts", cpu.SplWatts); Add("spptWatts", cpu.SpptWatts);
+            // The provider exposes MP1 temperature through both UI representations; own it once.
+            if (cpu.AdvancedLimits?.Mp1TemperatureC is null) Add("temperatureLimitC", cpu.TemperatureLimitC);
+            Add("splWatts", cpu.SplWatts); Add("spptWatts", cpu.SpptWatts);
             Add("acMaxFrequencyMhz", cpu.AcFrequency()); Add("dcMaxFrequencyMhz", cpu.DcFrequency()); Add("isBoostEnabled", cpu.BoostEnabled);
             Add("windowsPowerSchemeId", cpu.WindowsPowerSchemeId); Add("acMinActiveCoresPercent", cpu.AcMinActiveCoresPercent);
             Add("dcMinActiveCoresPercent", cpu.DcMinActiveCoresPercent); Add("negativeCurveOptimizer", cpu.NegativeCurveOptimizer);
-            Add("advancedCpuTuning", SmuOnly(cpu.AdvancedLimits));
+            Add("pptWatts", cpu.AdvancedLimits?.PptWatts); Add("mp1TemperatureC", cpu.AdvancedLimits?.Mp1TemperatureC); Add("tdcCurrentMilliamps", cpu.AdvancedLimits?.TdcCurrentMilliamps); Add("edcCurrentMilliamps", cpu.AdvancedLimits?.EdcCurrentMilliamps);
+            Add("advancedCpuTuning", ResidualSmu(cpu.AdvancedLimits));
             Add("pboScalar", cpu.PboScalar);
             if (cpu.NegativeCurveOptimizer is null && cpu.HasCompleteCurveValues()) Add("negativeCurveOptimizer", cpu.PerCoreCurveOptimizer);
         }
@@ -148,7 +155,8 @@ public static class ControlPlanCompiler
             else Add("strategy", "Auto");
         }
         if (page == ControlPageId.Lighting && state.KeyboardLighting is { } light)
-        { Add("effect", light.Effect); Add("brightness", light.BrightnessLevel); Add("speed", light.Speed);
+        { var canonicalLight = CanonicalLighting(light);
+          Add("effect", canonicalLight.Effect); Add("brightness", light.BrightnessLevel); Add("speed", canonicalLight.Speed);
           if (light.Red is not null) Add("hex", $"#{light.Red:X2}{light.Green:X2}{light.Blue:X2}"); Add("logo", light.LogoEnabled); }
         return result;
     }
@@ -172,30 +180,63 @@ public static class ControlPlanCompiler
                 cores = new();
                 foreach (var pair in Value<Dictionary<int, int>>("negativeCurveOptimizer")!)
                 {
-                    if (!baseline.ContainsKey(pair.Key) || pair.Value is < -30 or > 0) throw new InvalidDataException("perCoreTopologyOrValueInvalid");
+                    if (!baseline.ContainsKey(pair.Key) || pair.Value is < -50 or > 0) throw new InvalidDataException("perCoreTopologyOrValueInvalid");
                     cores[pair.Key] = pair.Value;
                 }
             }
-            advanced = advanced with { PboScalar = Number("pboScalar"), PerCoreCurveOptimizer = cores };
+            double? pptWatts = values.TryGetValue("pptWatts", out var ppt) ? ppt.Value!.Value.GetDouble() : advanced.PptWatts;
+            int? mp1Temperature = Number("mp1TemperatureC") ?? advanced.Mp1TemperatureC;
+            int? tdcCurrent = Number("tdcCurrentMilliamps") ?? advanced.TdcCurrentMilliamps;
+            int? edcCurrent = Number("edcCurrentMilliamps") ?? advanced.EdcCurrentMilliamps;
+            advanced = advanced with { PptWatts = null, Mp1TemperatureC = null, TdcCurrentMilliamps = null, EdcCurrentMilliamps = null,
+                PboScalar = Number("pboScalar"), PerCoreCurveOptimizer = cores };
+            CpuBoostPolicy? boostPolicy = null;
+            if (values.GetValueOrDefault("isBoostEnabled")?.Value is { ValueKind: JsonValueKind.Object } rawBoost &&
+                !CpuBoostPolicy.TryRead(rawBoost, out boostPolicy)) throw new InvalidDataException("boostPolicyInvalid");
             var plan = new CpuTuningPlan(Number("temperatureLimitC"), Number("splWatts"), Number("spptWatts"), null,
-                Boolean("isBoostEnabled"), null, values.ContainsKey("windowsPowerSchemeId") ? Value<Guid>("windowsPowerSchemeId") : null,
+                boostPolicy is null ? Boolean("isBoostEnabled") : null, null, values.ContainsKey("windowsPowerSchemeId") ? Value<Guid>("windowsPowerSchemeId") : null,
                 perCore ? null : Number("negativeCurveOptimizer"))
             { AcMaxFrequencyMhz = Number("acMaxFrequencyMhz") ?? (values.ContainsKey("dcMaxFrequencyMhz") ? current.CpuTuning?.AcFrequency() ?? throw new InvalidDataException("acFrequencyUnreadable") : null),
               DcMaxFrequencyMhz = Number("dcMaxFrequencyMhz") ?? (values.ContainsKey("acMaxFrequencyMhz") ? current.CpuTuning?.DcFrequency() ?? throw new InvalidDataException("dcFrequencyUnreadable") : null),
               AcMinActiveCoresPercent = Number("acMinActiveCoresPercent") ?? (values.ContainsKey("dcMinActiveCoresPercent") ? current.CpuTuning?.AcMinActiveCoresPercent ?? throw new InvalidDataException("acParkingUnreadable") : null),
               DcMinActiveCoresPercent = Number("dcMinActiveCoresPercent") ?? (values.ContainsKey("acMinActiveCoresPercent") ? current.CpuTuning?.DcMinActiveCoresPercent ?? throw new InvalidDataException("dcParkingUnreadable") : null),
-              Advanced = advanced == new AdvancedCpuTuningPlan() ? null : advanced };
-            commands.Add(new SetCpuTuningBatchCommand(Guid.NewGuid(), [plan], true));
+              BoostPolicy = boostPolicy, Advanced = advanced == new AdvancedCpuTuningPlan() ? null : advanced };
+            var plans = new List<CpuTuningPlan>();
+            if (plan != new CpuTuningPlan(null, null, null, null, null, null, null, null)) plans.Add(plan);
+            if (pptWatts is double watts) plans.Add(new(null, null, null, null, null, null, null, null) { Advanced = new(PptWatts: watts) });
+            if (mp1Temperature is int temperature) plans.Add(new(null, null, null, null, null, null, null, null) { Advanced = new(Mp1TemperatureC: temperature) });
+            if (tdcCurrent is int milliamps) plans.Add(new(null, null, null, null, null, null, null, null) { Advanced = new(TdcCurrentMilliamps: milliamps) });
+            if (edcCurrent is int edcMilliamps) plans.Add(new(null, null, null, null, null, null, null, null) { Advanced = new(EdcCurrentMilliamps: edcMilliamps) });
+            if (plans.Count > 0) commands.Add(new SetCpuTuningBatchCommand(Guid.NewGuid(), plans.ToArray(), true));
         }
         if (page == ControlPageId.Gpu)
         {
+            int[]? originalCurve = null;
+            int[]? expectedCurve = null;
+            if (values.ContainsKey("coreOffsetKhz") || values.ContainsKey("vfOffsetsKhz"))
+            {
+                if (current.GpuVf is not { Error: null, Nodes.Length: 127 } vf)
+                    throw new InvalidDataException("vfBaselineUnreadable");
+                originalCurve = vf.Nodes.Select(node => node.OffsetKhz).ToArray();
+                if (originalCurve[0] != 0 || originalCurve.Skip(1).Any(value => value is < -200000 or > 200000))
+                    throw new InvalidDataException("vfBaselineUnreadable");
+                int delta = values.ContainsKey("coreOffsetKhz")
+                    ? checked(Number("coreOffsetKhz")!.Value - (vf.CoreOffsetKhz ?? throw new InvalidDataException("coreBaselineUnreadable"))) : 0;
+                // P0 core writes shift the table; memory writes preserve it. Do not rebase on unrelated external edits.
+                expectedCurve = originalCurve.Select((value, index) => index == 0 ? value : checked(value + delta)).ToArray();
+                if (expectedCurve.Skip(1).Any(value => value is < -200000 or > 200000))
+                    throw new InvalidDataException("gpuIntermediateCurveOutOfRange");
+            }
             if (values.ContainsKey("coreFrequencyLimitMhz")) commands.Add(new SetGpuFrequencyLimitCommand(Guid.NewGuid(), Number("coreFrequencyLimitMhz"), true));
-            if (values.ContainsKey("coreOffsetKhz")) commands.Add(new SetGpuCoreOffsetCommand(Guid.NewGuid(), current.GpuVf?.CoreOffsetKhz ?? throw new InvalidDataException("coreBaselineUnreadable"), Number("coreOffsetKhz")!.Value, true));
+            if (values.ContainsKey("coreOffsetKhz")) commands.Add(new SetGpuCoreOffsetCommand(Guid.NewGuid(), current.GpuVf?.CoreOffsetKhz ?? throw new InvalidDataException("coreBaselineUnreadable"), Number("coreOffsetKhz")!.Value, true)
+                { ExpectedVfOffsetsKhz = originalCurve });
             if (values.ContainsKey("memoryOffsetKhz")) commands.Add(new SetGpuMemoryOffsetCommand(Guid.NewGuid(), current.GpuVf?.MemoryOffsetKhz ?? throw new InvalidDataException("memoryBaselineUnreadable"), Number("memoryOffsetKhz")!.Value, true));
-            if (values.ContainsKey("vfOffsetsKhz")) commands.Add(new SetGpuVfCurveCommand(Guid.NewGuid(), current.GpuVf?.Nodes.Select(node => node.OffsetKhz).ToArray() ?? throw new InvalidDataException("vfBaselineUnreadable"), Value<int[]>("vfOffsetsKhz")!, true));
+            if (values.ContainsKey("vfOffsetsKhz")) commands.Add(new SetGpuVfCurveCommand(Guid.NewGuid(), expectedCurve!, Value<int[]>("vfOffsetsKhz")!, true));
         }
         if (page == ControlPageId.Fan)
         {
+            if (Boolean("strongCooling") == true && values.Keys.Any(field => field != "strongCooling"))
+                throw new InvalidDataException("strongCoolingConflictsWithFanPlan");
             if (Boolean("strongCooling") is bool cooling) commands.Add(new SetStrongCoolingCommand(Guid.NewGuid(), cooling));
             var planValues = values.Keys.Any(field => field != "strongCooling");
             if (planValues)
@@ -216,7 +257,7 @@ public static class ControlPlanCompiler
             int level = Number("brightness") ?? before.BrightnessLevel ?? throw new InvalidDataException("lightingLevelUnreadable");
             string? hex = Value<string>("hex");
             var plan = before with { Effect = Value<string>("effect") ?? before.Effect, BrightnessLevel = level,
-                Brightness = level * 100 / 3, Speed = values.ContainsKey("speed") ? Value<double>("speed") : before.Speed,
+                Brightness = (int)Math.Round(level * 100d / 3), Speed = values.ContainsKey("speed") ? Value<double>("speed") : before.Speed,
                 LogoEnabled = Boolean("logo") ?? before.LogoEnabled,
                 Red = hex is null ? before.Red : Convert.ToByte(hex.Substring(1, 2), 16),
                 Green = hex is null ? before.Green : Convert.ToByte(hex.Substring(3, 2), 16),
@@ -226,6 +267,15 @@ public static class ControlPlanCompiler
         if (commands.Any(command => CommandValidation.Validate(command) is not null)) throw new InvalidDataException("compiledCommandInvalid");
         return commands.ToArray();
     }
+
+    // Static speed has no firmware state; gradient speed remains observable in the software effect.
+    // Firmware reads Fixed; UI/presets use Static. The exact OEM level owns its legacy percentage.
+    internal static KeyboardLightingPlan CanonicalLighting(KeyboardLightingPlan plan) => plan with
+    {
+        Effect = plan.Effect == "Fixed" ? "Static" : plan.Effect,
+        Brightness = plan.BrightnessLevel is >= 0 and <= 3 ? (int)Math.Round(plan.BrightnessLevel.Value * 100d / 3) : plan.Brightness,
+        Speed = (plan.Effect is "Static" or "Fixed") && plan.IsValid() ? 1 : plan.Speed
+    };
 
     internal static bool Same(SettingRequest? left, SettingRequest? right) => left?.Intent == right?.Intent &&
         left?.Value?.GetRawText() == right?.Value?.GetRawText();

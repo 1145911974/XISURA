@@ -224,6 +224,117 @@ public sealed class SensorLifecycleTests
         Assert.AreEqual(0, concurrentCloses, "A pause during the update revokes the waiting reinitialize call.");
     }
 
+    [TestMethod]
+    public async Task Normal_shutdown_closes_sensors_once_without_reopening_hardware_access()
+    {
+        int closes = 0;
+        using var provider = new WindowsHomeHardwareProvider(() => Assert.Fail("Shutdown must not open sensors"), () => closes++, () => []);
+        Set(provider, "opened", true);
+        var curve = new PawnIoCurveOptimizerTransport((_, _) => 0);
+        var pbo = new PawnIoCurveOptimizerTransport((_, _) => 0);
+        Set(provider, "curveOptimizer", curve);
+        Set(provider, "pboScalarTransport", pbo);
+        var runtime = new HomeServiceRuntime(new ReadOnlyHomeHardwareProvider(provider));
+
+        await runtime.HandleShutdownAsync(CancellationToken.None);
+        Assert.IsTrue(runtime.IsSuspended);
+        var lifecycle = (PowerLifecycleState)Field(provider, "powerLifecycle")!;
+        Assert.IsFalse(lifecycle.IsReadAllowed);
+        provider.Dispose();
+        provider.Dispose();
+
+        Assert.AreEqual(1, closes);
+        Assert.IsFalse((bool)Field(provider, "opened")!);
+        Assert.IsTrue((bool)Field(curve, "disposed")!);
+        Assert.IsTrue((bool)Field(pbo, "disposed")!);
+        Assert.IsTrue((bool)Field(Field(provider, "packagePowerReader")!, "disposed")!);
+        Assert.IsFalse(lifecycle.IsReadAllowed);
+        Assert.ThrowsExactly<ObjectDisposedException>(() => provider.ReinitializeSensorComputer(CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task Shutdown_does_not_authorize_existing_pause_or_unknown_sensors()
+    {
+        foreach (var reason in new[] { "powerPause", "legacyPause", "unknown" })
+        {
+            using var provider = new WindowsHomeHardwareProvider(() => { }, () => Assert.Fail(reason), () => []);
+            Set(provider, "opened", true);
+            var runtime = new HomeServiceRuntime(provider);
+            if (reason == "powerPause") runtime.PreparePowerTransition(false);
+            if (reason == "legacyPause") provider.SetBackgroundWorkPaused(true);
+            if (reason == "unknown") Set(provider, "sensorLifecycleUnknown", true);
+
+            await runtime.HandleShutdownAsync(CancellationToken.None);
+            provider.Dispose();
+            provider.Dispose();
+
+            Assert.IsTrue(runtime.IsSuspended);
+            Assert.IsTrue((bool)Field(provider, "opened")!);
+            Assert.IsFalse((bool)Field(provider, "sensorDependencyCleanupStarted")!);
+        }
+    }
+
+    [TestMethod]
+    public async Task Any_intervening_transition_revokes_shutdown_cleanup()
+    {
+        using (var provider = new WindowsHomeHardwareProvider(() => { }, () => { }, () => []))
+        {
+            var lifecycle = new PowerLifecycleState(provider);
+            long before = lifecycle.ReadState;
+            lifecycle.Pause();
+            long paused = lifecycle.ReadState;
+            Assert.IsNull(lifecycle.TryPauseForShutdown(before));
+            Assert.AreEqual(paused, lifecycle.ReadState, "A failed CAS must not authorize a newer suspend version.");
+            Assert.IsNull(lifecycle.TryPauseForShutdown(paused));
+        }
+        foreach (var transition in new[] { "pause", "powerCycle", "legacyCycle", "replacement" })
+        {
+            using var provider = new WindowsHomeHardwareProvider(() => { }, () => Assert.Fail(transition), () => []);
+            Set(provider, "opened", true);
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.HandleShutdownAsync(CancellationToken.None);
+            var lifecycle = (PowerLifecycleState)Field(provider, "powerLifecycle")!;
+            if (transition == "pause") lifecycle.Pause();
+            if (transition == "powerCycle") Assert.IsTrue(lifecycle.Resume(lifecycle.Pause()));
+            if (transition == "legacyCycle") { provider.SetBackgroundWorkPaused(true); provider.SetBackgroundWorkPaused(false); }
+            if (transition == "replacement") _ = new PowerLifecycleState(provider);
+
+            provider.Dispose();
+            provider.Dispose();
+
+            Assert.IsTrue((bool)Field(provider, "opened")!);
+            Assert.IsFalse((bool)Field(provider, "sensorDependencyCleanupStarted")!);
+        }
+    }
+
+    [TestMethod]
+    public async Task Interrupted_shutdown_close_records_its_outcome_without_redispatch()
+    {
+        foreach (var interruption in new[] { "failure", "powerPause", "legacyCycle" })
+        {
+            int closes = 0;
+            WindowsHomeHardwareProvider? current = null;
+            using var provider = current = new WindowsHomeHardwareProvider(() => { }, () =>
+            {
+                closes++;
+                if (interruption == "failure") throw new IOException("fakeShutdownCloseUnknown");
+                if (interruption == "powerPause") ((PowerLifecycleState)Field(current!, "powerLifecycle")!).Pause();
+                if (interruption == "legacyCycle") { current!.SetBackgroundWorkPaused(true); current.SetBackgroundWorkPaused(false); }
+            }, () => []);
+            Set(provider, "opened", true);
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.HandleShutdownAsync(CancellationToken.None);
+
+            provider.Dispose();
+            provider.Dispose();
+
+            Assert.AreEqual(1, closes, interruption);
+            Assert.AreEqual(interruption == "failure", (bool)Field(provider, "opened")!, interruption);
+            Assert.AreEqual(interruption == "failure", (bool)Field(provider, "sensorLifecycleUnknown")!, interruption);
+            Assert.IsFalse((bool)Field(provider, "sensorDependencyCleanupStarted")!, interruption);
+        }
+    }
+
     private static object? Field(object target, string name) => target.GetType().GetField(name, Private)!.GetValue(target);
     private static void Set(object target, string name, object value) => target.GetType().GetField(name, Private)!.SetValue(target, value);
     private static void Queue(WindowsHomeHardwareProvider provider) =>

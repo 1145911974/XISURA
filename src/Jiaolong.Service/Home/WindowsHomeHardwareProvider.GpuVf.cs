@@ -13,6 +13,10 @@ public sealed partial class WindowsHomeHardwareProvider
     private bool gpuVfRecoveryRequired;
     private int[]? gpuVfRecoveryOffsets;
     private NvapiVfInterop.PstateMemory? gpuPstateRecoverySnapshot;
+    private ControlExecutionJournal.GpuOperation? gpuRecoveryOperation;
+    private GpuAdapterIdentity? gpuRecoveryAdapter;
+    private HardwareIdentity? gpuRecoveryIdentity;
+    private Guid? gpuRecoveryStepId;
     private readonly List<NvapiVfInterop> gpuNativeContexts = [];
     private readonly ControlExecutionJournal? controlJournal;
 
@@ -34,8 +38,7 @@ public sealed partial class WindowsHomeHardwareProvider
     {
         if (!writeAttempted)
         {
-            gpuVfRecoveryOffsets = null;
-            gpuPstateRecoverySnapshot = null;
+            ClearGpuRecoverySnapshots();
             return GpuZeroWriteRejected(command,
                 error is OperationCanceledException || BackgroundWorkPaused || error.Message == "hardwareAccessPaused"
                     ? ErrorCode.CancelledBeforeApply : ErrorCode.HardwareReadFailed, error.Message);
@@ -65,7 +68,7 @@ public sealed partial class WindowsHomeHardwareProvider
                     throw new IOException("gpuRecoveryAdmissionMissing"), token).GetAwaiter().GetResult();
             if (!IsVerifiedGpuVfDevice() || CommandValidation.Validate(command) is not null ||
                 !ReadProviderHardware(ReadGpuTuningAcPower) ||
-                ReadProviderHardware(() => ReadGpuTuningTemperature(token)) is not double temperature || temperature is < 0 or >= 75)
+                !IsSafeGpuTuningTemperature(ReadProviderHardware(() => ReadGpuTuningTemperature(token))))
                 return GpuZeroWriteRejected(command, ErrorCode.ValidationFailed);
             return null;
         }
@@ -76,10 +79,70 @@ public sealed partial class WindowsHomeHardwareProvider
     {
         gpuVfRecoveryOffsets = null;
         gpuPstateRecoverySnapshot = null;
+        gpuRecoveryOperation = null;
+        gpuRecoveryAdapter = null;
+        gpuRecoveryIdentity = null;
+        gpuRecoveryStepId = null;
+    }
+
+    private static bool IsSafeGpuTuningTemperature(double? value) => value is double temperature &&
+        double.IsFinite(temperature) && temperature is >= 0 and < 75;
+
+    private void EnsureGpuTuningConditions(CancellationToken token)
+    {
+        EnsureGpuWriteAccess(token);
+        if (!ReadProviderHardware(ReadGpuTuningAcPower) ||
+            !IsSafeGpuTuningTemperature(ReadProviderHardware(() => ReadGpuTuningTemperature(token))))
+            throw new InvalidDataException("gpuTuningConditionsChanged");
+        EnsureGpuWriteAccess(token);
+    }
+
+    public Task<bool> ReconcileGpuRecoveryAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            if (!gpuVfRecoveryRequired && !gpuMemoryRecoveryRequired && !gpuCoreRecoveryRequired) return Task.FromResult(true);
+            try
+            {
+                EnsureGpuWriteAccess(token);
+                if (controlJournal is null || gpuRecoveryOperation is null || gpuRecoveryAdapter is null ||
+                    identity != gpuRecoveryIdentity || controlJournal.CurrentGpuOperation != gpuRecoveryOperation ||
+                    gpuVfRecoveryOffsets is not { Length: 127 } curve || gpuPstateRecoverySnapshot is not { } pstate)
+                    return Task.FromResult(false);
+                controlJournal.CheckGpuAdmissionAsync(gpuRecoveryOperation, token).GetAwaiter().GetResult();
+                var latest = controlJournal.ReadGpuAttemptFromDiskAsync(gpuRecoveryOperation, token).GetAwaiter().GetResult();
+                if (latest.StepId != gpuRecoveryStepId || latest.Before.Adapter != gpuRecoveryAdapter ||
+                    RecoveryMemory(latest.Before.Pstate) != pstate || !latest.Before.VfOffsetsKhz.SequenceEqual(curve))
+                    return Task.FromResult(false);
+                {
+                    using var nvapi = CreateGpuVfInterop();
+                    var (gpu, mask) = nvapi.OpenSingleGpu();
+                    if (nvapi.ReadAdapterIdentity(gpu) != gpuRecoveryAdapter || nvapi.ReadPstate0MemoryOffset(gpu) != pstate ||
+                        !nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(curve)) return Task.FromResult(false);
+                    var fresh = ReadGpuVfLocked(token, force: true);
+                    if (fresh is not { Error: null, Nodes.Length: 127 } || fresh.CoreOffsetKhz != pstate.CorePstateOffsetKhz ||
+                        fresh.MemoryOffsetKhz != pstate.OffsetKhz || !fresh.Nodes.Select(node => node.OffsetKhz).SequenceEqual(curve) ||
+                        nvapi.ReadPstate0MemoryOffset(gpu) != pstate || !nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(curve) ||
+                        nvapi.ReadAdapterIdentity(gpu) != gpuRecoveryAdapter)
+                        return Task.FromResult(false);
+                }
+                EnsureGpuWriteAccess(token);
+                if (controlJournal.CurrentGpuOperation != gpuRecoveryOperation || identity != gpuRecoveryIdentity)
+                    return Task.FromResult(false);
+                // Resolve metadata only; the original parent recovery journal stays pending.
+                gpuVfRecoveryRequired = gpuMemoryRecoveryRequired = gpuCoreRecoveryRequired = false;
+                ClearGpuRecoverySnapshots();
+                return Task.FromResult(true);
+            }
+            catch (Exception error) when (error is not OperationCanceledException) { return Task.FromResult(false); }
+        }
     }
 
     private void PersistGpuRecoveryBaseline(NvapiVfInterop nvapi, IntPtr gpu, int[] offsets,
-        NvapiVfInterop.PstateMemory pstate, CancellationToken token)
+        NvapiVfInterop.PstateMemory pstate, HardwareCommand command, int[] targetCurve,
+        NvapiVfInterop.PstateMemory targetPstate, CancellationToken token)
     {
         EnsureGpuWriteAccess(token);
         if (controlJournal is null)
@@ -95,13 +158,21 @@ public sealed partial class WindowsHomeHardwareProvider
         var baseline = new GpuRecoveryBaseline(DateTimeOffset.UtcNow, operation.SessionId, operation.HardwareEpoch,
             operation.OwnerSid, identity, adapter, offsets, new(pstate.OffsetKhz, pstate.MinimumKhz, pstate.MaximumKhz,
                 pstate.CorePstateOffsetKhz, pstate.CoreVoltageDeltaUv, pstate.StateCount, pstate.ClockCount));
+        var attempt = new GpuRecoveryAttempt(command.OperationId,
+            command is SetGpuVfCurveCommand ? "vf" : command is SetGpuCoreOffsetCommand ? "core" : "memory",
+            baseline, targetCurve, new(targetPstate.OffsetKhz, targetPstate.MinimumKhz, targetPstate.MaximumKhz,
+                targetPstate.CorePstateOffsetKhz, targetPstate.CoreVoltageDeltaUv, targetPstate.StateCount, targetPstate.ClockCount));
         EnsureGpuWriteAccess(token);
-        try { controlJournal.RecordGpuRecoveryAsync(operation.OperationId, baseline, token).GetAwaiter().GetResult(); }
+        try { controlJournal.RecordGpuRecoveryAsync(operation.OperationId, baseline, token, attempt).GetAwaiter().GetResult(); }
         catch (Exception error) when (error is UnauthorizedAccessException or System.Text.Json.JsonException ||
             error is IOException && error.Message != "gpuPersistedRecoveryRequired")
         { throw new IOException("gpuRecoveryPersistenceFailed", error); }
         EnsureGpuWriteAccess(token);
         if (controlJournal.CurrentGpuOperation != operation) throw new IOException("gpuRecoveryAdmissionRevoked");
+        gpuRecoveryOperation = operation;
+        gpuRecoveryAdapter = adapter;
+        gpuRecoveryIdentity = baseline.Identity;
+        gpuRecoveryStepId = command.OperationId;
     }
 
     private static CommandResult GpuRolledBack(HardwareCommand command, Exception cause) => new(
@@ -241,16 +312,24 @@ public sealed partial class WindowsHomeHardwareProvider
             {
                 EnsureGpuWriteAccess(cancellationToken);
                 var pstateBefore = nvapi.ReadPstate0MemoryOffset(gpu);
-                PersistGpuRecoveryBaseline(nvapi, gpu, before, pstateBefore, cancellationToken);
+                PersistGpuRecoveryBaseline(nvapi, gpu, before, pstateBefore, command, command.OffsetsKhz, pstateBefore, cancellationToken);
                 gpuVfRecoveryOffsets = original = before.ToArray();
                 gpuPstateRecoverySnapshot = pstateBefore;
+                EnsureGpuTuningConditions(cancellationToken);
                 // A failed NVAPI call may have partially applied the table; always inspect before deciding recovery.
                 nvapi.WriteDeltas(gpu, mask, command.OffsetsKhz);
                 EnsureGpuWriteAccess(cancellationToken);
-                if (!nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(command.OffsetsKhz))
+                if (!nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(command.OffsetsKhz) ||
+                    nvapi.ReadPstate0MemoryOffset(gpu) != pstateBefore)
                     throw new InvalidDataException("GPU V/F readback mismatch");
+                EnsureGpuTuningConditions(cancellationToken);
                 gpuVfCacheAt = DateTimeOffset.MinValue;
-                ReadGpuVfLocked(CancellationToken.None, force: true);
+                var refreshed = ReadGpuVfLocked(CancellationToken.None, force: true);
+                if (refreshed.Error is not null ||
+                    refreshed.CoreOffsetKhz != pstateBefore.CorePstateOffsetKhz ||
+                    refreshed.MemoryOffsetKhz != pstateBefore.OffsetKhz ||
+                    !refreshed.Nodes.Select(node => node.OffsetKhz).SequenceEqual(command.OffsetsKhz))
+                    throw new InvalidDataException("GPU V/F state refresh mismatch");
                 EnsureGpuWriteAccess(cancellationToken);
                 ClearGpuRecoverySnapshots();
                 return new CommandResult(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
@@ -271,7 +350,12 @@ public sealed partial class WindowsHomeHardwareProvider
                         if (!nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(before) ||
                             gpuPstateRecoverySnapshot is { } expectedPstate && nvapi.ReadPstate0MemoryOffset(gpu) != expectedPstate) continue;
                         gpuVfCacheAt = DateTimeOffset.MinValue;
-                        ReadGpuVfLocked(CancellationToken.None, force: true);
+                        var refreshed = ReadGpuVfLocked(CancellationToken.None, force: true);
+                        if (refreshed.Error is not null ||
+                            !refreshed.Nodes.Select(node => node.OffsetKhz).SequenceEqual(before) ||
+                            gpuPstateRecoverySnapshot is { } originalPstate &&
+                            (refreshed.CoreOffsetKhz != originalPstate.CorePstateOffsetKhz ||
+                             refreshed.MemoryOffsetKhz != originalPstate.OffsetKhz)) continue;
                         EnsureGpuWriteAccess(CancellationToken.None);
                         ClearGpuRecoverySnapshots();
                         return GpuRolledBack(command, exception);
@@ -339,9 +423,10 @@ public sealed partial class WindowsHomeHardwareProvider
             try
             {
                 EnsureGpuWriteAccess(cancellationToken);
-                PersistGpuRecoveryBaseline(nvapi, gpu, originalCurve, before, cancellationToken);
+                PersistGpuRecoveryBaseline(nvapi, gpu, originalCurve, before, command, expectedCurve, expectedState, cancellationToken);
                 gpuVfRecoveryOffsets = original = originalCurve.ToArray();
                 gpuPstateRecoverySnapshot = originalPstate = before;
+                EnsureGpuTuningConditions(cancellationToken);
                 nvapi.WritePstate0Offsets(gpu, before,
                     core ? target : before.CorePstateOffsetKhz, core ? before.OffsetKhz : target);
                 EnsureGpuWriteAccess(cancellationToken);
@@ -351,14 +436,15 @@ public sealed partial class WindowsHomeHardwareProvider
                     nvapi.WriteDeltas(gpu, mask, expectedCurve);
                 var actual = nvapi.ReadPstate0MemoryOffset(gpu);
                 if (actual != expectedState ||
-                    !nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(expectedCurve) ||
-                    !ReadGpuTuningAcPower() ||
-                    ReadGpuTuningTemperature(CancellationToken.None) is not double currentTemperature ||
-                    currentTemperature is < 0 or >= 75)
+                    !nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(expectedCurve))
                     throw new InvalidDataException("GPU P0 offset or adjacent state readback mismatch");
+                EnsureGpuTuningConditions(cancellationToken);
                 gpuVfCacheAt = DateTimeOffset.MinValue;
                 var refreshed = ReadGpuVfLocked(CancellationToken.None, force: true);
-                if ((core ? refreshed.CoreOffsetKhz : refreshed.MemoryOffsetKhz) != target)
+                if (refreshed.Error is not null ||
+                    refreshed.CoreOffsetKhz != expectedState.CorePstateOffsetKhz ||
+                    refreshed.MemoryOffsetKhz != expectedState.OffsetKhz ||
+                    !refreshed.Nodes.Select(node => node.OffsetKhz).SequenceEqual(expectedCurve))
                     throw new InvalidDataException("GPU P0 offset state refresh mismatch");
                 EnsureGpuWriteAccess(cancellationToken);
                 ClearGpuRecoverySnapshots();
@@ -382,7 +468,11 @@ public sealed partial class WindowsHomeHardwareProvider
                         if (nvapi.ReadPstate0MemoryOffset(gpu) != before ||
                             !nvapi.ReadDeltas(gpu, mask, 127).SequenceEqual(originalCurve)) continue;
                         gpuVfCacheAt = DateTimeOffset.MinValue;
-                        ReadGpuVfLocked(CancellationToken.None, force: true);
+                        var refreshed = ReadGpuVfLocked(CancellationToken.None, force: true);
+                        if (refreshed.Error is not null ||
+                            refreshed.CoreOffsetKhz != before.CorePstateOffsetKhz ||
+                            refreshed.MemoryOffsetKhz != before.OffsetKhz ||
+                            !refreshed.Nodes.Select(node => node.OffsetKhz).SequenceEqual(originalCurve)) continue;
                         EnsureGpuWriteAccess(CancellationToken.None);
                         ClearGpuRecoverySnapshots();
                         return GpuRolledBack(command, exception);

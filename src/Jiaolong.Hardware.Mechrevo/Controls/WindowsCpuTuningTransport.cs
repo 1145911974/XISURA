@@ -1,4 +1,4 @@
-﻿using System.Management;
+using System.Management;
 using Jiaolong.Contracts.Commands;
 using Jiaolong.Hardware.Mechrevo.Wmi;
 
@@ -17,7 +17,7 @@ public interface IPboScalarTransport
     void Write(int scalar, CancellationToken cancellationToken);
 }
 
-public sealed class WindowsCpuTuningTransport(
+public sealed partial class WindowsCpuTuningTransport(
     MiCommonInterfaceClient miClient,
     VerifiedWmiBinding cpuPowerBinding,
     IWindowsPowerSettingsTransport powerSettings,
@@ -76,7 +76,11 @@ public sealed class WindowsCpuTuningTransport(
     public async Task CaptureTransactionAsync(IReadOnlyList<CpuTuningPlan> plans, bool captureNativeModeEffects, CancellationToken token)
     {
         EnsureHardwareAccess(readOnly: true);
+        token.ThrowIfCancellationRequested();
+        if (plans.Any(plan => plan.TemperatureLimitC.HasValue || plan.SplWatts.HasValue || plan.SpptWatts.HasValue))
+            EnsureOemLimitSessionRestorable();
         powerSnapshots.Clear();
+        ClearScopedWindowsRecovery();
         originalSmuLimits = null;
         originalCustomMode = null;
         oemAttempted = false;
@@ -87,10 +91,14 @@ public sealed class WindowsCpuTuningTransport(
             if (power.AcMinActiveCoresPercent is null || power.DcMinActiveCoresPercent is null)
                 throw new InvalidOperationException("nativeModeWindowsOriginalUnavailable");
             originalModePowerSettings = power;
-            foreach (var field in WindowsModeFields) powerSnapshots[field] = power;
         }
         if (!plans.Any(plan => plan.TemperatureLimitC.HasValue || plan.SplWatts.HasValue || plan.SpptWatts.HasValue)) return;
-        originalSmuLimits = ReadSmuSnapshot(token);
+        var original = ReadSmuSnapshot(token);
+        // The OEM interface encodes whole watts; never round a fractional recovery value.
+        if (original.OemSplWatts is not double spl || spl != Math.Round(spl) ||
+            original.Limits.FastPptWatts is not double sppt || sppt != Math.Round(sppt))
+            throw new InvalidOperationException("oemCpuLimitOriginalNotRestorable");
+        originalSmuLimits = original;
         var mode = await AccessHardwareAsync(() => miClient.ReadAsync(cpuPowerBinding, token), readOnly: true);
         originalCustomMode = mode.Quality == DataQuality.Good ? MiCpuPowerCodec.ReadCustomMode(mode.Payload ?? []) : null;
         if (originalCustomMode is null) throw new InvalidOperationException("cpuPowerCustomModeReadFailed");
@@ -118,7 +126,7 @@ public sealed class WindowsCpuTuningTransport(
     public async Task RestoreTransactionAsync(Func<CancellationToken, Task>? restoreNativeMode, CancellationToken token)
     {
         EnsureHardwareAccess();
-        if (!oemAttempted && originalModePowerSettings is null && restoreNativeMode is null) return;
+        if (!oemAttempted && originalModePowerSettings is null && restoreNativeMode is null && scopedWindowsSelection is null) return;
         var failures = new List<Exception>();
         try
         {
@@ -128,13 +136,11 @@ public sealed class WindowsCpuTuningTransport(
                 await AccessHardwareAsync(() => restoreNativeMode(token));
         }
         catch (Exception error) when (error is not HardwareLifecycleInterruptedException) { failures.Add(error); }
+        try { await RestoreScopedWindowsAsync(token); }
+        catch (Exception error) when (error is not HardwareLifecycleInterruptedException) { failures.Add(error); }
         if (originalModePowerSettings is { } power)
         {
-            foreach (var field in WindowsModeFields)
-            {
-                try { await AccessHardwareAsync(() => powerSettings.RestoreAsync(field, power, token)); }
-                catch (Exception error) when (error is not HardwareLifecycleInterruptedException) { failures.Add(error); }
-            }
+            // Native mode capture proves a baseline, not ownership of later Windows changes.
             try
             {
                 if (((await AccessHardwareAsync(() => powerSettings.ReadAsync(token))) with { ActiveSchemeName = null }) !=
@@ -145,17 +151,15 @@ public sealed class WindowsCpuTuningTransport(
         }
         if (failures.Count > 0)
             throw new InvalidOperationException("cpuNativeModeTransactionRestoreFailed", new AggregateException(failures));
+        ClearScopedWindowsRecovery();
         originalModePowerSettings = null;
         oemAttempted = false;
     }
 
-    private static readonly CpuTuningField[] WindowsModeFields =
-        [CpuTuningField.WindowsPowerSchemeId, CpuTuningField.MaxFrequencyMhz,
-         CpuTuningField.BoostEnabled, CpuTuningField.CoreParkingPercent];
-
     private async Task RestoreOemTransactionAsync(Func<CancellationToken, Task>? restoreNativeMode, CancellationToken token)
     {
         EnsureHardwareAccess();
+        EnsureOemLimitSessionRestorable();
         if (originalSmuLimits is null || originalCustomMode is null || smuLimits is null)
             throw new InvalidOperationException("oemCpuLimitOriginalUnavailable");
         var failures = new List<Exception>();
@@ -201,7 +205,7 @@ public sealed class WindowsCpuTuningTransport(
     private async Task RestoreOemPowerFieldsAsync(CancellationToken token)
     {
         (CpuTuningField Field, object? Value)[] fields = [
-            (CpuTuningField.SplWatts, originalSmuLimits!.OemSplWatts),
+            (CpuTuningField.SplWatts, checked((int)originalSmuLimits!.OemSplWatts!.Value)),
             (CpuTuningField.SpptWatts, checked((int)originalSmuLimits.Limits.FastPptWatts!.Value)),
             (CpuTuningField.TemperatureLimitC, originalSmuLimits.Limits.Mp1TemperatureC!.Value)];
         await PerformanceController.OrderPowerFieldsAsync(fields, this, token);
@@ -240,14 +244,17 @@ public sealed class WindowsCpuTuningTransport(
         EnsureHardwareAccess();
         cancellationToken.ThrowIfCancellationRequested();
         if (field is CpuTuningField.WindowsPowerSchemeId or CpuTuningField.MaxFrequencyMhz or CpuTuningField.CoreParkingPercent or CpuTuningField.BoostEnabled &&
-            !powerSnapshots.ContainsKey(field))
-            powerSnapshots[field] = await AccessHardwareAsync(() => powerSettings.ReadAsync(cancellationToken));
+            (powerSettings is IWindowsPowerSettingsRecoveryTransport || !powerSnapshots.ContainsKey(field)))
+        {
+            var snapshot = await AccessHardwareAsync(() => powerSettings.ReadAsync(cancellationToken));
+            powerSnapshots.TryAdd(field, snapshot);
+            TrackScopedWindowsWrite(field, value, snapshot);
+        }
         switch (field)
         {
             case CpuTuningField.TemperatureLimitC:
             case CpuTuningField.SplWatts:
             case CpuTuningField.SpptWatts:
-                oemAttempted = true;
                 await WriteMiPowerFieldAsync(field, RequireInt(value, field), cancellationToken);
                 break;
             case CpuTuningField.WindowsPowerSchemeId:
@@ -263,7 +270,9 @@ public sealed class WindowsCpuTuningTransport(
                 await AccessHardwareAsync(() => powerSettings.SetCoreParkingAsync(parking.Ac, parking.Dc, cancellationToken));
                 break;
             case CpuTuningField.BoostEnabled:
-                await AccessHardwareAsync(() => powerSettings.SetBoostAsync(RequireBool(value, field), cancellationToken));
+                if (value is WindowsPowerBoostValue boostPolicy)
+                    await RestoreCapturedBoostModesAsync(boostPolicy.AcMode, boostPolicy.DcMode, cancellationToken);
+                else await AccessHardwareAsync(() => powerSettings.SetBoostAsync(RequireBool(value, field), cancellationToken));
                 break;
             case CpuTuningField.EnabledCoreCount:
                 throw new InvalidOperationException("cpuCoreCountWriteUnavailable");
@@ -291,7 +300,8 @@ public sealed class WindowsCpuTuningTransport(
             case CpuTuningField.Mp1TemperatureC:
             case CpuTuningField.RsmuTemperatureC:
                 if (smuLimits is null) throw new InvalidOperationException("advancedCpuProtocolUnavailable");
-                AccessHardware(() => smuLimits.WriteAdvancedLimit(RyzenSmuAdvancedLimits.BuildField(field, value, restoring: false), cancellationToken));
+                AccessHardware(() => smuLimits.WriteAdvancedLimit(RyzenSmuAdvancedLimits.BuildField(field, value, restoring: false,
+                    pmTableVersion: field is CpuTuningField.PptWatts or CpuTuningField.TdcCurrentMilliamps or CpuTuningField.EdcCurrentMilliamps ? ReadSmuSnapshot(cancellationToken).PmTableVersion : 0), cancellationToken));
                 break;
             case CpuTuningField.OverclockEnabled:
             case CpuTuningField.OcClockMhz:
@@ -319,6 +329,12 @@ public sealed class WindowsCpuTuningTransport(
             case CpuTuningField.MaxFrequencyMhz:
             case CpuTuningField.CoreParkingPercent:
             case CpuTuningField.BoostEnabled:
+                if (powerSettings is IWindowsPowerSettingsRecoveryTransport &&
+                    (field == CpuTuningField.WindowsPowerSchemeId && scopedWindowsSelection is not null || scopedWindowsRecovery.Keys.Any(key => key.Field == field)))
+                {
+                    await RestoreScopedWindowsFieldAsync(field, cancellationToken);
+                    break;
+                }
                 if (!powerSnapshots.TryGetValue(field, out var snapshot))
                     throw new InvalidOperationException("powerSnapshotUnavailable");
                 await AccessHardwareAsync(() => powerSettings.RestoreAsync(field, snapshot, cancellationToken));
@@ -351,7 +367,8 @@ public sealed class WindowsCpuTuningTransport(
             case CpuTuningField.Mp1TemperatureC:
             case CpuTuningField.RsmuTemperatureC:
                 if (smuLimits is null) throw new InvalidOperationException("advancedCpuProtocolUnavailable");
-                AccessHardware(() => smuLimits.WriteAdvancedLimit(RyzenSmuAdvancedLimits.BuildField(field, value, restoring: true), cancellationToken));
+                AccessHardware(() => smuLimits.WriteAdvancedLimit(RyzenSmuAdvancedLimits.BuildField(field, value, restoring: true,
+                    pmTableVersion: field is CpuTuningField.PptWatts or CpuTuningField.TdcCurrentMilliamps or CpuTuningField.EdcCurrentMilliamps ? ReadSmuSnapshot(cancellationToken).PmTableVersion : 0), cancellationToken));
                 if (!IsReadBackMatch(field, value, await ReadFieldAsync(field, cancellationToken)))
                     throw new InvalidOperationException("advancedCpuLimitRestoreMismatch");
                 break;
@@ -405,7 +422,8 @@ public sealed class WindowsCpuTuningTransport(
             readBack is IReadOnlyDictionary<int, int> cores && cores.Count == 8 &&
             targets.All(pair => cores.TryGetValue(pair.Key, out int actual) && actual == pair.Value),
         CpuTuningField.BoostEnabled => readBack is WindowsPowerBoostValue boost &&
-            requested is bool targetBoost && boost.IsEnabled == targetBoost,
+            (requested is WindowsPowerBoostValue targetPolicy ? boost == targetPolicy :
+                requested is bool targetBoost && (targetBoost ? boost.IsEnabled : boost.AcMode == 0 && boost.DcMode == 0)),
         _ => Equals(requested, readBack)
     };
 
@@ -417,7 +435,7 @@ public sealed class WindowsCpuTuningTransport(
             return field switch
             {
                 CpuTuningField.TemperatureLimitC => state.Limits.Mp1TemperatureC,
-                CpuTuningField.SplWatts => state.OemSplWatts,
+                CpuTuningField.SplWatts when state.OemSplWatts is double spl && spl == Math.Round(spl) => (int)spl,
                 CpuTuningField.SpptWatts when state.Limits.FastPptWatts is double watts && watts == Math.Round(watts) => (int)watts,
                 _ => null
             };
@@ -429,44 +447,26 @@ public sealed class WindowsCpuTuningTransport(
             : null;
     }
 
-    public async Task PrepareOemLimitsAsync(IReadOnlyList<CpuTuningPlan> plans, CancellationToken cancellationToken)
+    public Task PrepareOemLimitsAsync(IReadOnlyList<CpuTuningPlan> plans, CancellationToken cancellationToken)
     {
         EnsureHardwareAccess();
-        if (!plans.Any(plan => plan.TemperatureLimitC.HasValue || plan.SplWatts.HasValue || plan.SpptWatts.HasValue)) return;
-        oemAttempted = true;
-        await EnableMiCustomPowerModeAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!plans.Any(plan => plan.TemperatureLimitC.HasValue || plan.SplWatts.HasValue || plan.SpptWatts.HasValue)) return Task.CompletedTask;
+        // PM limits are not the original firmware configuration; exact session recovery is unproven.
+        EnsureOemLimitSessionRestorable();
+        return Task.CompletedTask;
     }
 
-    private async Task EnableMiCustomPowerModeAsync(CancellationToken cancellationToken)
+    private Task WriteMiPowerFieldAsync(CpuTuningField field, int value, CancellationToken cancellationToken)
     {
-        // Another console or a firmware mode change can clear CMEN between presets.
-        var mode = await AccessHardwareAsync(() => miClient.ReadAsync(cpuPowerBinding, cancellationToken), readOnly: true);
-        var enabled = mode.Quality == DataQuality.Good
-            ? MiCpuPowerCodec.ReadCustomMode(mode.Payload ?? []) : null;
-        if (enabled is null)
-            throw new InvalidOperationException("cpuPowerCustomModeReadFailed");
-        if (enabled == false)
-        {
-            var modeWrite = await AccessHardwareAsync(() => miClient.WriteOnceAsync(
-                cpuPowerBinding, MiCpuPowerCodec.CustomMode(true), cancellationToken));
-            if (modeWrite.Quality != DataQuality.Good)
-                throw new InvalidOperationException("cpuPowerCustomModeWriteFailed");
-            var readBack = await AccessHardwareAsync(() => miClient.ReadAsync(cpuPowerBinding, cancellationToken), readOnly: true);
-            if (readBack.Quality != DataQuality.Good ||
-                MiCpuPowerCodec.ReadCustomMode(readBack.Payload ?? []) != true)
-                throw new InvalidOperationException("cpuPowerCustomModeNotEnabled");
-        }
-
+        EnsureHardwareAccess();
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureOemLimitSessionRestorable();
+        return Task.CompletedTask;
     }
 
-    private async Task WriteMiPowerFieldAsync(CpuTuningField field, int value, CancellationToken cancellationToken)
-    {
-        await EnableMiCustomPowerModeAsync(cancellationToken);
-        var write = await AccessHardwareAsync(() => miClient.WriteOnceAsync(
-            cpuPowerBinding, MiCpuPowerCodec.Encode(field, value), cancellationToken));
-        if (write.Quality != DataQuality.Good)
-            throw new InvalidOperationException("cpuPowerWriteFailed");
-    }
+    private static void EnsureOemLimitSessionRestorable() =>
+        throw new InvalidOperationException("cpuPowerModeIndependentProtocolUnverified");
 
     public async Task<WindowsPowerSettingsSnapshot> ReadWindowsPowerSettingsAsync(CancellationToken cancellationToken)
     {

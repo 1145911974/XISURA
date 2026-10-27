@@ -11,13 +11,21 @@ public sealed record UnresolvedControlOperation(Guid OperationId, DateTimeOffset
     public string? OwnerSid { get; init; }
     public string? CommandKind { get; init; }
     public GpuRecoveryBaseline? GpuRecovery { get; init; }
+    public GpuRecoveryAttempt? GpuAttempt { get; init; }
+    public NativeModeRecoveryAttempt? NativeModeAttempt { get; init; }
 }
 public sealed record ControlJournalSnapshot(int SchemaVersion, HardwareIdentity? Identity,
     PerformanceMode? LastConfirmedMode, ControlExecutionState? Current,
     UnresolvedControlOperation[] Unresolved)
 {
     public string? CurrentOwnerSid { get; init; }
+    public ControlJournalRecoveryScope? RecoveryScope { get; init; }
+    public FanEcRecoverySnapshot? FanEcRecovery { get; init; }
+    public FanFirmwareRecoverySnapshot? FanFirmwareRecovery { get; init; }
 }
+public sealed record ControlFieldRecoveryScope(string? OwnerSid, long HardwareEpoch, Guid? WindowsPowerSchemeId, long Generation);
+public sealed record ControlJournalRecoveryScope(Guid ServiceSessionId, Dictionary<string, ControlFieldRecoveryScope> Fields,
+    PerformanceMode? NativeModeTarget, long NativeModeEpoch, Guid? FanOwnerClientSessionId);
 
 // A crash leaves the pre-write marker intact. Old epochs remain evidence, never restoration authority.
 public sealed partial class ControlExecutionJournal
@@ -28,6 +36,7 @@ public sealed partial class ControlExecutionJournal
     private ControlJournalSnapshot? snapshot;
     public ControlExecutionJournal(string? root = null) =>
         store = new(root ?? MachinePaths.BaseDirectory, "control-execution.json");
+    internal string RootDirectory => Path.GetDirectoryName(store.FilePath)!;
 
     public async Task<ControlJournalSnapshot> ReadAsync(CancellationToken token)
     {
@@ -38,11 +47,13 @@ public sealed partial class ControlExecutionJournal
 
     public async Task SaveAsync(ControlExecutionState state, HardwareIdentity identity,
         Guid operationId, bool pending, CancellationToken token, string? ownerSid = null, string? commandKind = null,
-        bool noMutation = false)
+        bool noMutation = false, ControlJournalRecoveryScope? recoveryScope = null)
     {
         await gate.WaitAsync(token);
         try
         {
+            if (recoveryScope is not null && !ValidRecoveryScope(recoveryScope, state))
+                throw new InvalidDataException("controlRecoveryScopeInvalid");
             var prior = await LoadAsync(token);
             var unresolved = prior.Unresolved.ToDictionary(item => item.OperationId);
             bool unknown = !noMutation && (state.NativeModeApplyState == ApplyState.Unknown ||
@@ -52,9 +63,14 @@ public sealed partial class ControlExecutionJournal
             {
                 unresolved.TryGetValue(operationId, out var existing);
                 var entry = new UnresolvedControlOperation(operationId, DateTimeOffset.UtcNow, identity, state)
-                { OwnerSid = ownerSid, CommandKind = commandKind, GpuRecovery = existing?.GpuRecovery };
+                { OwnerSid = ownerSid, CommandKind = commandKind, GpuRecovery = existing?.GpuRecovery, GpuAttempt = existing?.GpuAttempt,
+                    NativeModeAttempt = existing?.NativeModeAttempt };
                 if (entry.GpuRecovery is { } gpu && !ValidGpuRecovery(gpu, entry))
                     throw new InvalidDataException("gpuRecoveryIdentityChanged");
+                if (entry.GpuAttempt is { } attempt && !ValidGpuAttempt(attempt, entry))
+                    throw new InvalidDataException("gpuRecoveryAttemptChanged");
+                if (entry.NativeModeAttempt is { } modeAttempt && !ValidNativeModeAttempt(modeAttempt, entry))
+                    throw new InvalidDataException("nativeModeRecoveryAttemptChanged");
                 unresolved[operationId] = entry;
             }
             else unresolved.Remove(operationId);
@@ -62,7 +78,8 @@ public sealed partial class ControlExecutionJournal
             var next = new ControlJournalSnapshot(1, identity,
                 state.NativeModeApplyState == ApplyState.Confirmed ? state.NativeMode :
                     prior.Identity == identity ? prior.LastConfirmedMode : null,
-                state, unresolved.Values.ToArray()) { CurrentOwnerSid = ownerSid };
+                state, unresolved.Values.ToArray()) { CurrentOwnerSid = ownerSid, RecoveryScope = recoveryScope,
+                    FanEcRecovery = prior.FanEcRecovery, FanFirmwareRecovery = prior.FanFirmwareRecovery };
             var frozen = Clone(next);
             await WriteSnapshotAsync(frozen, token);
             snapshot = frozen;
@@ -70,13 +87,17 @@ public sealed partial class ControlExecutionJournal
         finally { gate.Release(); }
     }
 
-    internal async Task ResolveNoMutationAsync(Guid operationId, ControlExecutionState? current, CancellationToken token)
+    internal async Task ResolveNoMutationAsync(Guid operationId, ControlExecutionState? current, CancellationToken token,
+        ControlJournalRecoveryScope? recoveryScope = null)
     {
         await gate.WaitAsync(token);
         try
         {
+            if (recoveryScope is not null && !ValidRecoveryScope(recoveryScope, current))
+                throw new InvalidDataException("controlRecoveryScopeInvalid");
             var prior = await LoadAsync(token);
             var next = Clone(prior with { Current = current,
+                RecoveryScope = recoveryScope,
                 Unresolved = prior.Unresolved.Where(item => item.OperationId != operationId).ToArray() });
             await WriteSnapshotAsync(next, token);
             snapshot = next;
@@ -101,9 +122,14 @@ public sealed partial class ControlExecutionJournal
             saved.Unresolved.Any(item => item is null || item.OperationId == Guid.Empty || item.State is null ||
                 item.State.Pages is null || item.State.Pages.Any(page => page is null) ||
                 item.State.Fields is null || item.State.Fields.Values.Any(field => field is null) ||
-                item.GpuRecovery is { } gpu && !ValidGpuRecovery(gpu, item)) ||
+                item.GpuRecovery is { } gpu && !ValidGpuRecovery(gpu, item) ||
+                item.GpuAttempt is { } attempt && !ValidGpuAttempt(attempt, item) ||
+                item.NativeModeAttempt is { } modeAttempt && !ValidNativeModeAttempt(modeAttempt, item)) ||
             saved.Unresolved.Select(item => item.OperationId).Distinct().Count() != saved.Unresolved.Length ||
-            saved.LastConfirmedMode is { } mode && !Enum.IsDefined(mode)))
+            saved.LastConfirmedMode is { } mode && !Enum.IsDefined(mode) ||
+            saved.RecoveryScope is { } scope && !ValidRecoveryScope(scope, saved.Current) ||
+            saved.FanEcRecovery is { } fan && !ValidFanEcRecovery(fan) ||
+            saved.FanFirmwareRecovery is { } firmware && !ValidFanFirmware(firmware)))
             throw new InvalidDataException("Control journal is invalid; original file retained.");
         return snapshot = saved ?? new(1, null, null, null, []);
     }
@@ -118,4 +144,16 @@ public sealed partial class ControlExecutionJournal
 
     private static ControlJournalSnapshot Clone(ControlJournalSnapshot value) =>
         JsonSerializer.Deserialize<ControlJournalSnapshot>(JsonSerializer.Serialize(value))!;
+
+    private static bool ValidRecoveryScope(ControlJournalRecoveryScope scope, ControlExecutionState? current) =>
+        scope.ServiceSessionId != Guid.Empty && scope.Fields is not null && current is { HardwareEpoch: > 0, Fields: not null } &&
+        scope.FanOwnerClientSessionId != Guid.Empty && scope.Fields.Count == current.Fields.Count &&
+        scope.Fields.All(pair => pair.Value is { HardwareEpoch: > 0, Generation: >= 0 } field &&
+            field.HardwareEpoch <= current.HardwareEpoch && field.WindowsPowerSchemeId != Guid.Empty &&
+            current.Fields.TryGetValue(pair.Key, out var value) && value is not null && value.ClientSessionId != Guid.Empty &&
+            (value.ClientSessionId is null || !string.IsNullOrWhiteSpace(field.OwnerSid))) &&
+        (current.NativeModeOwnerClientSessionId is null
+            ? scope.NativeModeTarget is null && scope.NativeModeEpoch == 0
+            : current.NativeModeOwnerClientSessionId != Guid.Empty && scope.NativeModeTarget is { } mode && Enum.IsDefined(mode) &&
+                scope.NativeModeEpoch > 0 && scope.NativeModeEpoch <= current.HardwareEpoch);
 }

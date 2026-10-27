@@ -15,6 +15,8 @@ public sealed record PerformanceDraft
     public bool UseOfficialCpuPolicy { get; set; }
     [System.Text.Json.Serialization.JsonIgnore]
     public Dictionary<string, SettingRequest>? SettingRequests { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? KnownFields { get; set; }
     public int TemperatureLimitC { get; set; } = 95;
     public int SplWatts { get; set; } = 45;
     public int SpptWatts { get; set; } = 65;
@@ -40,6 +42,7 @@ public sealed record PerformanceDraft
         }
     }
     public bool IsBoostEnabled { get; set; }
+    public CpuBoostPolicy? BoostPolicy { get; set; }
     public Guid WindowsPowerSchemeId { get; set; }
     public int? AcMinActiveCoresPercent { get; set; }
     public int? DcMinActiveCoresPercent { get; set; }
@@ -49,6 +52,9 @@ public sealed record PerformanceDraft
     public PerformanceDraft CaptureCurrentPbo(int? scalar) => scalar is >= 1 and <= 10
         ? this with { AdvancedCpuTuning = (AdvancedCpuTuning ?? new AdvancedCpuTuningDraft()) with { PboScalar = scalar } }
         : this;
+
+    public PerformanceDraft WithBoostPolicy(CpuBoostPolicy? policy) => this with
+    { BoostPolicy = policy is { IsValid: true } && policy.IsEnabled == IsBoostEnabled ? policy : null };
 }
 
 public enum CpuCurveOptimizerMode { Bios, AllCore, PerCore }

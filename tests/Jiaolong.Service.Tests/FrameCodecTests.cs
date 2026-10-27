@@ -35,6 +35,56 @@ public sealed class FrameCodecTests
         Assert.AreEqual(0, stream.Position - 4);
     }
 
+    [TestMethod]
+    public async Task Eof_between_frames_is_a_normal_disconnect()
+    {
+        var codec = new FrameCodec();
+        await using var stream = new MemoryStream();
+        await Assert.ThrowsExactlyAsync<EndOfStreamException>(() => codec.ReadAsync(stream, CancellationToken.None).AsTask());
+
+        var hello = new HelloEnvelope(new ProtocolVersion(1, 0), Guid.NewGuid(), DateTimeOffset.UtcNow, "test-client");
+        await codec.WriteAsync(stream, hello, CancellationToken.None);
+        stream.Position = 0;
+        Assert.AreEqual(hello, await codec.ReadAsync(stream, CancellationToken.None));
+        await Assert.ThrowsExactlyAsync<EndOfStreamException>(() => codec.ReadAsync(stream, CancellationToken.None).AsTask());
+    }
+
+    [TestMethod]
+    public async Task Truncated_prefixes_and_bodies_remain_invalid_frames()
+    {
+        byte[][] frames = [[4], [4, 0, 0], [4, 0, 0, 0], [4, 0, 0, 0, 123]];
+        foreach (var frame in frames)
+        {
+            await using var stream = new MemoryStream(frame);
+            var error = await Assert.ThrowsExactlyAsync<FrameCodecException>(
+                () => new FrameCodec().ReadAsync(new OneByteReadStream(stream), CancellationToken.None).AsTask());
+            Assert.AreEqual(ErrorCode.InvalidFrame, error.Code);
+        }
+    }
+
+    [TestMethod]
+    public async Task Malformed_utf8_and_json_remain_invalid_frames()
+    {
+        byte[][] frames = [[1, 0, 0, 0, 255], [1, 0, 0, 0, 123]];
+        foreach (var frame in frames)
+        {
+            await using var stream = new MemoryStream(frame);
+            var error = await Assert.ThrowsExactlyAsync<FrameCodecException>(
+                () => new FrameCodec().ReadAsync(stream, CancellationToken.None).AsTask());
+            Assert.AreEqual(ErrorCode.InvalidFrame, error.Code);
+        }
+    }
+
+    [TestMethod]
+    public async Task Cancelled_reads_remain_cancelled()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await using var stream = new MemoryStream();
+        await Assert.ThrowsExactlyAsync<TaskCanceledException>(
+            () => new FrameCodec().ReadAsync(stream, cancellation.Token).AsTask());
+    }
+
     private sealed class OneByteReadStream(Stream source) : Stream
     {
         public override bool CanRead => true;

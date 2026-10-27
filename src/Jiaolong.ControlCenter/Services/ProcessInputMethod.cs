@@ -13,23 +13,13 @@ internal static class ProcessInputMethod
     private const uint DontCareCurrentInputLanguage = 0x00000004;
     private const ushort ChineseSimplified = 0x0804;
     private static readonly object RetryLock = new();
-    private static readonly TimeSpan RetryBackoff = TimeSpan.FromSeconds(15);
-    private static DateTimeOffset retryAfterUtc;
-    private static bool retryPending, retryConsumed;
+    private static readonly ProcessInputMethodAttemptGate RetryGate = new(TimeSpan.FromSeconds(15));
 
     public static void UseMicrosoftPinyin()
     {
         lock (RetryLock)
         {
-            var now = DateTimeOffset.UtcNow;
-            if (retryConsumed && !retryPending) return;
-            if (retryPending)
-            {
-                if (now < retryAfterUtc) return;
-                retryPending = false;
-                retryConsumed = true;
-            }
-
+            if (!RetryGate.ShouldAttempt(DateTimeOffset.UtcNow)) return;
             UseMicrosoftPinyinCore();
         }
     }
@@ -45,12 +35,12 @@ internal static class ProcessInputMethod
             if (readback < 0)
             {
                 AppRuntimeLog.Write($"[{DateTime.Now:O}] Process input compatibility: stage=targetProfile; result=0x{readback:X8}; targetAvailable=False\n");
-                ScheduleRetry();
+                RetryGate.Failed(DateTimeOffset.UtcNow);
                 return;
             }
             if ((current.Flags & ActiveProfile) != 0)
             {
-                retryPending = retryConsumed = false;
+                RetryGate.Succeeded();
                 return;
             }
 
@@ -62,25 +52,18 @@ internal static class ProcessInputMethod
             readback = manager.GetProfile(1, ChineseSimplified, PinyinClass, PinyinProfile, 0, out current);
             var active = readback >= 0 && (current.Flags & ActiveProfile) != 0;
             AppRuntimeLog.Write($"[{DateTime.Now:O}] Process input compatibility: activate=0x{result:X8}; readback=0x{readback:X8}; pinyinActive={active}\n");
-            if (result >= 0 && active) retryPending = retryConsumed = false;
-            else ScheduleRetry();
+            if (result >= 0 && active) RetryGate.Succeeded();
+            else RetryGate.Failed(DateTimeOffset.UtcNow);
         }
         catch (Exception error) when (error is COMException or InvalidCastException)
         {
-            ScheduleRetry();
+            RetryGate.Failed(DateTimeOffset.UtcNow);
             AppRuntimeLog.Write($"[{DateTime.Now:O}] Process input compatibility unavailable: {error.Message}\n");
         }
         finally
         {
             if (instance is not null && Marshal.IsComObject(instance)) Marshal.ReleaseComObject(instance);
         }
-    }
-
-    private static void ScheduleRetry()
-    {
-        if (retryConsumed) return;
-        retryPending = true;
-        retryAfterUtc = DateTimeOffset.UtcNow + RetryBackoff;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -105,4 +88,29 @@ internal static class ProcessInputMethod
         [PreserveSig] int EnumProfiles(ushort language, out nint enumerator);
         [PreserveSig] int ReleaseInputProcessor(in Guid classId, uint flags);
     }
+}
+
+internal sealed class ProcessInputMethodAttemptGate(TimeSpan backoff)
+{
+    private DateTimeOffset retryAfterUtc;
+    private bool retryPending, retryConsumed;
+
+    public bool ShouldAttempt(DateTimeOffset now)
+    {
+        if (retryConsumed && !retryPending) return false;
+        if (!retryPending) return true;
+        if (now < retryAfterUtc) return false;
+        retryPending = false;
+        retryConsumed = true;
+        return true;
+    }
+
+    public void Failed(DateTimeOffset now)
+    {
+        if (retryConsumed) return;
+        retryPending = true;
+        retryAfterUtc = now + backoff;
+    }
+
+    public void Succeeded() => retryPending = retryConsumed = false;
 }

@@ -9,17 +9,19 @@ public static class TrayIconAssetCatalog
         (evidence.VerificationLevel == "EffectiveStateConfirmed" ||
          controls.ExecutionState is { NativeModeApplyState: ApplyState.Confirmed } execution && execution.NativeMode == mode);
 
-    public static ControlModeId? DisplayMode(HomeControlState? controls, bool connected, DateTimeOffset now, ControlModeId? confirmedMode)
+    public static ControlModeId? DisplayMode(HomeControlState? controls, bool connected, DateTimeOffset now, ControlModeId? previousMode,
+        ControlModeId? pendingMode = null)
     {
+        if (pendingMode is { } requested && Enum.IsDefined(requested)) return requested;
         if (!connected || controls?.ModeEvidence is not { } evidence ||
-            now - evidence.CapturedAtUtc < TimeSpan.FromSeconds(-1) || now - evidence.CapturedAtUtc > TimeSpan.FromSeconds(3)) return null;
-        if (confirmedMode is not null && ReadbackConfirmed(controls) &&
-            controls.ExecutionState is { } execution && execution.LogicalMode == confirmedMode && execution.NativeMode == evidence.ParsedMode)
-            return confirmedMode;
+            now - evidence.CapturedAtUtc < TimeSpan.FromSeconds(-1) || now - evidence.CapturedAtUtc > TimeSpan.FromSeconds(3)) return previousMode;
+        if (ReadbackConfirmed(controls) && controls.ExecutionState is { NativeModeApplyState: ApplyState.Confirmed } execution &&
+            execution.NativeMode == evidence.ParsedMode)
+            return execution.LogicalMode;
         return evidence.ParsedMode switch
         {
             PerformanceMode.Quiet => ControlModeId.Office, PerformanceMode.Balanced => ControlModeId.Gaming,
-            PerformanceMode.Turbo => ControlModeId.Turbo, _ => null
+            PerformanceMode.Turbo => ControlModeId.Turbo, _ => previousMode
         };
     }
 

@@ -314,8 +314,8 @@
       "jiaolong.automation": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Contracts": "[1.0.0, )",
-          "Jiaolong.Hardware.Abstractions": "[1.0.0, )"
+          "Jiaolong.Contracts": "[1.0.110, )",
+          "Jiaolong.Hardware.Abstractions": "[1.0.110, )"
         }
       },
       "jiaolong.contracts": {
@@ -324,13 +324,13 @@
       "jiaolong.diagnostics": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Contracts": "[1.0.0, )"
+          "Jiaolong.Contracts": "[1.0.110, )"
         }
       },
       "jiaolong.hardware.abstractions": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Contracts": "[1.0.0, )"
+          "Jiaolong.Contracts": "[1.0.110, )"
         }
       },
       "System.Management": {

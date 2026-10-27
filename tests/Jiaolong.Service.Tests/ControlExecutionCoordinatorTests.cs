@@ -10,6 +10,954 @@ namespace Jiaolong.Service.Tests;
 public sealed class ControlExecutionCoordinatorTests
 {
     [TestMethod]
+    public async Task Turbo_branch_retries_failed_fan_restore_without_rewriting_restored_cpu_or_losing_original_branch()
+    {
+        var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true };
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+            provider.Mode, null, "RequestStateUnverified");
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        const string owner = "field-retry";
+        await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), CancellationToken.None, userSid: owner);
+        var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+        await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: owner);
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = commands.Add;
+        provider.RejectFanRestoreWithoutMutation = true;
+        var first = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Console.WriteLine("First release: " + JsonSerializer.Serialize(first));
+        Console.WriteLine("First commands: " + string.Join(",", commands.Select(command => command.GetType().Name)));
+        Assert.AreEqual(CommandState.RecoveryRequired, first.State, "A failed Fan page must not complete the branch or restore native mode.");
+        Assert.AreEqual(3200, provider.Ac);
+        Assert.AreEqual(2400, provider.Dc);
+        Assert.IsNull(provider.FanPlan, "The failed restore leaves the branch in EC Auto.");
+        Assert.AreEqual(PerformanceMode.Turbo, provider.Mode);
+        Assert.IsTrue(commands.First() is SetCpuTuningBatchCommand && commands.Last() is SetFanControlCommand);
+        var field = first.ExecutionState!.Fields["fan.strategy"];
+        Assert.AreEqual(branch.OperationId, field.OwnerOperationId);
+        Assert.AreEqual(ApplyState.Confirmed, field.WriteState);
+        Assert.IsFalse(first.ExecutionState.Fields.ContainsKey("performance.acMaxFrequencyMhz"));
+        provider.RejectFanRestoreWithoutMutation = false;
+        commands.Clear();
+        var retried = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Console.WriteLine("Retry: " + JsonSerializer.Serialize(retried));
+        Assert.AreEqual(CommandState.Applied, retried.State);
+        Assert.AreEqual(4200, provider.FanPlan!.FixedRpm);
+        Assert.AreEqual(PerformanceMode.Balanced, provider.Mode);
+        Assert.AreEqual(2, commands.Count);
+        Assert.IsTrue(commands[0] is SetFanControlCommand && commands[1] is SetPerformanceModeCommand);
+        commands.Clear();
+        var completed = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.Applied, completed.State);
+        Assert.AreEqual(HardwareMutation.NoMutation, completed.Mutation);
+        Assert.AreEqual(0, commands.Count);
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_retry_field_failure_keeps_unknown_or_superseded_work_unresolved()
+    {
+        foreach (string change in new[] { "generation", "unknown", "lost-reply", "external-fan" })
+        {
+            var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true };
+            provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+                provider.Mode, null, "RequestStateUnverified");
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            const string owner = "field-guard";
+            await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), CancellationToken.None, userSid: owner);
+            var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+            await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: owner);
+            provider.RejectFanRestoreWithoutMutation = change != "lost-reply";
+            if (change == "unknown") provider.RejectedFanMutation = HardwareMutation.Unknown;
+            if (change == "lost-reply") provider.AfterWrite = command =>
+            {
+                if (command is SetFanControlCommand) throw new IOException("Fan reply lost after dispatch.");
+            };
+            var first = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+            Assert.AreNotEqual(CommandState.Applied, first.State, change);
+            Assert.AreEqual(PerformanceMode.Turbo, provider.Mode);
+            if (change == "generation") runtime.Execution.InvalidateIntent();
+            if (change == "external-fan") provider.FanPlan = new FanControlPlan([]) { Strategy = "Fixed", FixedRpm = 4700 };
+            provider.RejectFanRestoreWithoutMutation = false;
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            var retry = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+            Console.WriteLine(change + " first: " + JsonSerializer.Serialize(first));
+            Console.WriteLine(change + " retry: " + JsonSerializer.Serialize(retry));
+            Console.WriteLine(change + " commands: " + string.Join(",", commands.Select(command => command.GetType().Name)));
+            Assert.AreEqual(CommandState.RecoveryRequired, retry.State, change);
+            Assert.AreEqual(HardwareMutation.NoMutation, retry.Mutation, change);
+            Assert.AreEqual(0, commands.Count, change);
+            if (change == "external-fan")
+            {
+                Assert.AreEqual(4700, provider.FanPlan!.FixedRpm);
+                Assert.AreEqual(PerformanceMode.Turbo, provider.Mode);
+                Assert.AreEqual(branch.OperationId, retry.ExecutionState!.Fields["fan.strategy"].OwnerOperationId);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_retries_only_native_restore_after_confirmed_fields_and_rejected_mode()
+    {
+        foreach (bool priorManual in new[] { false, true })
+        {
+            var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true };
+            provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+                provider.Mode, null, "RequestStateUnverified");
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            const string owner = "partial-branch";
+            await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced),
+                CancellationToken.None, userSid: owner);
+            var manual = new SetCpuTuningBatchCommand(Guid.NewGuid(),
+                [new(null, null, null, null, null, null, null, null) { AcMaxFrequencyMhz = 3000 }], true);
+            if (priorManual) await runtime.ExecuteAsync(manual, CancellationToken.None, userSid: owner);
+            var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+            var applied = await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: owner);
+            Assert.AreEqual(CommandState.Applied, applied.State);
+            Assert.AreEqual(4500, provider.Ac);
+            Assert.AreEqual(3300, provider.Dc);
+
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            provider.RejectModeWithoutMutation = true;
+            var failed = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId),
+                CancellationToken.None, userSid: owner);
+            Console.WriteLine("First release: " + JsonSerializer.Serialize(failed));
+            Console.WriteLine("First commands: " + string.Join(",", commands.Select(command => command.GetType().Name)));
+            Assert.AreEqual(CommandState.Rejected, failed.State);
+            Assert.AreEqual(ErrorCode.HardwareWriteFailed, failed.Error?.Code);
+            Assert.AreEqual(priorManual ? 3000 : 3200, provider.Ac);
+            Assert.AreEqual(2400, provider.Dc);
+            Assert.AreEqual(4200, provider.FanPlan!.FixedRpm);
+            Assert.AreEqual(PerformanceMode.Turbo, provider.Mode);
+            Assert.IsInstanceOfType<SetPerformanceModeCommand>(commands.Last());
+            Assert.AreEqual(PerformanceMode.Balanced, ((SetPerformanceModeCommand)commands.Last()).Mode);
+            Assert.IsTrue(commands.Take(commands.Count - 1).Any(command => command is SetCpuTuningBatchCommand));
+            Assert.IsFalse(failed.ExecutionState!.Fields.Values.Any(field => field.OwnerOperationId == branch.OperationId),
+                "Confirmed field restoration must retire branch field ownership before native-mode retry.");
+            if (priorManual) Assert.AreEqual(manual.OperationId, failed.ExecutionState.Fields["performance.acMaxFrequencyMhz"].OwnerOperationId);
+
+            commands.Clear();
+            provider.RejectModeWithoutMutation = false;
+            var retried = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId),
+                CancellationToken.None, userSid: owner);
+            Console.WriteLine("Retry: " + JsonSerializer.Serialize(retried));
+            Console.WriteLine("Retry commands: " + string.Join(",", commands.Select(command => command.GetType().Name)));
+            Assert.AreEqual(CommandState.Applied, retried.State);
+            Assert.AreEqual(PerformanceMode.Balanced, provider.Mode, "A failed final mode restore must remain retryable through the original branch.");
+            Assert.AreEqual(1, commands.Count, "Retry must not rewrite already restored fields.");
+            Assert.IsInstanceOfType<SetPerformanceModeCommand>(commands.Single());
+            Assert.AreEqual(priorManual ? 3000 : 3200, provider.Ac);
+            Assert.AreEqual(2400, provider.Dc);
+            if (priorManual) Assert.AreEqual(manual.OperationId, retried.ExecutionState!.Fields["performance.acMaxFrequencyMhz"].OwnerOperationId);
+            commands.Clear();
+            var completed = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId),
+                CancellationToken.None, userSid: owner);
+            Assert.AreEqual(CommandState.Applied, completed.State);
+            Assert.AreEqual(HardwareMutation.NoMutation, completed.Mutation);
+            Assert.AreEqual(0, commands.Count);
+        }
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_retry_retains_pending_when_native_read_is_missing_or_inconsistent()
+    {
+        var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true };
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        const string owner = "retry-read";
+        await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), CancellationToken.None, userSid: owner);
+        var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+        await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: owner);
+        provider.RejectModeWithoutMutation = true;
+        var failed = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.Rejected, failed.State);
+        provider.RejectModeWithoutMutation = false;
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = commands.Add;
+        var noReader = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, noReader.State);
+        Assert.AreEqual(HardwareMutation.NoMutation, noReader.Mutation);
+        provider.NativeModeRead = () => throw new IOException("Native read interrupted.");
+        var disconnected = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, disconnected.State);
+        Assert.AreEqual(HardwareMutation.NoMutation, disconnected.Mutation);
+        int reads = 0;
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", (byte)(++reads == 1 ? 1 : 0),
+            PerformanceMode.Turbo, null, "RequestStateUnverified");
+        var mismatch = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, mismatch.State);
+        Assert.AreEqual(0, commands.Count);
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow.AddMinutes(-1), "native-read", 4, "01", 1,
+            PerformanceMode.Turbo, null, "RequestStateUnverified");
+        var stale = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, stale.State);
+        Assert.AreEqual(0, commands.Count);
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+            PerformanceMode.Turbo, null, "RequestStateUnverified");
+        var recovered = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.Applied, recovered.State, "Read-only refusal must not consume the original pending mode restoration.");
+        Assert.AreEqual(PerformanceMode.Balanced, provider.Mode);
+        Assert.AreEqual(1, commands.Count);
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_retry_refuses_changed_context_and_uncertain_native_write()
+    {
+        foreach (string change in new[] { "generation", "epoch", "scheme", "unknown", "rolled-back", "unverified", "lost-reply" })
+        {
+            var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true };
+            provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+                PerformanceMode.Turbo, null, "RequestStateUnverified");
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            const string owner = "retry-guard";
+            await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), CancellationToken.None, userSid: owner);
+            var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+            await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: owner);
+            provider.RejectModeWithoutMutation = true;
+            if (change == "unknown") provider.RejectedModeMutation = HardwareMutation.Unknown;
+            if (change == "rolled-back")
+            {
+                provider.RejectedModeMutation = HardwareMutation.Changed;
+                provider.RejectedModeState = CommandState.RolledBack;
+            }
+            if (change == "unverified")
+            {
+                provider.RejectModeWithoutMutation = false;
+                provider.ConfirmModes = false;
+            }
+            if (change == "lost-reply")
+            {
+                provider.RejectModeWithoutMutation = false;
+                provider.AfterWrite = command =>
+                {
+                    if (command is SetPerformanceModeCommand) throw new IOException("Mode reply lost after dispatch.");
+                };
+            }
+            var first = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+            Assert.AreNotEqual(CommandState.Applied, first.State, change);
+            if (change == "generation") runtime.Execution.InvalidateIntent();
+            if (change == "epoch") runtime.Execution.InvalidateHardware();
+            if (change == "scheme") provider.Scheme = Guid.NewGuid();
+            provider.RejectModeWithoutMutation = false;
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            var retry = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+            Assert.AreEqual(CommandState.RecoveryRequired, retry.State, change);
+            Assert.AreEqual(HardwareMutation.NoMutation, retry.Mutation, change);
+            Assert.AreEqual(0, commands.Count, change);
+        }
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_reads_complete_OEM_baseline_for_apply_and_exact_release()
+    {
+        var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true, AllowOemSpl = true };
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+        var applied = await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: "oem-branch");
+        Assert.AreEqual(CommandState.Applied, applied.State);
+        Assert.AreEqual(45, provider.Spl, "A verified OEM field must not be skipped by a lightweight baseline read.");
+        Assert.AreEqual(ApplyState.Confirmed, applied.ExecutionState!.Fields["performance.splWatts"].WriteState);
+        var released = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId),
+            CancellationToken.None, userSid: "oem-branch");
+        Assert.AreEqual(CommandState.Applied, released.State);
+        Assert.AreEqual(65, provider.Spl, "Release must read the owned OEM value before restoring its exact baseline.");
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_does_not_guess_unreadable_OEM_values_or_overwrite_external_edits()
+    {
+        var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true, AllowOemSpl = true, ReadOemSpl = false };
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+        await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: "oem-branch");
+        Assert.AreEqual(65, provider.Spl, "Unknown baseline never authorizes an OEM write.");
+        await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId),
+            CancellationToken.None, userSid: "oem-branch");
+        provider.ReadOemSpl = true;
+        branch = new(Guid.NewGuid(), TurboBranchTier.Quiet);
+        await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: "oem-branch");
+        Assert.AreEqual(45, provider.Spl);
+        provider.Spl = 52;
+        await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId),
+            CancellationToken.None, userSid: "oem-branch");
+        Assert.AreEqual(52, provider.Spl, "Later external edits survive release.");
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_keeps_unreadable_owned_SPL_pending_until_fresh_read_allows_exact_release()
+    {
+        var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true, AllowOemSpl = true };
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+            provider.Mode, null, "RequestStateUnverified");
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        const string owner = "spl-read-loss";
+        await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), CancellationToken.None, userSid: owner);
+        var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+        var applied = await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.Applied, applied.State);
+        Assert.AreEqual(45, provider.Spl);
+        var original = applied.ExecutionState!.Fields["performance.splWatts"];
+        Assert.AreEqual(branch.OperationId, original.OwnerOperationId);
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = commands.Add;
+        provider.ReadOemSpl = false;
+        Assert.IsNull((await provider.ReadControlBaselineAsync(CancellationToken.None, includeCpuAdvanced: true)).CpuTuning!.SplWatts);
+        var first = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Console.WriteLine("Read loss first: " + JsonSerializer.Serialize(first));
+        Console.WriteLine("First commands: " + string.Join(",", commands.Select(command => command.GetType().Name)));
+        Assert.AreEqual(CommandState.RecoveryRequired, first.State, "A missing getter is not an external edit or a completed restore.");
+        Assert.AreEqual(45, provider.Spl);
+        Assert.AreEqual(PerformanceMode.Turbo, provider.Mode);
+        Assert.IsTrue(first.ExecutionState!.Pages.Any(page => page.SkippedFields.Contains("splWatts")));
+        Assert.AreEqual(original, first.ExecutionState.Fields["performance.splWatts"]);
+        Assert.AreEqual(3200, provider.Ac);
+        Assert.AreEqual(2400, provider.Dc);
+        Assert.AreEqual(4200, provider.FanPlan!.FixedRpm);
+        Assert.IsFalse(commands.Any(command => command is SetPerformanceModeCommand));
+        commands.Clear();
+        var stillMissing = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, stillMissing.State);
+        Assert.AreEqual(0, commands.Count);
+        Assert.AreEqual(original, stillMissing.ExecutionState!.Fields["performance.splWatts"]);
+        provider.ReadOemSpl = true;
+        var retry = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Console.WriteLine("Read loss retry: " + JsonSerializer.Serialize(retry));
+        Console.WriteLine("Retry commands: " + JsonSerializer.Serialize(commands, new JsonSerializerOptions { WriteIndented = false }));
+        Assert.AreEqual(CommandState.Applied, retry.State);
+        Assert.AreEqual(65, provider.Spl);
+        Assert.AreEqual(PerformanceMode.Balanced, provider.Mode);
+        Assert.IsFalse(retry.ExecutionState!.Fields.ContainsKey("performance.splWatts"));
+        Assert.AreEqual(2, commands.Count);
+        Assert.IsTrue(commands[0] is SetCpuTuningBatchCommand { Plans: [{ SplWatts: 65, AcMaxFrequencyMhz: null, DcMaxFrequencyMhz: null }] });
+        Assert.IsTrue(commands[1] is SetPerformanceModeCommand);
+        commands.Clear();
+        var completed = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.Applied, completed.State);
+        Assert.AreEqual(0, commands.Count);
+    }
+
+    [TestMethod]
+    public async Task Turbo_branch_retains_unverified_restore_and_confirms_fresh_target_without_replaying_field_write()
+    {
+        var provider = new PipelineProvider { AllowBranch = true, ConfirmModes = true, AllowOemSpl = true };
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+            provider.Mode, null, "RequestStateUnverified");
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        const string owner = "spl-post-write";
+        await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced), CancellationToken.None, userSid: owner);
+        var branch = new ApplyTurboBranchCommand(Guid.NewGuid(), TurboBranchTier.Quiet);
+        var applied = await runtime.ExecuteAsync(branch, CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.Applied, applied.State);
+        Assert.AreEqual(45, provider.Spl);
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = command =>
+        {
+            commands.Add(command);
+            if (command is SetCpuTuningBatchCommand batch && batch.Plans.Any(plan => plan.SplWatts == 65))
+                provider.ReadOemSpl = false;
+        };
+        var release = new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId);
+        var first = await runtime.ExecuteAsync(release, CancellationToken.None, userSid: owner);
+        Console.WriteLine("Post-write first: " + JsonSerializer.Serialize(first));
+        Assert.AreEqual(CommandState.RecoveryRequired, first.State);
+        Assert.AreEqual(65, provider.Spl);
+        Assert.AreEqual(PerformanceMode.Turbo, provider.Mode);
+        Assert.IsFalse(commands.Any(command => command is SetPerformanceModeCommand));
+        var pending = first.ExecutionState!.Fields["performance.splWatts"];
+        Assert.AreEqual(release.OperationId, pending.OwnerOperationId);
+        Assert.AreEqual(ApplyState.SubmittedUnverified, pending.WriteState);
+        Assert.AreEqual(65, pending.Baseline!.Value!.Value.GetInt32());
+        Assert.AreEqual(45, pending.WriteBefore!.Value!.Value.GetInt32());
+        Assert.AreEqual(65, pending.LastWritten!.Value!.Value.GetInt32());
+        commands.Clear();
+        provider.AfterWrite = commands.Add;
+        var missing = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, missing.State);
+        Assert.AreEqual(pending, missing.ExecutionState!.Fields["performance.splWatts"]);
+        Assert.AreEqual(0, commands.Count);
+        provider.ReadOemSpl = true;
+        provider.Spl = 52;
+        var mismatch = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, mismatch.State);
+        Assert.AreEqual(pending, mismatch.ExecutionState!.Fields["performance.splWatts"]);
+        Assert.AreEqual(52, provider.Spl);
+        Assert.AreEqual(0, commands.Count);
+        provider.Spl = 65;
+        provider.NativeModeRead = () => null;
+        var missingMode = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.RecoveryRequired, missingMode.State);
+        Assert.AreEqual(pending, missingMode.ExecutionState!.Fields["performance.splWatts"]);
+        Assert.AreEqual(0, commands.Count);
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "01", 1,
+            provider.Mode, null, "RequestStateUnverified");
+        var settled = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Console.WriteLine("Post-write settled: " + JsonSerializer.Serialize(settled));
+        Assert.AreEqual(CommandState.Applied, settled.State);
+        Assert.AreEqual(PerformanceMode.Balanced, provider.Mode);
+        Assert.AreEqual(65, provider.Spl);
+        Assert.IsFalse(settled.ExecutionState!.Fields.ContainsKey("performance.splWatts"));
+        Assert.AreEqual(1, commands.Count);
+        Assert.IsTrue(commands[0] is SetPerformanceModeCommand);
+        commands.Clear();
+        var completed = await runtime.ExecuteAsync(new ReleaseTurboBranchCommand(Guid.NewGuid(), branch.OperationId), CancellationToken.None, userSid: owner);
+        Assert.AreEqual(CommandState.Applied, completed.State);
+        Assert.AreEqual(0, commands.Count);
+    }
+
+    [TestMethod]
+    public async Task Exact_boost_preset_restores_indices_skips_repeated_requests_and_keeps_boolean_undo()
+    {
+        var provider = new PipelineProvider { ConfirmModes = true, AcBoost = 0, DcBoost = 0 };
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        var key = PresetKey.Create(ControlModeId.Gaming, 2);
+        var preset = BoostPreset(provider, key, new(4, 1));
+        Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+            CancellationToken.None, userSid: "boost-baseline")).State);
+        async Task<CommandResult> Apply()
+        {
+            var id = Guid.NewGuid();
+            return await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, ControlOrigin.PresetUse,
+                ControlModeId.Gaming, PerformanceMode.Balanced, [new(ControlPageId.Performance, true, key, preset.Revision)])),
+                CancellationToken.None, userSid: "boost-baseline");
+        }
+        Assert.AreEqual(ApplyState.Confirmed, (await Apply()).ExecutionState!.Pages.Single().State);
+        Assert.AreEqual(4, provider.AcBoost);
+        Assert.AreEqual(1, provider.DcBoost);
+        int writes = provider.Writes;
+        Assert.AreEqual(ApplyState.Confirmed, (await Apply()).ExecutionState!.Pages.Single().State);
+        Assert.AreEqual(writes, provider.Writes, "Identical boost targets must not refresh the power policy repeatedly.");
+        var off = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+            new(null, null, null, null, false, null, null, null), true), CancellationToken.None, userSid: "boost-baseline");
+        Assert.AreEqual(CommandState.Applied, off.State);
+        Assert.IsFalse(off.ExecutionState!.Fields.ContainsKey("performance.isBoostEnabled"));
+        await Apply();
+        preset = preset with { Revision = 2, Settings = new() { ["isBoostEnabled"] = SettingRequest.Official } };
+        Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 1, [preset]),
+            CancellationToken.None, userSid: "boost-baseline")).State);
+        Assert.AreEqual(ApplyState.Confirmed, (await Apply()).ExecutionState!.Pages.Single().State);
+        Assert.AreEqual(0, provider.AcBoost);
+        Assert.AreEqual(0, provider.DcBoost);
+    }
+
+    [TestMethod]
+    public async Task Exact_boost_requires_both_readbacks_and_never_confirms_equal_booleans_with_wrong_indices()
+    {
+        foreach (bool missing in new[] { false, true })
+        {
+            var provider = new PipelineProvider { ConfirmModes = true, ReadBoostModes = !missing, AcBoost = 2, DcBoost = 2 };
+            provider.AfterWrite = command =>
+            { if (command is SetCpuTuningBatchCommand) { provider.AcBoost = 2; provider.DcBoost = 2; } };
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            var key = PresetKey.Create(ControlModeId.Gaming, 2);
+            var preset = BoostPreset(provider, key, new(4, 1));
+            await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]), CancellationToken.None, userSid: "boost-baseline");
+            var id = Guid.NewGuid();
+            var result = await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, ControlOrigin.PresetUse,
+                ControlModeId.Gaming, PerformanceMode.Turbo, [new(ControlPageId.Performance, true, key, 1)])),
+                CancellationToken.None, userSid: "boost-baseline");
+            if (missing)
+            {
+                Assert.AreEqual(CommandState.Rejected, result.State);
+                Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation);
+                Assert.AreEqual(0, provider.Writes);
+                Assert.AreEqual(PerformanceMode.Balanced, provider.Mode);
+            }
+            else
+            {
+                Assert.AreNotEqual(ApplyState.Confirmed, result.ExecutionState!.Pages.Single().State);
+                CollectionAssert.DoesNotContain(result.ExecutionState.Pages.Single().ConfirmedFields, "isBoostEnabled");
+            }
+        }
+    }
+
+    private static PagePresetEnvelope BoostPreset(PipelineProvider provider, PresetKey key, CpuBoostPolicy policy) => new(
+        PagePresetEnvelope.CurrentSchemaVersion, ControlPageId.Performance, key, "均衡恢复",
+        JsonSerializer.SerializeToElement(new { temperatureLimitC = 85, splWatts = 55, spptWatts = 65,
+            acMaxFrequencyMhz = 3200, dcMaxFrequencyMhz = 2400, isBoostEnabled = policy.IsEnabled, boostPolicy = policy,
+            windowsPowerSchemeId = provider.Scheme, acMinActiveCoresPercent = (int?)null, dcMinActiveCoresPercent = (int?)null,
+            negativeCurveOptimizer = (int?)null, advancedCpuTuning = (AdvancedCpuTuningPlan?)null, useOfficialCpuPolicy = true }),
+        DateTimeOffset.UtcNow) { Revision = 1, Settings = new() { ["isBoostEnabled"] = SettingRequest.Set(policy) } };
+
+    [TestMethod]
+    public async Task Boolean_boost_off_disables_both_scopes_and_does_not_confirm_a_partial_disable()
+    {
+        foreach (bool corrupt in new[] { false, true })
+        {
+            var provider = new PipelineProvider { ConfirmModes = true, AcBoost = 0, DcBoost = 4 };
+            if (corrupt) provider.AfterWrite = command =>
+            { if (command is SetCpuTuningBatchCommand) { provider.AcBoost = 0; provider.DcBoost = 4; } };
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            var key = PresetKey.Create(ControlModeId.Gaming, 2);
+            var preset = BoostPreset(provider, key, new(0, 0));
+            var payload = preset.Payload.EnumerateObject().Where(property => property.Name != "boostPolicy")
+                .ToDictionary(property => property.Name, property => property.Value);
+            preset = preset with { Payload = JsonSerializer.SerializeToElement(payload),
+                Settings = new() { ["isBoostEnabled"] = SettingRequest.Set(false) } };
+            Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+                CancellationToken.None, userSid: "boost-baseline")).State);
+            var id = Guid.NewGuid();
+            var result = await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, ControlOrigin.PresetUse,
+                ControlModeId.Gaming, PerformanceMode.Balanced, [new(ControlPageId.Performance, true, key, 1)])),
+                CancellationToken.None, userSid: "boost-baseline");
+            if (corrupt) Assert.AreNotEqual(ApplyState.Confirmed, result.ExecutionState!.Pages.Single().State);
+            else
+            {
+                Assert.AreEqual(ApplyState.Confirmed, result.ExecutionState!.Pages.Single().State);
+                Assert.AreEqual(0, provider.AcBoost);
+                Assert.AreEqual(0, provider.DcBoost);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task Preset_restores_per_core_co_and_pbo_without_smu_capability()
+    {
+        foreach (bool allowPbo in new[] { false, true })
+        {
+            var provider = new PipelineProvider { ConfirmModes = true, AllowPbo = allowPbo, Pbo = 7 };
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            var key = PresetKey.Create(ControlModeId.Gaming, 2);
+            var cores = new Dictionary<int, int> { [0] = -5, [1] = -10 };
+            var advanced = new AdvancedCpuTuningPlan(PboScalar: allowPbo ? 4 : null, PerCoreCurveOptimizer: cores);
+            var preset = new PagePresetEnvelope(PagePresetEnvelope.CurrentSchemaVersion, ControlPageId.Performance, key, "均衡恢复",
+                JsonSerializer.SerializeToElement(new { temperatureLimitC = 85, splWatts = 55, spptWatts = 65,
+                    acMaxFrequencyMhz = 3200, dcMaxFrequencyMhz = 2400, isBoostEnabled = true,
+                    windowsPowerSchemeId = provider.Scheme, acMinActiveCoresPercent = (int?)null, dcMinActiveCoresPercent = (int?)null,
+                    negativeCurveOptimizer = (int?)null, advancedCpuTuning = advanced, useOfficialCpuPolicy = true }), DateTimeOffset.UtcNow)
+            { Revision = 1, Settings = new() { ["advancedCpuTuning"] = SettingRequest.Set(advanced),
+                ["negativeCurveOptimizer"] = SettingRequest.Keep } };
+            Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+                CancellationToken.None, userSid: "cpu-baseline")).State);
+            var id = Guid.NewGuid();
+            var result = await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, ControlOrigin.PresetUse,
+                ControlModeId.Gaming, PerformanceMode.Balanced, [new(ControlPageId.Performance, true, key, 1)])),
+                CancellationToken.None, userSid: "cpu-baseline");
+            Assert.AreEqual(ApplyState.Confirmed, result.ExecutionState!.Pages.Single().State);
+            Assert.AreEqual(allowPbo ? 4 : 7, provider.Pbo);
+            CollectionAssert.AreEquivalent(cores.ToArray(), provider.Cores.ToArray());
+            Assert.AreEqual(3200, provider.Ac);
+            Assert.AreEqual(2400, provider.Dc);
+        }
+    }
+
+    [TestMethod]
+    public async Task Gpu_preset_restores_core_memory_and_curve_after_the_core_shifts_the_table()
+    {
+        foreach (var (beforeCore, targetCore) in new[] { (10000, 0), (0, 10000), (10000, -10000) })
+        {
+            var provider = new PipelineProvider { ConfirmModes = true, GpuCoreOffset = beforeCore, GpuMemoryOffset = 1000,
+                GpuDeltas = Enumerable.Range(0, 127).Select(index => index == 0 ? 0 : 30000).ToArray() };
+            var targetCurve = Enumerable.Range(0, 127).Select(index => index == 0 ? 0 : 5000).ToArray();
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            var key = PresetKey.Create(ControlModeId.Gaming, 2);
+            var preset = new PagePresetEnvelope(PagePresetEnvelope.CurrentSchemaVersion, ControlPageId.Gpu, key, "均衡恢复",
+                JsonSerializer.SerializeToElement(new { coreFrequencyLimitMhz = (int?)null, resetCoreFrequencyLimit = false,
+                    memoryOffsetKhz = 2000, coreOffsetKhz = targetCore, vfOffsetsKhz = targetCurve }), DateTimeOffset.UtcNow)
+            { Revision = 1, Settings = new() { ["coreOffsetKhz"] = SettingRequest.Set(targetCore),
+                ["memoryOffsetKhz"] = SettingRequest.Set(2000), ["vfOffsetsKhz"] = SettingRequest.Set(targetCurve) } };
+            Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+                CancellationToken.None, userSid: "gpu-baseline")).State);
+            var id = Guid.NewGuid();
+            var result = await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, ControlOrigin.PresetUse,
+                ControlModeId.Gaming, PerformanceMode.Balanced, [new(ControlPageId.Gpu, true, key, 1)])),
+                CancellationToken.None, userSid: "gpu-baseline");
+            Assert.AreEqual(CommandState.Applied, result.State, result.Error?.Code.ToString());
+            Assert.AreEqual(ApplyState.Confirmed, result.ExecutionState!.Pages.Single().State);
+            Assert.AreEqual(targetCore, provider.GpuCoreOffset);
+            Assert.AreEqual(2000, provider.GpuMemoryOffset);
+            CollectionAssert.AreEqual(targetCurve, provider.GpuDeltas);
+        }
+    }
+
+    [TestMethod]
+    public async Task Performance_preset_keeps_fresh_selected_mode_and_only_applies_changed_cpu_fields()
+    {
+        foreach (bool sameValue in new[] { false, true })
+        {
+            var provider = new PipelineProvider { AcBoost = sameValue ? 0 : 4, DcBoost = sameValue ? 0 : 1 };
+            provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "08", 8,
+                provider.Mode, null, "RequestStateUnverified");
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            var result = await ApplyPerformanceBoostPreset(provider);
+            Assert.AreEqual(CommandState.Applied, result.State, result.Error?.Code.ToString());
+            Assert.AreEqual(0, commands.OfType<SetPerformanceModeCommand>().Count());
+            Assert.AreEqual(sameValue ? 0 : 1, commands.Count);
+            Assert.AreEqual(0, provider.AcBoost);
+            Assert.AreEqual(0, provider.DcBoost);
+            Assert.IsNull(result.VerifiedPerformanceMode);
+            Assert.AreEqual(ApplyState.SubmittedUnverified, result.ExecutionState!.NativeModeApplyState);
+            Assert.AreEqual(ApplyState.Confirmed, result.ExecutionState.Pages.Single().State);
+        }
+    }
+
+    [TestMethod]
+    public async Task Performance_preset_requires_fresh_matching_raw_mode_to_skip_the_mode_write()
+    {
+        foreach (string scenario in new[] { "unknown", "stale", "future", "changed" })
+        {
+            var provider = new PipelineProvider();
+            provider.NativeModeRead = () =>
+            {
+                if (scenario == "changed") provider.Mode = PerformanceMode.Quiet;
+                return new(DateTimeOffset.UtcNow.AddSeconds(scenario == "stale" ? -10 : scenario == "future" ? 10 : 0),
+                    "native-read", 4, "08", scenario == "unknown" ? null : (byte)8,
+                    scenario == "unknown" ? null : provider.Mode, null, "RequestStateUnverified");
+            };
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            var result = await ApplyPerformanceBoostPreset(provider);
+            Assert.AreEqual(CommandState.Applied, result.State, scenario);
+            Assert.AreEqual(1, commands.OfType<SetPerformanceModeCommand>().Count(), scenario);
+            Assert.AreEqual(PerformanceMode.Balanced, provider.Mode, scenario);
+        }
+    }
+
+    [TestMethod]
+    public async Task Same_mode_preset_rejects_a_mode_change_during_the_second_baseline_read_without_writes()
+    {
+        foreach (bool gpu in new[] { false, true })
+        {
+            var provider = new PipelineProvider();
+            provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "08", 8,
+                provider.Mode, null, "RequestStateUnverified");
+            provider.AfterBaseline = () => { if (provider.NativeModeReads > 0) provider.Mode = PerformanceMode.Quiet; };
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            var result = gpu ? await ApplyGpuMemoryPreset(provider) : await ApplyPerformanceBoostPreset(provider);
+            Assert.AreEqual(CommandState.Rejected, result.State);
+            Assert.AreEqual(ErrorCode.CancelledBeforeApply, result.Error?.Code);
+            Assert.IsEmpty(commands);
+            Assert.AreEqual(4, provider.AcBoost);
+            Assert.AreEqual(0, provider.GpuMemoryOffset);
+        }
+    }
+
+    [TestMethod]
+    public async Task Performance_manual_mode_still_submits_the_requested_native_mode()
+    {
+        var provider = new PipelineProvider();
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "08", 8,
+            provider.Mode, null, "RequestStateUnverified");
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = commands.Add;
+        var result = await ApplyPerformanceBoostPreset(provider, ControlOrigin.ManualMode);
+        Assert.AreEqual(CommandState.Applied, result.State);
+        Assert.AreEqual(1, commands.OfType<SetPerformanceModeCommand>().Count());
+    }
+
+    private static async Task<CommandResult> ApplyPerformanceBoostPreset(PipelineProvider provider,
+        ControlOrigin origin = ControlOrigin.PresetUse)
+    {
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        var key = PresetKey.Create(ControlModeId.Gaming, 2);
+        var preset = BoostPreset(provider, key, new(0, 0));
+        Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+            CancellationToken.None, userSid: "cpu-mode-test")).State);
+        var id = Guid.NewGuid();
+        return await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, origin,
+            ControlModeId.Gaming, PerformanceMode.Balanced, [new(ControlPageId.Performance, true, key, 1)])),
+            CancellationToken.None, userSid: "cpu-mode-test");
+    }
+
+    [TestMethod]
+    public async Task Gpu_preset_keeps_fresh_selected_mode_without_claiming_effective_confirmation()
+    {
+        var provider = new PipelineProvider();
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "08", 8,
+            provider.Mode, null, "RequestStateUnverified");
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = commands.Add;
+        var result = await ApplyGpuMemoryPreset(provider);
+        Assert.AreEqual(CommandState.Applied, result.State);
+        Assert.AreEqual(1000, provider.GpuMemoryOffset);
+        Assert.AreEqual(2, provider.NativeModeReads);
+        Assert.AreEqual(1, commands.Count);
+        Assert.IsInstanceOfType<SetGpuMemoryOffsetCommand>(commands.Single());
+        Assert.IsNull(result.VerifiedPerformanceMode);
+        Assert.AreEqual(ApplyState.SubmittedUnverified, result.ExecutionState!.NativeModeApplyState);
+        Assert.AreEqual(ApplyState.Confirmed, result.ExecutionState.Pages.Single().State);
+    }
+
+    [TestMethod]
+    public async Task Gpu_preset_does_not_skip_requested_mode_for_unknown_stale_or_changed_readback()
+    {
+        foreach (string scenario in new[] { "unknown", "stale", "future", "changed" })
+        {
+            var provider = new PipelineProvider();
+            provider.NativeModeRead = () =>
+            {
+                if (scenario == "changed") provider.Mode = PerformanceMode.Quiet;
+                return new(DateTimeOffset.UtcNow.AddSeconds(scenario == "stale" ? -10 : scenario == "future" ? 10 : 0),
+                    "native-read", 4, "08", scenario == "unknown" ? null : (byte)8,
+                    scenario == "unknown" ? null : provider.Mode, null, "RequestStateUnverified");
+            };
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            var result = await ApplyGpuMemoryPreset(provider);
+            Assert.AreEqual(CommandState.Applied, result.State, scenario);
+            Assert.AreEqual(1, commands.OfType<SetPerformanceModeCommand>().Count(), scenario);
+            Assert.AreEqual(PerformanceMode.Balanced, provider.Mode, scenario);
+            Assert.AreEqual(1000, provider.GpuMemoryOffset, scenario);
+            Assert.IsNull(result.VerifiedPerformanceMode, scenario);
+        }
+    }
+
+    [TestMethod]
+    public async Task Gpu_follow_rejects_unknown_stale_future_or_changed_mode_without_any_write()
+    {
+        foreach (string scenario in new[] { "unknown", "stale", "future", "changed" })
+        {
+            var provider = new PipelineProvider();
+            provider.NativeModeRead = () =>
+            {
+                if (scenario == "changed") provider.Mode = PerformanceMode.Quiet;
+                return new(DateTimeOffset.UtcNow.AddSeconds(scenario == "stale" ? -10 : scenario == "future" ? 10 : 0),
+                    "native-read", 4, "08", scenario == "unknown" ? null : (byte)8,
+                    scenario == "unknown" ? null : provider.Mode, null, "RequestStateUnverified");
+            };
+            var commands = new List<HardwareCommand>();
+            provider.AfterWrite = commands.Add;
+            var result = await ApplyGpuMemoryPreset(provider, ControlOrigin.ModeFollow);
+            Assert.AreEqual(CommandState.Rejected, result.State, scenario);
+            Assert.AreEqual(ErrorCode.CancelledBeforeApply, result.Error?.Code, scenario);
+            Assert.IsEmpty(commands, scenario);
+            Assert.AreEqual(0, provider.GpuMemoryOffset, scenario);
+        }
+    }
+
+    [TestMethod]
+    public async Task Gpu_follow_only_writes_selected_page_for_a_fresh_current_mode()
+    {
+        var provider = new PipelineProvider();
+        provider.NativeModeRead = () => new(DateTimeOffset.UtcNow, "native-read", 4, "08", 8,
+            provider.Mode, null, "RequestStateUnverified");
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = commands.Add;
+        var result = await ApplyGpuMemoryPreset(provider, ControlOrigin.ModeFollow);
+        Assert.AreEqual(CommandState.Applied, result.State);
+        Assert.AreEqual(1, provider.NativeModeReads);
+        Assert.HasCount(1, commands);
+        Assert.IsInstanceOfType<SetGpuMemoryOffsetCommand>(commands.Single());
+        Assert.AreEqual(1000, provider.GpuMemoryOffset);
+        Assert.IsNull(result.VerifiedPerformanceMode);
+    }
+
+    [TestMethod]
+    public async Task Follow_request_requires_a_selected_follow_page_before_any_write()
+    {
+        var provider = new PipelineProvider();
+        var commands = new List<HardwareCommand>();
+        provider.AfterWrite = commands.Add;
+        var result = await ApplyGpuMemoryPreset(provider, ControlOrigin.ModeFollow, follow: false);
+        Assert.AreEqual(CommandState.Rejected, result.State);
+        Assert.IsEmpty(commands);
+        Assert.AreEqual(0, provider.GpuMemoryOffset);
+    }
+
+    private static async Task<CommandResult> ApplyGpuMemoryPreset(PipelineProvider provider,
+        ControlOrigin origin = ControlOrigin.PresetUse, bool follow = true)
+    {
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        var key = PresetKey.Create(ControlModeId.Gaming, 1);
+        var preset = new PagePresetEnvelope(PagePresetEnvelope.CurrentSchemaVersion, ControlPageId.Gpu, key, "GPU only",
+            JsonSerializer.SerializeToElement(new { coreFrequencyLimitMhz = (int?)null, resetCoreFrequencyLimit = false,
+                memoryOffsetKhz = 1000, coreOffsetKhz = (int?)null, vfOffsetsKhz = (int[]?)null }), DateTimeOffset.UtcNow)
+        { Revision = 1, Settings = new() { ["memoryOffsetKhz"] = SettingRequest.Set(1000) } };
+        var publication = await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+            CancellationToken.None, userSid: "gpu-mode-test");
+        Assert.AreEqual(CommandState.Applied, publication.State, publication.Error?.Details.GetValueOrDefault("cause"));
+        var id = Guid.NewGuid();
+        return await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, origin,
+            ControlModeId.Gaming, PerformanceMode.Balanced, [new(ControlPageId.Gpu, follow, key, 1)])),
+            CancellationToken.None, userSid: "gpu-mode-test");
+    }
+
+    [TestMethod]
+    public void Gpu_plan_preserves_the_original_curve_guard_and_rejects_unrestorable_intermediate_offsets()
+    {
+        var original = Enumerable.Range(0, 127).Select(index => index == 0 ? 0 : 30000).ToArray();
+        var current = new HomeControlState(PerformanceMode.Balanced, false, [])
+        { GpuVf = new(Enumerable.Range(0, 127).Select(index => new GpuVfNode(450 + index, 210, original[index])).ToArray(),
+            -200000, 200000, null) { CoreOffsetKhz = 10000, MemoryOffsetKhz = 0 } };
+        var commands = ControlPlanCompiler.Commands(ControlPageId.Gpu, new()
+        { ["coreOffsetKhz"] = SettingRequest.Set(0), ["vfOffsetsKhz"] = SettingRequest.Set(new int[127]) }, current);
+        CollectionAssert.AreEqual(original, ((SetGpuCoreOffsetCommand)commands[0]).ExpectedVfOffsetsKhz!);
+        CollectionAssert.AreEqual(original.Select((value, index) => index == 0 ? value : value - 10000).ToArray(),
+            ((SetGpuVfCurveCommand)commands[1]).ExpectedOffsetsKhz);
+        var nearLimit = current with { GpuVf = current.GpuVf with
+            { Nodes = current.GpuVf.Nodes.Select((node, index) => node with { OffsetKhz = index == 0 ? 0 : 200000 }).ToArray() } };
+        Assert.ThrowsExactly<InvalidDataException>(() => ControlPlanCompiler.Commands(ControlPageId.Gpu,
+            new() { ["coreOffsetKhz"] = SettingRequest.Set(20000), ["vfOffsetsKhz"] = SettingRequest.Set(new int[127]) }, nearLimit));
+    }
+
+    [TestMethod]
+    public async Task Gpu_restore_rejects_external_curve_changes_and_preflights_before_mode_writes()
+    {
+        foreach (bool invalidIntermediate in new[] { false, true })
+        {
+            var provider = new PipelineProvider { ConfirmModes = true, GpuCoreOffset = invalidIntermediate ? 0 : 10000,
+                GpuDeltas = Enumerable.Range(0, 127).Select(index => index == 0 ? 0 : invalidIntermediate ? 200000 : 30000).ToArray() };
+            int curveWrites = 0;
+            provider.AfterWrite = command =>
+            {
+                if (command is SetGpuCoreOffsetCommand) provider.GpuDeltas[1] += 1000;
+                if (command is SetGpuVfCurveCommand) curveWrites++;
+            };
+            var runtime = new HomeServiceRuntime(provider);
+            await runtime.InitializeAsync(CancellationToken.None);
+            var key = PresetKey.Create(ControlModeId.Gaming, 2);
+            int targetCore = invalidIntermediate ? 10000 : 0;
+            var preset = new PagePresetEnvelope(PagePresetEnvelope.CurrentSchemaVersion, ControlPageId.Gpu, key, "均衡恢复",
+                JsonSerializer.SerializeToElement(new { coreFrequencyLimitMhz = (int?)null, resetCoreFrequencyLimit = false,
+                    memoryOffsetKhz = (int?)null, coreOffsetKhz = targetCore, vfOffsetsKhz = new int[127] }), DateTimeOffset.UtcNow)
+            { Revision = 1, Settings = new() { ["coreOffsetKhz"] = SettingRequest.Set(targetCore),
+                ["vfOffsetsKhz"] = SettingRequest.Set(new int[127]) } };
+            Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+                CancellationToken.None, userSid: "gpu-baseline")).State);
+            var id = Guid.NewGuid();
+            var result = await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, 0, ControlOrigin.PresetUse,
+                ControlModeId.Gaming, PerformanceMode.Turbo, [new(ControlPageId.Gpu, true, key, 1)])),
+                CancellationToken.None, userSid: "gpu-baseline");
+            Assert.AreEqual(0, curveWrites, "Neither invalid intermediates nor external changes may be overwritten.");
+            if (invalidIntermediate)
+            {
+                Assert.AreEqual(CommandState.Rejected, result.State);
+                Assert.AreEqual(ErrorCode.ValidationFailed, result.Error?.Code);
+                Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation);
+                Assert.AreEqual(0, provider.Writes);
+                Assert.AreEqual(PerformanceMode.Balanced, provider.Mode);
+            }
+            else
+            {
+                Assert.AreEqual(ApplyState.Partial, result.ExecutionState!.Pages.Single().State);
+                Assert.AreEqual(21000, provider.GpuDeltas[1], "Keep the external edit instead of rebasing the next command.");
+                Assert.AreEqual(0, provider.GpuCoreOffset);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task Direct_gpu_tuning_return_to_owned_baseline_releases_manual_ownership()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "xisura-gpu-owner-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new PipelineProvider();
+            var runtime = new HomeServiceRuntime(provider, journal: new ControlExecutionJournal(root));
+            await runtime.InitializeAsync(CancellationToken.None);
+            var beforeCurve = provider.GpuDeltas.ToArray();
+            var targetCurve = beforeCurve.Select((value, index) => index == 0 ? value : value + 10_000).ToArray();
+            (string Field, HardwareCommand Apply, HardwareCommand Restore)[] cases = [
+                ("coreOffsetKhz", new SetGpuCoreOffsetCommand(Guid.NewGuid(), 0, 10_000, true),
+                    new SetGpuCoreOffsetCommand(Guid.NewGuid(), 10_000, 0, true)),
+                ("memoryOffsetKhz", new SetGpuMemoryOffsetCommand(Guid.NewGuid(), 0, 10_000, true),
+                    new SetGpuMemoryOffsetCommand(Guid.NewGuid(), 10_000, 0, true)),
+                ("vfOffsetsKhz", new SetGpuVfCurveCommand(Guid.NewGuid(), beforeCurve, targetCurve, true),
+                    new SetGpuVfCurveCommand(Guid.NewGuid(), targetCurve, beforeCurve, true))
+            ];
+            foreach (var (field, apply, restore) in cases)
+            {
+                var applied = await runtime.ExecuteAsync(apply, CancellationToken.None, userSid: "gpu-owner");
+                Assert.AreEqual(CommandState.Applied, applied.State, field);
+                Assert.IsTrue(applied.ExecutionState!.Fields.ContainsKey("gpu." + field), field);
+                var restored = await runtime.ExecuteAsync(restore, CancellationToken.None, userSid: "gpu-owner");
+                Assert.AreEqual(CommandState.Applied, restored.State, field);
+                Assert.IsFalse(restored.ExecutionState!.Fields.ContainsKey("gpu." + field), field);
+                Assert.IsFalse((await new ControlExecutionJournal(root).ReadAsync(CancellationToken.None))
+                    .Current!.Fields.ContainsKey("gpu." + field), field);
+            }
+            await runtime.ExecuteAsync(new SetGpuCoreOffsetCommand(Guid.NewGuid(), 0, 10_000, true),
+                CancellationToken.None, userSid: "gpu-owner");
+            var changed = await runtime.ExecuteAsync(new SetGpuCoreOffsetCommand(Guid.NewGuid(), 10_000, 20_000, true),
+                CancellationToken.None, userSid: "gpu-owner");
+            Assert.IsTrue(changed.ExecutionState!.Fields.ContainsKey("gpu.coreOffsetKhz"), "Non-baseline edits retain ownership.");
+            var reset = await runtime.ExecuteAsync(new SetGpuCoreOffsetCommand(Guid.NewGuid(), 20_000, 0, true),
+                CancellationToken.None, userSid: "gpu-owner");
+            Assert.IsFalse(reset.ExecutionState!.Fields.ContainsKey("gpu.coreOffsetKhz"));
+            Assert.AreEqual(0, provider.GpuCoreOffset);
+            Assert.AreEqual(0, provider.GpuMemoryOffset);
+            CollectionAssert.AreEqual(beforeCurve, provider.GpuDeltas);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public async Task Official_cpu_frequency_at_baseline_skips_duplicate_frequency_write()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "xisura-same-frequency-owner-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new PipelineProvider { ConfirmModes = true };
+            var runtime = new HomeServiceRuntime(provider, journal: new ControlExecutionJournal(root));
+            await runtime.InitializeAsync(CancellationToken.None);
+            var sameValues = new CpuTuningPlan(null, null, null, null, null, null, null, null)
+            { AcMaxFrequencyMhz = provider.Ac, DcMaxFrequencyMhz = provider.Dc };
+            var manual = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(), sameValues, true),
+                CancellationToken.None, userSid: "frequency-owner");
+            Assert.AreEqual(CommandState.Applied, manual.State);
+            Assert.IsFalse(manual.ExecutionState!.Fields.ContainsKey("performance.acMaxFrequencyMhz"));
+            Assert.IsFalse((await new ControlExecutionJournal(root).ReadAsync(CancellationToken.None))
+                .Current!.Fields.ContainsKey("performance.acMaxFrequencyMhz"));
+
+            var key = PresetKey.Create(ControlModeId.Gaming, 2);
+            var preset = new PagePresetEnvelope(PagePresetEnvelope.CurrentSchemaVersion, ControlPageId.Performance,
+                key, "Official frequency", JsonSerializer.SerializeToElement(new
+                { useOfficialCpuPolicy = false, temperatureLimitC = 95, splWatts = 45, spptWatts = 65,
+                    acMaxFrequencyMhz = provider.Ac, dcMaxFrequencyMhz = provider.Dc, isBoostEnabled = true,
+                    windowsPowerSchemeId = provider.Scheme, acMinActiveCoresPercent = (int?)null,
+                    dcMinActiveCoresPercent = (int?)null, negativeCurveOptimizer = (int?)null,
+                    advancedCpuTuning = (object?)null }), DateTimeOffset.UtcNow)
+            { Revision = 1, Settings = new() { ["acMaxFrequencyMhz"] = SettingRequest.Official,
+                ["dcMaxFrequencyMhz"] = SettingRequest.Official } };
+            Assert.AreEqual(CommandState.Applied, (await runtime.ExecuteAsync(
+                new PublishPresetCatalogCommand(Guid.NewGuid(), 0, [preset]),
+                CancellationToken.None, userSid: "frequency-owner")).State);
+            var confirmedMode = await runtime.ExecuteAsync(
+                new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced),
+                CancellationToken.None, userSid: "frequency-owner");
+            Assert.AreEqual(PerformanceMode.Balanced, confirmedMode.VerifiedPerformanceMode);
+            int writesBeforeRelease = provider.Writes;
+            int frequencyWrites = 0;
+            provider.AfterWrite = command => { if (command is SetCpuTuningBatchCommand) frequencyWrites++; };
+            Guid id = Guid.NewGuid();
+            var result = await runtime.ExecuteAsync(new ApplyControlRequestCommand(id, new(id, long.MaxValue,
+                ControlOrigin.PresetUse, ControlModeId.Gaming, PerformanceMode.Balanced,
+                [new(ControlPageId.Performance, true, key, 1)])), CancellationToken.None, userSid: "frequency-owner");
+            Assert.AreEqual(CommandState.Applied, result.State);
+            Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation);
+            Assert.AreEqual(writesBeforeRelease, provider.Writes, "Ownership-only release must not dispatch hardware writes.");
+            Assert.AreEqual(0, frequencyWrites);
+            Assert.AreEqual(3200, provider.Ac);
+            Assert.AreEqual(2400, provider.Dc);
+            CollectionAssert.Contains(result.ExecutionState!.Pages.Single().ConfirmedFields, "acMaxFrequencyMhz");
+            CollectionAssert.Contains(result.ExecutionState.Pages.Single().ConfirmedFields, "dcMaxFrequencyMhz");
+            Assert.IsFalse(result.ExecutionState.Fields.ContainsKey("performance.acMaxFrequencyMhz"));
+            Assert.IsFalse(result.ExecutionState.Fields.ContainsKey("performance.dcMaxFrequencyMhz"));
+            var persisted = await new ControlExecutionJournal(root).ReadAsync(CancellationToken.None);
+            Assert.IsFalse(persisted.Current!.Fields.ContainsKey("performance.acMaxFrequencyMhz"));
+            Assert.IsFalse(persisted.Current.Fields.ContainsKey("performance.dcMaxFrequencyMhz"));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public async Task Suspend_during_preset_capture_or_write_stops_next_hardware_step_and_preserves_mutation_truth()
     {
         foreach (string stage in new[] { "capture", "mode", "cpu", "direct-mode", "rejected-mode" })
@@ -594,14 +1542,21 @@ public sealed class ControlExecutionCoordinatorTests
 
     private sealed class PipelineProvider : IHomeHardwareProvider
     {
-        public int Ac = 3200, Dc = 2400, Writes, GpuClockWrites;
+        public int Ac = 3200, Dc = 2400, Writes, GpuClockWrites, GpuCoreOffset, GpuMemoryOffset;
+        public int[] GpuDeltas = new int[127];
         public int BaselineReads;
         public Action? AfterBaseline;
         public Action<HardwareCommand>? AfterWrite;
         public bool RejectModeWithoutMutation;
+        public bool RejectFanRestoreWithoutMutation;
+        public HardwareMutation RejectedFanMutation = HardwareMutation.NoMutation;
+        public HardwareMutation RejectedModeMutation = HardwareMutation.NoMutation;
+        public CommandState RejectedModeState = CommandState.Rejected;
         public bool AllowFrequency = true;
         public bool AllowGpuClock = true;
         public bool AllowBranch, AllowBoost = true, ReadFan = true;
+        public bool AllowOemSpl, ReadOemSpl = true;
+        public int Spl = 65;
         public bool CancelBaselineOnce;
         public bool UncertainFanRelease;
         public string CpuModel = "AMD Ryzen 9 7745HX";
@@ -610,18 +1565,26 @@ public sealed class ControlExecutionCoordinatorTests
         public bool AllowPbo, AllowCurve = true;
         public int Pbo = 1;
         public bool ConfirmModes;
+        public Func<PerformanceModeEvidence?>? NativeModeRead;
+        public int NativeModeReads;
         public int AcBoost = 4, DcBoost = 1;
+        public bool ReadBoostModes = true;
         public Dictionary<int, int> Cores = new() { [0] = -10, [1] = 5 };
         public PerformanceMode Mode = PerformanceMode.Balanced;
         public Guid Scheme = Guid.NewGuid();
         private HomeControlState Controls => new(Mode, StrongCooling, [])
-        { ActiveFanControlPlan = FanPlan, CpuTuning = new(null, null, null, Ac, AcBoost != 0 && DcBoost != 0, Cores.Count, Scheme,
+        { ActiveFanControlPlan = FanPlan, CpuTuning = new(null, AllowOemSpl && ReadOemSpl ? Spl : null, null, Ac, AcBoost != 0 && DcBoost != 0, Cores.Count, Scheme,
             Cores.Values.Distinct().Count() == 1 ? Cores.Values.First() : null, "hardwareReadback")
-          { AcMaxFrequencyMhz = Ac, DcMaxFrequencyMhz = Dc, AcBoostMode = AcBoost, DcBoostMode = DcBoost,
+          { AcMaxFrequencyMhz = Ac, DcMaxFrequencyMhz = Dc, AcBoostMode = ReadBoostModes ? AcBoost : null, DcBoostMode = ReadBoostModes ? DcBoost : null,
             PerCoreCurveOptimizer = new Dictionary<int, int>(Cores), PboScalar = Pbo },
-          GpuClockLimit = new(210, 3105, null, false, null) };
-        private HomeHardwareState Snapshot => new(new([new("performanceMode", CapabilityState.Available, null), new("cpuTuning", CapabilityState.Available, null), new("gpuFrequencyLimit", CapabilityState.Available, null), new("fanControl", AllowBranch ? CapabilityState.Available : CapabilityState.Unavailable, null), new("strongCooling", AllowBranch ? CapabilityState.Available : CapabilityState.Unavailable, null)])
-        { Fields = [new("dcMaxFrequencyMhz", AllowFrequency ? CapabilityState.Available : CapabilityState.ReadOnly, true, AllowFrequency,
+          GpuClockLimit = new(210, 3105, null, false, null),
+          GpuVf = new(Enumerable.Range(0, 127).Select(index => new GpuVfNode(400 + index * 5, 1500, GpuDeltas[index])).ToArray(),
+              -200_000, 200_000, null) { CoreOffsetKhz = GpuCoreOffset, MemoryOffsetKhz = GpuMemoryOffset } };
+        private HomeHardwareState Snapshot => new(new([new("performanceMode", CapabilityState.Available, null), new("cpuTuning", CapabilityState.Available, null), new("gpuFrequencyLimit", CapabilityState.Available, null), new("gpuCoreOffset", CapabilityState.Available, null), new("gpuMemoryOffset", CapabilityState.Available, null), new("gpuVfCurve", CapabilityState.Available, null), new("fanControl", AllowBranch ? CapabilityState.Available : CapabilityState.Unavailable, null), new("strongCooling", AllowBranch ? CapabilityState.Available : CapabilityState.Unavailable, null)])
+        { IsOnAcPower = true,
+          Fields = [new("splWatts", AllowOemSpl ? CapabilityState.Available : CapabilityState.Unavailable, AllowOemSpl, AllowOemSpl,
+            1, 200, 1, "W", "verifiedOem", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
+            new("dcMaxFrequencyMhz", AllowFrequency ? CapabilityState.Available : CapabilityState.ReadOnly, true, AllowFrequency,
             0, 6000, 1, "MHz", "windowsPowerApi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
             new("strategy", AllowBranch ? CapabilityState.Available : CapabilityState.Unavailable, ReadFan, AllowBranch, null, null, null, "", "verifiedFan", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
             new("strongCooling", AllowBranch ? CapabilityState.Available : CapabilityState.Unavailable, ReadFan, AllowBranch, null, null, null, "", "verifiedFan", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
@@ -633,28 +1596,54 @@ public sealed class ControlExecutionCoordinatorTests
             new("isBoostEnabled", AllowBoost ? CapabilityState.Available : CapabilityState.Unavailable, true, AllowBoost, null, null, null, "", "windowsPowerApi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
             new("negativeCurveOptimizer", AllowCurve ? CapabilityState.Available : CapabilityState.Unavailable, AllowCurve, AllowCurve, -30, 0, 1, "", "hardwareReadback", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
             new("pboScalar", AllowPbo ? CapabilityState.Available : CapabilityState.Unavailable, AllowPbo, AllowPbo, 1, 10, 1, "", "hardwareReadback", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
+            new("coreOffsetKhz", CapabilityState.Available, true, true, -200_000, 200_000, 1, "kHz", "nvapi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
+            new("memoryOffsetKhz", CapabilityState.Available, true, true, -200_000, 200_000, 1, "kHz", "nvapi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
+            new("vfOffsetsKhz", CapabilityState.Available, true, true, -200_000, 200_000, 1, "kHz", "nvapi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
             new("coreFrequencyLimitMhz", AllowGpuClock ? CapabilityState.Available : CapabilityState.Unavailable, false, AllowGpuClock,
                 210, 3105, 1, "MHz", "driverSubmission", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0)] },
             DeviceSupportState.Ready, null, new("fake", "fake", AllowBranch ? CpuModel : "fake", "fake"), null) { Controls = Controls };
         public Task<HomeHardwareState> DiagnoseAsync(CancellationToken token) => Task.FromResult(Snapshot);
         public Task<HomeHardwareState> ReinitializeAsync(CancellationToken token) => Task.FromResult(Snapshot);
+        public Task<PerformanceModeEvidence?> ReadNativeModeEvidenceAsync(CancellationToken token)
+        { NativeModeReads++; return Task.FromResult(NativeModeRead?.Invoke()); }
         public Task<HomeControlState> ReadControlsAsync(CancellationToken token) => Task.FromResult(Controls);
         public Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false)
         {
             BaselineReads++;
             if (CancelBaselineOnce) { CancelBaselineOnce = false; throw new OperationCanceledException(); }
             AfterBaseline?.Invoke();
-            return ReadControlsAsync(token);
+            var controls = Controls;
+            return Task.FromResult(includeCpuAdvanced ? controls : controls with
+                { CpuTuning = controls.CpuTuning! with { SplWatts = null } });
         }
         public Task<HardwareSnapshot> ReadTelemetryAsync(CancellationToken token) => Task.FromResult(new HardwareSnapshot(DateTimeOffset.UtcNow, "fake", 40, 40, 10, 10));
         public Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken token)
         {
+            bool staleGpu = command switch
+            {
+                SetGpuCoreOffsetCommand core => core.ExpectedOffsetKhz != GpuCoreOffset ||
+                    core.ExpectedVfOffsetsKhz is { } expectedCurve && !expectedCurve.SequenceEqual(GpuDeltas),
+                SetGpuMemoryOffsetCommand memory => memory.ExpectedOffsetKhz != GpuMemoryOffset,
+                SetGpuVfCurveCommand curve => !curve.ExpectedOffsetsKhz.SequenceEqual(GpuDeltas),
+                _ => false
+            };
+            if (staleGpu) return Task.FromResult(new CommandResult(command.OperationId, CommandState.Rejected, null,
+                RequiredUserAction.None, ServiceError.Create(ErrorCode.ReadBackMismatch, command.OperationId, false), false)
+                { Mutation = HardwareMutation.NoMutation });
             if (RejectModeWithoutMutation && command is SetPerformanceModeCommand)
             {
                 AfterWrite?.Invoke(command);
-                return Task.FromResult(new CommandResult(command.OperationId, CommandState.Rejected, null, RequiredUserAction.None,
+                return Task.FromResult(new CommandResult(command.OperationId, RejectedModeState, null, RequiredUserAction.None,
                     Jiaolong.Contracts.Errors.ServiceError.Create(Jiaolong.Contracts.Errors.ErrorCode.HardwareWriteFailed, command.OperationId, false), false)
-                    { Mutation = HardwareMutation.NoMutation });
+                    { Mutation = RejectedModeMutation });
+            }
+            if (RejectFanRestoreWithoutMutation && command is SetFanControlCommand { Plan: { Strategy: "Fixed", FixedRpm: 4200 } })
+            {
+                AfterWrite?.Invoke(command);
+                return Task.FromResult(new CommandResult(command.OperationId,
+                    RejectedFanMutation == HardwareMutation.Unknown ? CommandState.RecoveryRequired : CommandState.Rejected, null,
+                    RequiredUserAction.None, ServiceError.Create(ErrorCode.HardwareWriteFailed, command.OperationId, false), false)
+                    { Mutation = RejectedFanMutation });
             }
             Writes++;
             if (command is ReleaseFanControlCommand && UncertainFanRelease)
@@ -664,20 +1653,33 @@ public sealed class ControlExecutionCoordinatorTests
             switch (command)
             { case SetPerformanceModeCommand request: Mode = request.Mode; break;
               case SetGpuFrequencyLimitCommand: GpuClockWrites++; break;
+              case SetGpuCoreOffsetCommand gpu:
+                int delta = gpu.OffsetKhz - GpuCoreOffset;
+                GpuDeltas = GpuDeltas.Select((value, index) => index == 0 ? value : checked(value + delta)).ToArray();
+                GpuCoreOffset = gpu.OffsetKhz; break;
+              case SetGpuMemoryOffsetCommand gpu: GpuMemoryOffset = gpu.OffsetKhz; break;
+              case SetGpuVfCurveCommand gpu: GpuDeltas = gpu.OffsetsKhz.ToArray(); break;
               case SetFanControlCommand fan: FanPlan = fan.Plan; StrongCooling = false; break;
               case ReleaseFanControlCommand: FanPlan = null; StrongCooling = false; break;
               case SetStrongCoolingCommand cooling: StrongCooling = cooling.Enabled; break;
-              case SetCpuTuningBatchCommand batch: foreach (var plan in batch.Plans)
-              { Ac = plan.AcMaxFrequencyMhz ?? Ac; Dc = plan.DcMaxFrequencyMhz ?? Dc;
-                if (plan.BoostEnabled is bool boost) { AcBoost = boost ? AcBoost == 0 ? 2 : AcBoost : 0; DcBoost = boost ? DcBoost == 0 ? 2 : DcBoost : 0; }
-                if (plan.NegativeCurveOptimizer is int offset) Cores = Cores.Keys.ToDictionary(core => core, _ => offset);
-                if (plan.Advanced?.PboScalar is int scalar) Pbo = scalar;
-                if (plan.Advanced?.PerCoreCurveOptimizer is { } perCore)
-                    foreach (var pair in perCore) { Assert.IsTrue(pair.Value <= 0); Cores[pair.Key] = pair.Value; } } break; }
+              case SetCpuTuningBatchCommand batch: foreach (var plan in batch.Plans) ApplyCpu(plan); break;
+              case SetCpuTuningCommand single: ApplyCpu(single.Plan); break; }
             AfterWrite?.Invoke(command);
             return Task.FromResult(new CommandResult(command.OperationId, CommandState.Applied, null, RequiredUserAction.None, null, false)
             { Mutation = HardwareMutation.Changed, VerifiedPerformanceMode = command is SetPerformanceModeCommand && ConfirmModes ? Mode : null });
         }
+        private void ApplyCpu(CpuTuningPlan plan)
+        {
+            Spl = plan.SplWatts ?? Spl;
+            Ac = plan.AcMaxFrequencyMhz ?? Ac; Dc = plan.DcMaxFrequencyMhz ?? Dc;
+            if (plan.BoostPolicy is { } policy) { AcBoost = policy.AcMode; DcBoost = policy.DcMode; }
+            else if (plan.BoostEnabled is bool boost) { AcBoost = boost ? AcBoost == 0 ? 2 : AcBoost : 0; DcBoost = boost ? DcBoost == 0 ? 2 : DcBoost : 0; }
+            if (plan.NegativeCurveOptimizer is int offset) Cores = Cores.Keys.ToDictionary(core => core, _ => offset);
+            if (plan.Advanced?.PboScalar is int scalar) Pbo = scalar;
+            if (plan.Advanced?.PerCoreCurveOptimizer is { } perCore)
+                foreach (var pair in perCore) { Assert.IsTrue(pair.Value <= 0); Cores[pair.Key] = pair.Value; }
+        }
+
         public Task<CommandResult> RestoreCpuFieldAsync(Guid id, string field, CpuFieldRestorationValue baseline, CpuFieldRestorationValue expected, CancellationToken token)
         {
             Assert.IsTrue(HomeServiceRuntime.SameRestoration(HomeServiceRuntime.CaptureCpuRestoration(field, Controls.CpuTuning), expected));

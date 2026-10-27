@@ -10,9 +10,12 @@
             <Grid>
                 <StackPanel VerticalAlignment="Center" Spacing="6">
                     <TextBlock Text="风扇" FontSize="32" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}" />
-                    <TextBlock Text="调节双风扇转速与温度响应曲线" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}" />
+                    <TextBlock Text="查看双风扇转速与温度，交还 EC 自动控制" FontSize="14" Foreground="{StaticResource PrototypeSecondaryTextBrush}" />
                 </StackPanel>
-                <shared:PagePresetToolbar x:Name="PresetToolbar" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="12">
+                    <Button x:Name="ReleaseFanButton" Content="交还 EC 自动" IsEnabled="False" Click="OnReleaseFanControl" AutomationProperties.Name="交还官方 EC 自动风扇控制" />
+                    <shared:PagePresetToolbar x:Name="PresetToolbar" Visibility="Collapsed" />
+                </StackPanel>
             </Grid>
             <Border Grid.Row="1" Background="{StaticResource PrototypeControlAcrylicBrush}" BorderBrush="{StaticResource PrototypeStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="18">
                 <Grid RowSpacing="8">
@@ -108,7 +111,7 @@
                     </Grid>
                 </Grid>
             </Border>
-            <Grid Grid.Row="2" ColumnSpacing="16" VerticalAlignment="Top">
+            <Grid x:Name="FanAdvancedPanel" Grid.Row="2" ColumnSpacing="16" VerticalAlignment="Top" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="312" />
@@ -134,7 +137,7 @@
                                     </StackPanel>
                                 </StackPanel>
                             </StackPanel>
-                            <StackPanel Spacing="6">
+                            <StackPanel x:Name="FixedStrategyPanel" Spacing="6">
                                 <RadioButton x:Name="FixedStrategy" Content="固定转速" GroupName="FanStrategy" Tag="Fixed" Checked="OnStrategyChanged" />
                                 <Grid x:Name="FixedTargetPanel" Margin="28,0,0,0" ColumnSpacing="8" RowSpacing="8">
                                     <Grid.RowDefinitions>
@@ -157,7 +160,7 @@
                             <RadioButton x:Name="CurveStrategy" Content="温度曲线" GroupName="FanStrategy" IsChecked="True" Tag="Curve" Checked="OnStrategyChanged" />
                         </StackPanel>
                         <Rectangle Height="1" Fill="{StaticResource PrototypeDividerBrush}" />
-                        <StackPanel Spacing="8">
+                        <StackPanel x:Name="StrongCoolingPanel" Spacing="8" Visibility="Collapsed">
                             <TextBlock Text="即时散热" FontWeight="SemiBold" FontSize="15" />
                             <ToggleButton x:Name="StrongCoolingButton" Content="强冷" Style="{StaticResource ControlGlassToggleStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Height="38" Checked="OnStrongCoolingChanged" Unchecked="OnStrongCoolingChanged" AutomationProperties.Name="强冷" />
                         </StackPanel>

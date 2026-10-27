@@ -16,7 +16,7 @@ public static class RyzenSmuProtocol
 
     public static uint EncodeCurve(int value)
     {
-        if (value is < -30 or > 0)
+        if (value is < -50 or > 0)
             throw new ArgumentOutOfRangeException(nameof(value));
 
         return (uint)(0x100000 - (uint)(-value));
@@ -25,7 +25,7 @@ public static class RyzenSmuProtocol
     public static uint EncodePerCoreCurve(int coreIndex, int value)
     {
         if (coreIndex is < 0 or > 7) throw new ArgumentOutOfRangeException(nameof(coreIndex));
-        if (value is < -30 or > 0) throw new ArgumentOutOfRangeException(nameof(value));
+        if (value is < -50 or > 0) throw new ArgumentOutOfRangeException(nameof(value));
 
         uint encodedValue = unchecked((uint)((value < 0 ? 1_048_576 : 0) + value)) & 0xFFFF;
         return ((uint)(coreIndex / 8) << 28) | ((uint)(coreIndex % 8) << 20) | encodedValue;

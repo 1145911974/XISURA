@@ -33,6 +33,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     private readonly Func<uint, uint, uint>? curveCommandOverride;
     private readonly CpuPackagePowerCalculator packagePowerCalculator = new();
     private readonly object mailboxGate = new();
+    private readonly string pciMutexName = @"Global\Access_PCI";
     private bool initialized;
     private bool msrInitialized;
     private bool disposed;
@@ -60,11 +61,57 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         this.physicalCoreCount = physicalCoreCount;
     }
     internal PawnIoCurveOptimizerTransport(Func<uint, uint, uint> curveCommand, int physicalCoreCount = 8,
-        Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null)
-        : this(physicalCoreCount, hardwareAccessAllowed, hardwareReadAllowed) => curveCommandOverride = curveCommand;
+        Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null,
+        string pciMutexName = @"Global\Access_PCI")
+        : this(physicalCoreCount, hardwareAccessAllowed, hardwareReadAllowed)
+    {
+        curveCommandOverride = curveCommand;
+        this.pciMutexName = pciMutexName;
+    }
     internal PawnIoCurveOptimizerTransport(IPawnIoDeviceApi deviceApi, int physicalCoreCount = 8,
-        Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null)
-        : this(physicalCoreCount, hardwareAccessAllowed, hardwareReadAllowed) => deviceApiOverride = deviceApi;
+        Func<bool>? hardwareAccessAllowed = null, Func<bool>? hardwareReadAllowed = null,
+        string pciMutexName = @"Global\Access_PCI")
+        : this(physicalCoreCount, hardwareAccessAllowed, hardwareReadAllowed)
+    {
+        deviceApiOverride = deviceApi;
+        this.pciMutexName = pciMutexName;
+    }
+
+    private IDisposable AcquirePciBus(CancellationToken cancellationToken)
+    {
+        var mutex = new Mutex(false, pciMutexName);
+        bool held = false;
+        try
+        {
+            try
+            {
+                held = WaitHandle.WaitAny([mutex, cancellationToken.WaitHandle], MailboxTimeoutMilliseconds) == 0;
+            }
+            catch (AbandonedMutexException error)
+            {
+                held = true;
+                throw new IOException("cpuSmuPciMutexAbandoned", error);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!held) throw new IOException("cpuSmuPciMutexTimeout");
+            return new PciBusLease(mutex);
+        }
+        catch
+        {
+            try { if (held) mutex.ReleaseMutex(); }
+            finally { mutex.Dispose(); }
+            throw;
+        }
+    }
+
+    private sealed class PciBusLease(Mutex mutex) : IDisposable
+    {
+        public void Dispose()
+        {
+            try { mutex.ReleaseMutex(); }
+            finally { mutex.Dispose(); }
+        }
+    }
 
     public bool TryInitialize()
     {
@@ -133,7 +180,11 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         EnsureHardwareAccess(readOnly: true);
         if (physicalCoreCount == 0) throw new InvalidOperationException("cpuCoreTopologyUnknown");
         if (!TryInitialize()) throw new InvalidOperationException("curveOptimizerUnavailable");
-        lock (mailboxGate) return ReadPerCoreLocked(cancellationToken);
+        lock (mailboxGate)
+        {
+            using var pci = AcquirePciBus(cancellationToken);
+            return ReadPerCoreLocked(cancellationToken);
+        }
     }
 
     private Dictionary<int, int> ReadPerCoreLocked(CancellationToken cancellationToken)
@@ -144,7 +195,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
             cancellationToken.ThrowIfCancellationRequested();
             uint raw = CurveCommand(0xD5, (uint)core << 20);
             int value = unchecked((short)(raw & 0xFFFF));
-            if (value is < -30 or > 30) throw new InvalidOperationException("curveOptimizerReadbackInvalid");
+            if (value is < -50 or > 30) throw new InvalidOperationException("curveOptimizerReadbackInvalid");
             values.Add(core, value);
         }
         return values;
@@ -180,7 +231,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public Task WriteAsync(int value, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (value is < -30 or > 0)
+        if (value is < -50 or > 0)
             return Task.FromException(new ArgumentOutOfRangeException(nameof(value)));
         try
         {
@@ -218,7 +269,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         foreach (var (core, value) in values)
         {
             if (core < 0 || core >= physicalCoreCount) throw new ArgumentOutOfRangeException(nameof(values), "perCoreIndexUnsupported");
-            if (value is < -30 or > 0) throw new ArgumentOutOfRangeException(nameof(values), "perCoreCurveOutOfRange");
+            if (value is < -50 or > 0) throw new ArgumentOutOfRangeException(nameof(values), "perCoreCurveOutOfRange");
         }
         cancellationToken.ThrowIfCancellationRequested();
         EnsureHardwareAccess();
@@ -226,6 +277,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
 
         lock (mailboxGate)
         {
+            using var pci = AcquirePciBus(cancellationToken);
             EnsureHardwareAccess();
             var before = ReadPerCoreLocked(cancellationToken);
             try
@@ -270,12 +322,16 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
     public void RestorePerCore(IReadOnlyDictionary<int, int> values, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (values.Count != physicalCoreCount || Enumerable.Range(0, physicalCoreCount).Any(core => !values.TryGetValue(core, out int value) || value is < -30 or > 30))
+        if (values.Count != physicalCoreCount || Enumerable.Range(0, physicalCoreCount).Any(core => !values.TryGetValue(core, out int value) || value is < -50 or > 30))
             throw new ArgumentException("curveOptimizerSnapshotInvalid", nameof(values));
         cancellationToken.ThrowIfCancellationRequested();
         EnsureHardwareAccess();
         if (!TryInitialize()) throw new InvalidOperationException("curveOptimizerUnavailable");
-        lock (mailboxGate) RestorePerCoreLocked(values);
+        lock (mailboxGate)
+        {
+            using var pci = AcquirePciBus(cancellationToken);
+            RestorePerCoreLocked(values);
+        }
     }
 
     private void RestorePerCoreLocked(IReadOnlyDictionary<int, int> values)
@@ -309,6 +365,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         if (!TryInitialize()) throw new InvalidOperationException("advancedCpuProtocolUnavailable");
         lock (mailboxGate)
         {
+            using var pci = AcquirePciBus(cancellationToken);
             if (write.Mp1 && write.FallbackRsmu is uint fallback)
                 SendCurveCommand(write.Command, fallback, write.Argument);
             else
@@ -326,9 +383,11 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         if (!TryInitialize()) throw new InvalidOperationException("advancedCpuProtocolUnavailable");
         lock (mailboxGate)
         {
+            // The module requires Access_PCI across resolve, refresh and RAM sampling.
+            using var pci = AcquirePciBus(cancellationToken);
             var resolved = new ulong[2];
             var resolutionSucceeded = Execute("ioctl_resolve_pm_table", [], resolved);
-            if (!resolutionSucceeded || resolved[0] != 0x540108 || resolved[1] == 0)
+            if (!resolutionSucceeded || resolved[0] is not (0x540105 or 0x540108) || resolved[1] == 0)
             {
                 var error = new InvalidOperationException("advancedCpuPmTableUnsupported");
                 error.Data["pmTableId"] = $"0x{resolved[0]:X}";
@@ -363,6 +422,7 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         if (!TryInitialize()) throw new InvalidOperationException("pboScalarUnavailable");
         lock (mailboxGate)
         {
+            using var pci = AcquirePciBus(cancellationToken);
             uint raw = SendMailboxAndReadFirst(
                 RyzenSmuProtocol.RaphaelCommandAddress,
                 RyzenSmuProtocol.RaphaelResponseAddress,
@@ -382,12 +442,15 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
         EnsureHardwareAccess();
         if (!TryInitialize()) throw new InvalidOperationException("pboScalarUnavailable");
         lock (mailboxGate)
+        {
+            using var pci = AcquirePciBus(cancellationToken);
             SendMailbox(
                 RyzenSmuProtocol.RaphaelCommandAddress,
                 RyzenSmuProtocol.RaphaelResponseAddress,
                 RyzenSmuProtocol.RaphaelArgumentAddress,
                 RyzenSmuProtocol.SetPboScalarCommand,
                 checked((uint)(scalar * 100)));
+        }
     }
 
     private void SendMailbox(
@@ -541,9 +604,15 @@ internal sealed class PawnIoCurveOptimizerTransport : IPerCoreCurveOptimizerTran
             checked((uint)(outputBuffer?.Length ?? 0)),
             out var bytesReturned,
             IntPtr.Zero);
-        if (succeeded && output is { Length: > 0 } && outputBuffer is not null && bytesReturned > 0)
-            Buffer.BlockCopy(outputBuffer, 0, output, 0, Math.Min(checked((int)bytesReturned), outputBuffer.Length));
-        return succeeded;
+        return CopyNativeResponse(succeeded, bytesReturned, outputBuffer, output);
+    }
+
+    internal static bool CopyNativeResponse(bool succeeded, uint bytesReturned, byte[]? outputBuffer, ulong[]? output)
+    {
+        int expected = checked((output?.Length ?? 0) * sizeof(ulong));
+        if (!succeeded || bytesReturned != expected || (outputBuffer?.Length ?? 0) != expected) return false;
+        if (expected > 0) Buffer.BlockCopy(outputBuffer!, 0, output!, 0, expected);
+        return true;
     }
 
     private static byte[]? ReadRyzenSmuModule() => ReadEmbeddedModule("RyzenSMU.bin");

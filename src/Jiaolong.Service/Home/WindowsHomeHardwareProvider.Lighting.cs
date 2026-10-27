@@ -15,26 +15,60 @@ public sealed partial class WindowsHomeHardwareProvider
     private readonly Stopwatch lightingClock = new();
     private KeyboardRgb? lastLightingColor;
     private int lightingFailures;
+    private bool lightingOwnershipLost;
     private long nextLightingOwnershipCheck;
     private readonly LightingPreviewLease lightingPreview = new();
     private KeyboardLightingPlan? lastPreviewPlan;
 
     private KeyboardLightingPlan? ReadLightingLocked(CancellationToken token)
     {
-        if (appliedLighting is not null) return appliedLighting;
         if (compatibilityDecision is null || !compatibilityDecision.Capabilities.Items.Any(
                 item => item.Key == "keyboardLighting" && item.State == CapabilityState.Available))
             return null;
         try
         {
             var controller = lightingController ?? new MiKeyboardLightingController(miInterface, compatibilityDecision);
-            return controller.ReadHardwareAsync(token).GetAwaiter().GetResult();
+            var observed = controller.ReadHardwareAsync(token).GetAwaiter().GetResult();
+            if (appliedLighting is not { } effect) return observed;
+            // Gradient uses firmware Fixed; only our last confirmed frame can justify virtual effect metadata.
+            if (MatchesLightingFrame(observed, effect, lastLightingColor))
+                return effect with { LogoEnabled = observed.LogoEnabled };
+            StopLightingOwnershipLocked("externalLightingChange");
+            return observed;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception error)
         {
+            if (appliedLighting is not null) StopLightingOwnershipLocked("lightingReadUnavailable");
             logger?.LogDebug(error, "Keyboard lighting hardware readback unavailable");
             return null;
+        }
+    }
+
+    private static bool MatchesLightingFrame(KeyboardLightingPlan observed, KeyboardLightingPlan effect, KeyboardRgb? frame) =>
+        observed.IsValid() && observed.Effect == "Fixed" && observed.BrightnessLevel == effect.BrightnessLevel &&
+        frame is { } value && observed.Red == value.Red && observed.Green == value.Green && observed.Blue == value.Blue;
+
+    public Task StopClientLightingDynamicsAsync(CancellationToken token)
+    {
+        lock (gate)
+        {
+            token.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            if (lightingPreview.Original is not null) throw new IOException("lightingPreviewRecoveryRequired");
+            lightingTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+            lightingClock.Stop();
+            if (appliedLighting is not { } effect) return Task.CompletedTask;
+            if (lightingOwnershipLost) throw new IOException("lightingRetainedOwnershipLost");
+            EnsureProviderReadAccess();
+            var observed = (lightingController ?? throw new IOException("lightingControllerUnavailable"))
+                .ReadHardwareAsync(token).GetAwaiter().GetResult();
+            token.ThrowIfCancellationRequested();
+            if (!MatchesLightingFrame(observed, effect, lastLightingColor))
+                throw new IOException("lightingRetainedFrameChanged");
+            // Retain the physical frame, not the software Gradient or its timer.
+            appliedLighting = null;
+            return Task.CompletedTask;
         }
     }
 
@@ -43,6 +77,8 @@ public sealed partial class WindowsHomeHardwareProvider
         if (BackgroundWorkPaused) return Rejected(command.OperationId, ErrorCode.CancelledBeforeApply) with { Mutation = HardwareMutation.NoMutation };
         if (CommandValidation.Validate(command) is not null)
             return Rejected(command.OperationId, ErrorCode.ValidationFailed);
+        if (command.Preview && lightingOwnershipLost)
+            return Rejected(command.OperationId, ErrorCode.ConflictDetected) with { Mutation = HardwareMutation.NoMutation };
         if (compatibilityDecision is null || !compatibilityDecision.Capabilities.Items.Any(
                 item => item.Key == "keyboardLighting" && item.State == CapabilityState.Available))
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
@@ -66,6 +102,7 @@ public sealed partial class WindowsHomeHardwareProvider
             appliedLighting = softwareEffect ? resolved : null;
             lightingError = null;
             lightingFailures = 0;
+            lightingOwnershipLost = false;
             nextLightingOwnershipCheck = 0;
             lastLightingColor = resolved.ColorAt(0);
             if (softwareEffect) lightingClock.Restart();
@@ -104,7 +141,7 @@ public sealed partial class WindowsHomeHardwareProvider
             }
             if (error.Message == "rollbackFailed")
             {
-                appliedLighting = null;
+                StopLightingOwnershipLocked("lightingRollbackFailed");
                 return new(command.OperationId, CommandState.RecoveryRequired, null, RequiredUserAction.None,
                     ServiceError.Create(ErrorCode.RollbackFailed, command.OperationId, false), false);
             }
@@ -131,15 +168,14 @@ public sealed partial class WindowsHomeHardwareProvider
                 nextLightingOwnershipCheck = lightingClock.ElapsedMilliseconds + 1000;
                 if (ThirdPartyFanWriterRunning())
                 {
-                    lightingError = "keyboardEffectStopped: competingControlCenter";
-                    appliedLighting = null;
-                    KeepPreviewRecoveryTimer();
+                    StopLightingOwnershipLocked("competingControlCenter");
                     logger?.LogWarning("Keyboard effect stopped because another control center started");
                     return;
                 }
             }
             var color = appliedLighting.ColorAt(lightingClock.Elapsed.TotalSeconds);
             if (color == lastLightingColor) return;
+            if (ReadLightingLocked(CancellationToken.None) is null || appliedLighting is null) return;
             lightingController.WriteColorAsync(color, CancellationToken.None).GetAwaiter().GetResult();
             lastLightingColor = color;
             lightingFailures = 0;
@@ -147,9 +183,7 @@ public sealed partial class WindowsHomeHardwareProvider
         catch (Exception error)
         {
             if (++lightingFailures < 3) return;
-            lightingError = $"keyboardEffectStopped: {error.Message}";
-            appliedLighting = null;
-            KeepPreviewRecoveryTimer();
+            StopLightingOwnershipLocked(error.Message);
             logger?.LogError(error, "Keyboard lighting effect stopped after three failed writes");
         }
         finally { Monitor.Exit(gate); }
@@ -159,6 +193,11 @@ public sealed partial class WindowsHomeHardwareProvider
     {
         if (lightingPreview.Original is not { } original)
             return new(operationId, CommandState.Applied, null, RequiredUserAction.None, null, false);
+        if (appliedLighting is not null) ReadLightingLocked(token);
+        if (lightingOwnershipLost)
+            return new(operationId, CommandState.RecoveryRequired, null, RequiredUserAction.None,
+                ServiceError.Create(ErrorCode.ConflictDetected, operationId, false), false)
+                { Mutation = HardwareMutation.NoMutation };
         var result = ExecuteLightingLocked(new(operationId, original), token);
         if (result.State != CommandState.Applied)
         {
@@ -167,6 +206,15 @@ public sealed partial class WindowsHomeHardwareProvider
             lightingTimer.Change(1000, 1000);
         }
         return result;
+    }
+
+    private void StopLightingOwnershipLocked(string reason)
+    {
+        lightingError = $"keyboardEffectStopped: {reason}";
+        lightingOwnershipLost = true;
+        appliedLighting = null;
+        // Retain preview recovery evidence, but expiry/Dispose must not overwrite the external state.
+        lightingTimer?.Change(Timeout.Infinite, Timeout.Infinite);
     }
 
     private void KeepPreviewRecoveryTimer()

@@ -69,6 +69,7 @@ public sealed partial class AutomationWorkspaceV2
                 activePolicy = policy;
             }
             servicePublishPending = false;
+            followConfigurationPending = false;
             serviceSubmissionError = null;
             RenderReason();
             RefreshTelemetry();

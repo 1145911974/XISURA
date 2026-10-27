@@ -10,7 +10,7 @@ public sealed partial class PerformanceWorkspace
     public async Task<AdaptiveAutomationPreset[]> ReadAutomaticServicePresetsAsync(
         IReadOnlyCollection<PresetKey> keys, CancellationToken cancellationToken)
     {
-        var currentStore = new ControlPresetStore(capabilities: () => session?.State?.Capabilities);
+        var currentStore = new ControlPresetStore(capabilities: () => session?.State?.Capabilities, baseline: () => session?.SchedulingBaseline);
         var result = new List<AdaptiveAutomationPreset>();
         foreach (var key in keys.Distinct())
         {
@@ -27,9 +27,9 @@ public sealed partial class PerformanceWorkspace
             var curveCores = curveMode == CpuCurveOptimizerMode.PerCore ? draft.AdvancedCpuTuning?.PerCoreCurveOptimizer : null;
             if (curveMode != CpuCurveOptimizerMode.Bios && (state?.CurveOptimizerVerification != "hardwareReadback" ||
                 !state.HasCompleteCurveValues() || state.PerCoreCurveOptimizer!.Values.Any(value => value > 0) ||
-                curveMode == CpuCurveOptimizerMode.AllCore && curveAll is not (>= -30 and <= 0) ||
+                curveMode == CpuCurveOptimizerMode.AllCore && curveAll is not (>= -50 and <= 0) ||
                 curveMode == CpuCurveOptimizerMode.PerCore && (curveCores is not { Count: > 0 } ||
-                    curveCores.Any(pair => pair.Key < 0 || pair.Key >= state.PerCoreCurveOptimizer!.Count || pair.Value is < -30 or > 0))))
+                    curveCores.Any(pair => pair.Key < 0 || pair.Key >= state.PerCoreCurveOptimizer!.Count || pair.Value is < -50 or > 0))))
                 throw new InvalidOperationException("自动预设中的 CO 缺少有效目标或完整可恢复的硬件读回值。");
             CpuTuningPlan? plan = state is null ? null
                 : PerformanceCommandFactory.CreateForReadBackOnly(draft, state, true).Plan with
@@ -45,7 +45,7 @@ public sealed partial class PerformanceWorkspace
                         ? draft.DcMinActiveCoresPercent : null
                 };
             if (plan is not null && plan.MaxFrequencyMhz is null && plan.AcMaxFrequencyMhz is null
-                && plan.DcMaxFrequencyMhz is null && plan.BoostEnabled is null && plan.WindowsPowerSchemeId is null
+                && plan.DcMaxFrequencyMhz is null && plan.BoostEnabled is null && plan.BoostPolicy is null && plan.WindowsPowerSchemeId is null
                 && plan.AcMinActiveCoresPercent is null && plan.DcMinActiveCoresPercent is null && plan.Advanced is null)
                 plan = null;
             result.Add(new(key, AdaptiveTargetMap.HardwareModeFor(key), plan));

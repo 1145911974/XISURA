@@ -8,6 +8,46 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class ControlPresetStoreTests
 {
     [TestMethod]
+    public void Advanced_curve_payloads_use_the_supported_range_for_all_and_per_core_curves()
+    {
+        foreach (int value in new[] { -50, -30, 0, -51, 1, 30 })
+        {
+            bool expected = value is >= -50 and <= 0;
+            foreach (JsonElement payload in new[]
+            {
+                JsonSerializer.SerializeToElement(new { advancedCpuTuning = new { curveOptimizerAll = value } }),
+                JsonSerializer.SerializeToElement(new { advancedCpuTuning = new {
+                    perCoreCurveOptimizer = new Dictionary<int, int> { [0] = value } } })
+            })
+                Assert.AreEqual(expected, PresetValidation.ValidatePayload(ControlPageId.Performance, payload).IsValid,
+                    $"{value}: {payload}");
+        }
+    }
+
+    [TestMethod]
+    public async Task Lighting_follow_snapshots_cover_native_modes_when_adaptive_targets_are_empty()
+    {
+        var paths = new RecordingPathProvider();
+        var preferences = new UserPreferencesStore(paths);
+        preferences.Update(saved => saved with { LightingFollowPreset = true,
+            LightingPresetSlots = new() { ["Office"] = 3, ["Gaming"] = 1, ["Turbo"] = 2 } });
+        await using var session = new HomeControlSession(new ControlCenterClient("unused-lighting-snapshots-" + Guid.NewGuid().ToString("N")),
+            automaticRestore: new AppliedConfigurationRestore(paths));
+        var catalog = new PresetCatalogController(session, new ControlPresetStore(paths), preferences);
+        var snapshots = await catalog.ReadAutomaticServicePresetsAsync([], CancellationToken.None);
+        Assert.HasCount(3, snapshots);
+        foreach (var mode in new[] { ControlModeId.Office, ControlModeId.Gaming, ControlModeId.Turbo })
+        {
+            var snapshot = snapshots.Single(item => item.Key == PresetKey.Create(mode, 1));
+            Assert.AreEqual(AdaptiveTargetMap.HardwareModeFor(snapshot.Key), snapshot.PerformanceMode);
+            var lighting = snapshot.Selections.Single(item => item.Page == ControlPageId.Lighting);
+            Assert.IsTrue(lighting.Follow);
+            Assert.AreEqual(preferences.Load().LightingPresetSlots[mode.ToString()], lighting.Key.Slot);
+            Assert.IsFalse(snapshot.Selections.Any(item => item.Page != ControlPageId.Lighting && item.Follow));
+        }
+    }
+
+    [TestMethod]
     public void Preset_key_exposes_six_modes_and_three_slots()
     {
         Assert.HasCount(18, PresetKey.All);
@@ -189,6 +229,85 @@ public sealed class ControlPresetStoreTests
         Assert.AreEqual(PerformanceMode.Quiet, catalog.NativeModeFor(PresetKey.Create(ControlModeId.Custom1, 2)));
         Assert.AreEqual(PerformanceMode.Balanced, catalog.NativeModeFor(PresetKey.Create(ControlModeId.Custom2, 2)));
         Assert.AreEqual(PerformanceMode.Turbo, catalog.NativeModeFor(PresetKey.Create(ControlModeId.Custom3, 2)));
+    }
+
+    [TestMethod]
+    public async Task Failed_autosave_keeps_latest_draft_until_flush_can_retry()
+    {
+        var paths = new RecordingPathProvider();
+        var directory = Path.Combine(paths.LocalAppDataRoot, "Jiaolong Control Center");
+        var blocker = Path.Combine(directory, "control-presets-gpu.json");
+        Directory.CreateDirectory(blocker);
+        try
+        {
+            await using var session = new HomeControlSession(
+                new ControlCenterClient("unused-preset-retry-" + Guid.NewGuid().ToString("N")),
+                automaticRestore: new AppliedConfigurationRestore(paths));
+            var store = new ControlPresetStore(paths);
+            var catalog = new PresetCatalogController(session, store, new UserPreferencesStore(paths));
+            var key = PresetKey.Create(ControlModeId.Office, 2);
+            catalog.ScheduleSave(ControlPageId.Gpu, key, "first", JsonSerializer.SerializeToElement(new { CoreOffsetKhz = 5000 }));
+            catalog.ScheduleSave(ControlPageId.Gpu, key, "latest", JsonSerializer.SerializeToElement(new { CoreOffsetKhz = 10000 }));
+
+            await Assert.ThrowsAsync<IOException>(() => catalog.FlushAsync());
+            Assert.IsFalse(File.Exists(blocker));
+            Directory.Delete(blocker);
+            await catalog.FlushAsync();
+
+            var saved = await store.LoadAsync(ControlPageId.Gpu, key, CancellationToken.None);
+            Assert.IsNotNull(saved);
+            Assert.AreEqual(10000, saved.Settings["coreOffsetKhz"].Value!.Value.GetInt32());
+        }
+        finally { Directory.Delete(paths.LocalAppDataRoot, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task Superseded_follow_enable_does_not_publish_or_apply()
+    {
+        var paths = new RecordingPathProvider();
+        var preferences = new UserPreferencesStore(paths);
+        preferences.Update(current => current with { GpuFollowPreset = true });
+        await using var session = new HomeControlSession(
+            new ControlCenterClient("unused-stale-follow-" + Guid.NewGuid().ToString("N")),
+            automaticRestore: new AppliedConfigurationRestore(paths));
+        var catalog = new PresetCatalogController(session, new ControlPresetStore(paths), preferences);
+        int failures = 0;
+        int resyncs = 0;
+        session.NotificationRequested += _ => failures++;
+        catalog.FollowChanged += () => resyncs++;
+        bool superseded = false;
+        var key = PresetKey.Create(ControlModeId.Office, 2);
+        catalog.ScheduleSave(ControlPageId.Gpu, key, "draft", DefaultControlPresets.Create(ControlPageId.Gpu, key).Payload,
+            () => { preferences.Update(current => current with { GpuFollowPreset = false }); superseded = true; });
+
+        await catalog.FollowPreferenceChangedAsync(ControlPageId.Gpu, enabled: true);
+
+        Assert.IsTrue(superseded, "The newer toggle must arrive while the older request flushes.");
+        Assert.AreEqual(0, failures, "An obsolete toggle must not attempt a service request.");
+        Assert.AreEqual(0, resyncs, "An obsolete toggle must not reconfigure automation.");
+        Assert.IsFalse(preferences.Load().GpuFollowPreset);
+    }
+
+    [TestMethod]
+    public async Task Failed_follow_publication_still_requests_automation_resync()
+    {
+        var paths = new RecordingPathProvider();
+        var preferences = new UserPreferencesStore(paths);
+        preferences.Update(current => current with { GpuFollowPreset = false });
+        await using var session = new HomeControlSession(
+            new ControlCenterClient("unused-follow-resync-" + Guid.NewGuid().ToString("N")),
+            automaticRestore: new AppliedConfigurationRestore(paths));
+        var catalog = new PresetCatalogController(session, new ControlPresetStore(paths), preferences);
+        int resyncs = 0, failures = 0;
+        catalog.FollowChanged += () => resyncs++;
+        session.NotificationRequested += _ => failures++;
+        preferences.Update(current => current with { GpuFollowPreset = true });
+
+        await catalog.FollowPreferenceChangedAsync(ControlPageId.Gpu, enabled: true, token: new CancellationToken(true));
+
+        Assert.AreEqual(1, resyncs, "A persisted follow request must remain pending for service reconnect.");
+        Assert.AreEqual(1, failures, "The current request must not appear confirmed while publication failed.");
+        Assert.IsTrue(preferences.Load().GpuFollowPreset);
     }
 
     [TestMethod]

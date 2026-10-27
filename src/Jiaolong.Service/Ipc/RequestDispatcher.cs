@@ -32,7 +32,7 @@ public sealed class RequestDispatcher : IRequestDispatcher
         IDiagnosticEventReader? diagnosticEventReader = null)
     {
         this.allowedOperations = new HashSet<string>(
-            allowedOperations ?? ["getSnapshot", "getCapabilities", "getDeviceState", "getDiagnostics", "exportDiagnostics", "deleteDiagnosticExport", "executeCommand", "subscribeTelemetry"],
+            allowedOperations ?? ["getSnapshot", "getCapabilities", "getDeviceState", "getDiagnostics", "exportDiagnostics", "deleteDiagnosticExport", "executeCommand", "subscribeTelemetry", "beginClientSession", "configureClientSession", "endClientSession"],
             StringComparer.Ordinal);
         this.commandOrchestrator = commandOrchestrator;
         this.homeRuntime = homeRuntime;
@@ -94,12 +94,57 @@ public sealed class RequestDispatcher : IRequestDispatcher
             return DeleteDiagnosticExportAsync(request, cancellationToken);
         }
 
+        if (string.Equals(request.Operation, "beginClientSession", StringComparison.Ordinal) && homeRuntime is not null)
+            return BeginClientSessionAsync(request, client, cancellationToken);
+        if (string.Equals(request.Operation, "configureClientSession", StringComparison.Ordinal) && homeRuntime is not null)
+            return ConfigureClientSessionAsync(request, client, cancellationToken);
+        if (string.Equals(request.Operation, "endClientSession", StringComparison.Ordinal) && homeRuntime is not null)
+            return EndClientSessionAsync(request, client, cancellationToken);
+
         if (string.Equals(request.Operation, "executeCommand", StringComparison.Ordinal) && (commandOrchestrator is not null || homeRuntime is not null))
         {
             return ExecuteCommandAsync(request, client, cancellationToken);
         }
 
         return Task.FromResult(Error(request, ErrorCode.ServiceUnavailable));
+    }
+
+    private async Task<ResponseEnvelope> EndClientSessionAsync(RequestEnvelope request, ClientIdentity client, CancellationToken token)
+    {
+        if (request.ProtocolVersion.Minor < 1 || request.Payload.ValueKind != JsonValueKind.Object ||
+            request.Payload.EnumerateObject().Any(property => property.Name is not ("sessionId" or "keepChanges")) ||
+            request.Payload.EnumerateObject().GroupBy(property => property.Name).Any(group => group.Count() != 1) ||
+            request.Payload.TryGetProperty("keepChanges", out var keep) && keep.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
+            !request.Payload.TryGetProperty("sessionId", out var id) ||
+            id.ValueKind != JsonValueKind.String || !id.TryGetGuid(out var sessionId) || sessionId == Guid.Empty)
+            return Error(request, ErrorCode.InvalidFrame);
+        var result = await homeRuntime!.EndClientControlSessionAsync(request.OperationId, sessionId, client, token,
+            request.Payload.TryGetProperty("keepChanges", out var policy) && policy.GetBoolean());
+        return Success(request, JsonSerializer.SerializeToElement(result, ProtocolJsonContext.Default.CommandResult));
+    }
+
+    private async Task<ResponseEnvelope> BeginClientSessionAsync(RequestEnvelope request, ClientIdentity client, CancellationToken token)
+    {
+        // Process authority comes only from the pipe verifier, never from a JSON payload.
+        if (request.ProtocolVersion.Minor < 1 || request.Payload.ValueKind != JsonValueKind.Object ||
+            request.Payload.EnumerateObject().Any()) return Error(request, ErrorCode.InvalidFrame);
+        var result = await homeRuntime!.BeginClientControlSessionAsync(request.OperationId, client, token);
+        return Success(request, JsonSerializer.SerializeToElement(result, ProtocolJsonContext.Default.CommandResult));
+    }
+
+    private async Task<ResponseEnvelope> ConfigureClientSessionAsync(RequestEnvelope request, ClientIdentity client, CancellationToken token)
+    {
+        if (request.ProtocolVersion.Minor < 1) return Error(request, ErrorCode.InvalidFrame);
+        ClientSessionExitConfiguration configuration;
+        try
+        {
+            configuration = request.Payload.Deserialize(ProtocolJsonContext.Default.ClientSessionExitConfiguration)
+                ?? throw new JsonException("Session configuration is empty.");
+        }
+        catch (Exception error) when (error is JsonException or NotSupportedException)
+        { return Error(request, ErrorCode.InvalidFrame); }
+        var result = await homeRuntime!.ConfigureClientSessionExitAsync(request.OperationId, configuration, client, token);
+        return Success(request, JsonSerializer.SerializeToElement(result, ProtocolJsonContext.Default.CommandResult));
     }
 
     private async Task<ResponseEnvelope> ExecuteCommandAsync(RequestEnvelope request, ClientIdentity client, CancellationToken cancellationToken)
@@ -128,7 +173,7 @@ public sealed class RequestDispatcher : IRequestDispatcher
              apply.Request.Origin is ControlOrigin.Adaptive or ControlOrigin.StartupRestore or ControlOrigin.TurboBranch))
             return Error(request, ErrorCode.UnauthorizedClient);
         var result = homeRuntime is not null
-            ? await homeRuntime.ExecuteAsync(command, cancellationToken, client.ConnectionId, client.UserSid)
+            ? await homeRuntime.ExecuteAsync(command, cancellationToken, client.ConnectionId, client.UserSid, client)
             : await commandOrchestrator!.ExecuteAsync(command, context, cancellationToken);
         return new ResponseEnvelope(
             request.ProtocolVersion,

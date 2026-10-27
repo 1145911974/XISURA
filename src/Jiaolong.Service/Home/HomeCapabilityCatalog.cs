@@ -55,6 +55,33 @@ public static class HomeCapabilityCatalog
     public static CapabilityDescriptor[] ReadOnlyControls(string reason) =>
         ControlKeys.Select(key => new CapabilityDescriptor(key, CapabilityState.ReadOnly, reason)).ToArray();
 
+    internal static CapabilityDescriptor[] WithFieldAvailability(CapabilityDescriptor[] items, FieldCapability[] fields) =>
+        items.Select(item =>
+        {
+            string? fieldKey = item.Key switch
+            {
+                "cpuTuning:smu" => "advancedCpuTuning",
+                "gpuFrequencyLimit" => "coreFrequencyLimitMhz",
+                "gpuCoreOffset" => "coreOffsetKhz",
+                "gpuMemoryOffset" => "memoryOffsetKhz",
+                "gpuVfCurve" => "vfOffsetsKhz",
+                _ => null
+            };
+            if (fieldKey is null || item.State != CapabilityState.Available) return item;
+            // Independently verified scalars do not require the aggregate protocol.
+            if (item.Key == "cpuTuning:smu" && fields.Any(field => field.Key is "pptWatts" or "mp1TemperatureC" or "tdcCurrentMilliamps" or "edcCurrentMilliamps" &&
+                field is { Availability: CapabilityState.Available, Readable: true, Writable: true, VerifiedAtUtc: not null }))
+                return item;
+            var field = fields.FirstOrDefault(value => value.Key == fieldKey);
+            if (field is { Availability: CapabilityState.Available, Writable: true }) return item;
+            return item with
+            {
+                State = field?.Readable == true ? CapabilityState.ReadOnly : CapabilityState.Unavailable,
+                Reason = fieldKey == "coreFrequencyLimitMhz" ? "gpuClockLimitReadbackUnavailable"
+                    : field?.Source ?? "fieldCapabilityUnavailable"
+            };
+        }).ToArray();
+
     private static string ToLowerCamel(string value) =>
         value.Length == 0 ? value : char.ToLowerInvariant(value[0]) + value[1..];
 }

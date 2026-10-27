@@ -16,6 +16,20 @@ namespace Jiaolong.Service.Tests;
 public sealed class HomeServiceRuntimeTests
 {
     [TestMethod]
+    public async Task Lifecycle_preserves_external_strong_cooling_without_releasing_unowned_fans()
+    {
+        var state = AvailableState("strongCooling");
+        var provider = new FakeProvider(state with { Controls = state.Controls with { StrongCooling = true } });
+        var runtime = new HomeServiceRuntime(provider);
+        await runtime.InitializeAsync(CancellationToken.None);
+        await runtime.HandleLifecycleAsync(false, CancellationToken.None);
+        Assert.AreEqual(0, provider.ExecuteCount, "An observed firmware flag does not grant fan ownership.");
+        await runtime.HandleLifecycleAsync(true, CancellationToken.None);
+        Assert.AreEqual(0, provider.ExecuteCount);
+        Assert.IsTrue(provider.LiveControls.StrongCooling);
+    }
+
+    [TestMethod]
     public async Task Interface_acknowledgement_is_not_effective_confirmation_and_delayed_reversion_is_recorded()
     {
         var evidence = new PerformanceModeEvidence(DateTimeOffset.UtcNow, "MI/19", 4, "0000000001", 1,
@@ -27,7 +41,7 @@ public sealed class HomeServiceRuntimeTests
         var result = await runtime.ExecuteAsync(new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Turbo), CancellationToken.None);
         Assert.IsNull(result.VerifiedPerformanceMode);
         Assert.AreEqual("InterfaceAcknowledged", runtime.State.Controls.ModeEvidence?.VerificationLevel);
-        Assert.AreEqual(0, provider.ReadControlsCount);
+        Assert.AreEqual(1, provider.ReadControlsCount, "Capture mode side effects before dispatch; this is not effective confirmation.");
         await writer.Observation.Task.WaitAsync(TimeSpan.FromSeconds(4));
         Assert.AreEqual("Balanced", writer.Observation.Task.Result.Fields["parsedMode"]);
         Assert.AreEqual(result.OperationId, writer.Observation.Task.Result.OperationId);
@@ -92,7 +106,7 @@ public sealed class HomeServiceRuntimeTests
         var result = await runtime.ExecuteAsync(new SetQuickSettingCommand(Guid.NewGuid(), QuickSettingKind.FnLock, true), CancellationToken.None);
         Assert.AreEqual(CommandState.Applied, result.State);
         Assert.AreEqual(1, provider.DiagnoseCount);
-        Assert.AreEqual(1, provider.ReadControlsCount);
+        Assert.AreEqual(1, provider.ReadControlsCount, "A simple quick setting needs the refreshed controls without a native-mode baseline read.");
     }
 
     [TestMethod]
@@ -124,7 +138,7 @@ public sealed class HomeServiceRuntimeTests
     {
         var provider = new FakeProvider(AvailableState("performanceMode"));
         var dispatcher = new RequestDispatcher(homeRuntime: new HomeServiceRuntime(provider));
-        var client = ClientIdentity.LocalInteractive("S-1-5-21", 1);
+        var client = ClientIdentity.LocalAdministrator("S-1-5-21", 1);
         var operationId = Guid.NewGuid();
         JsonElement[] invalidPayloads =
         [
@@ -215,7 +229,7 @@ public sealed class HomeServiceRuntimeTests
             CancellationToken.None);
 
         Assert.AreEqual(1, provider.DiagnoseCount);
-        Assert.AreEqual(1, provider.ReadControlsCount);
+        Assert.AreEqual(2, provider.ReadControlsCount, "A native-mode command reads its side-effect baseline and refreshes after the write.");
         Assert.AreEqual(1, provider.ReadTelemetryCount);
         var actual = (await runtime.GetStateAsync(CancellationToken.None)).Controls;
         Assert.AreEqual(provider.LiveControls.PerformanceMode, actual.PerformanceMode);
@@ -472,7 +486,7 @@ public sealed class HomeServiceRuntimeTests
         var runtime = new HomeServiceRuntime(provider);
 
         _ = await runtime.ExecuteAsync(
-            new SetStrongCoolingCommand(Guid.NewGuid(), true),
+            new SetLidLogoCommand(Guid.NewGuid(), true),
             CancellationToken.None);
 
         Assert.AreEqual(DeviceSupportState.RepairRequired, runtime.State.SupportState);
@@ -485,8 +499,8 @@ public sealed class HomeServiceRuntimeTests
         var provider = new FakeProvider(ReadOnlyState());
         var runtime = new HomeServiceRuntime(provider);
 
-        _ = await runtime.ExecuteAsync(new SetStrongCoolingCommand(Guid.NewGuid(), true), CancellationToken.None);
-        _ = await runtime.ExecuteAsync(new SetStrongCoolingCommand(Guid.NewGuid(), true), CancellationToken.None);
+        _ = await runtime.ExecuteAsync(new SetLidLogoCommand(Guid.NewGuid(), true), CancellationToken.None);
+        _ = await runtime.ExecuteAsync(new SetLidLogoCommand(Guid.NewGuid(), true), CancellationToken.None);
 
         Assert.AreEqual(1, provider.ReinitializeCount);
     }
@@ -579,6 +593,184 @@ public sealed class HomeServiceRuntimeTests
         Assert.AreEqual(4, provider.ExecuteCount);
     }
 
+    [TestMethod]
+    public async Task Fan_release_retires_manual_fields_only_with_ec_release_readback()
+    {
+        foreach (var (readbackAvailable, remainingTarget, readbackAgeSeconds, shouldRetire) in new[]
+        {
+            (true, (byte)0, 0, true),
+            (false, (byte)0, 0, false),
+            (true, (byte)1, 0, false),
+            (true, (byte)0, 60, false)
+        })
+        {
+            var provider = new FakeProvider(AvailableState("fanControl"))
+            { FollowFanWrites = true, FanEcReadbackAvailable = readbackAvailable,
+                FanEcReleaseTarget = remainingTarget, FanEcReleaseAgeSeconds = readbackAgeSeconds };
+            provider.LiveControls = provider.LiveControls with { StrongCooling = false };
+            var runtime = new HomeServiceRuntime(provider);
+            var owner = Guid.NewGuid();
+            var plan = new FanControlPlan([new FanPoint(30, 43), new FanPoint(100, 43)])
+            { Strategy = "Fixed", FixedRpm = 3500 };
+
+            var applied = await runtime.ExecuteAsync(
+                new SetFanControlCommand(Guid.NewGuid(), plan, true), CancellationToken.None, owner);
+            Assert.AreEqual(CommandState.Applied, applied.State);
+            string[] ownedFanFields = ["fan.strategy", "fan.maximumRpm", "fan.fixedRpm", "fan.cpu", "fan.gpu", "fan.strongCooling"];
+            CollectionAssert.AreEquivalent(ownedFanFields,
+                applied.ExecutionState!.Fields.Keys.Where(key => key.StartsWith("fan.", StringComparison.Ordinal)).ToArray());
+
+            var released = await runtime.ExecuteAsync(
+                new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.UserRequested), CancellationToken.None, owner);
+            Assert.AreEqual(CommandState.Applied, released.State);
+            CollectionAssert.AreEquivalent(shouldRetire ? Array.Empty<string>() : ownedFanFields,
+                released.ExecutionState!.Fields.Keys.Where(key => key.StartsWith("fan.", StringComparison.Ordinal)).ToArray());
+        }
+    }
+
+    [TestMethod]
+    public async Task Strong_cooling_release_retires_ownership_only_after_ec_and_firmware_restore()
+    {
+        foreach (var (ecAvailable, stillCooling, readbackAgeSeconds, shouldRetire) in new[]
+        {
+            (true, false, 0, true),
+            (true, true, 0, false),
+            (false, false, 0, false),
+            (true, false, 60, false)
+        })
+        {
+            var state = AvailableState("strongCooling");
+            state = state with { Capabilities = state.Capabilities with { Items =
+                [.. state.Capabilities.Items, new CapabilityDescriptor("fanControl", CapabilityState.Available, null)] } };
+            var provider = new FakeProvider(state)
+            { FollowStrongCoolingWrites = true, FanEcReadbackAvailable = ecAvailable,
+                StrongCoolingStaysOnRelease = stillCooling, FanEcReleaseAgeSeconds = readbackAgeSeconds };
+            provider.LiveControls = provider.LiveControls with { StrongCooling = false };
+            var runtime = new HomeServiceRuntime(provider);
+            var owner = Guid.NewGuid();
+
+            var applied = await runtime.ExecuteAsync(
+                new SetStrongCoolingCommand(Guid.NewGuid(), true), CancellationToken.None, owner);
+            Assert.AreEqual(CommandState.Applied, applied.State);
+            Assert.IsTrue(applied.ExecutionState!.Fields.ContainsKey("fan.strongCooling"));
+
+            var released = await runtime.ExecuteAsync(
+                new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.UserRequested), CancellationToken.None, owner);
+            Assert.AreEqual(CommandState.Applied, released.State);
+            Assert.AreEqual(shouldRetire,
+                !released.ExecutionState!.Fields.ContainsKey("fan.strongCooling"));
+        }
+    }
+
+    [TestMethod]
+    public async Task Parking_restored_to_confirmed_baseline_retires_manual_ownership()
+    {
+        var state = AvailableState("cpuTuning");
+        state = state with { Capabilities = state.Capabilities with { Fields =
+        [
+            new("acMinActiveCoresPercent", CapabilityState.Available, true, true, 0, 100, 1, "%", "windowsPowerApi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
+            new("dcMinActiveCoresPercent", CapabilityState.Available, true, true, 0, 100, 1, "%", "windowsPowerApi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0)
+        ] } };
+        var provider = new FakeProvider(state) { FollowParkingWrites = true };
+        provider.LiveControls = provider.LiveControls with
+        { CpuTuning = new(null, null, null, 3200, true, null, Guid.NewGuid(), null, null)
+            { AcMinActiveCoresPercent = 100, DcMinActiveCoresPercent = 17 } };
+        var runtime = new HomeServiceRuntime(provider);
+        var owner = Guid.NewGuid();
+
+        var applied = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+            new(null, null, null, null, null, null, null, null)
+            { AcMinActiveCoresPercent = 99, DcMinActiveCoresPercent = 17 }, true), CancellationToken.None, owner);
+        Assert.AreEqual(CommandState.Applied, applied.State);
+        Assert.IsTrue(applied.ExecutionState!.Fields.ContainsKey("performance.acMinActiveCoresPercent"));
+        Assert.IsFalse(applied.ExecutionState.Fields.ContainsKey("performance.dcMinActiveCoresPercent"));
+
+        var restored = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+            new(null, null, null, null, null, null, null, null)
+            { AcMinActiveCoresPercent = 100, DcMinActiveCoresPercent = 17 }, true), CancellationToken.None, owner);
+        Assert.AreEqual(CommandState.Applied, restored.State);
+        Assert.IsFalse(restored.ExecutionState!.Fields.ContainsKey("performance.acMinActiveCoresPercent"));
+        Assert.IsFalse(restored.ExecutionState.Fields.ContainsKey("performance.dcMinActiveCoresPercent"));
+
+        var noReadback = new FakeProvider(state);
+        noReadback.LiveControls = provider.LiveControls;
+        var unverified = await new HomeServiceRuntime(noReadback).ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+            new(null, null, null, null, null, null, null, null)
+            { AcMinActiveCoresPercent = 99, DcMinActiveCoresPercent = 17 }, true), CancellationToken.None, Guid.NewGuid());
+        Assert.AreEqual(CommandState.Applied, unverified.State);
+        Assert.IsTrue(unverified.ExecutionState!.Fields.ContainsKey("performance.acMinActiveCoresPercent"));
+    }
+
+    [TestMethod]
+    public async Task Frequency_restored_to_confirmed_baseline_retires_manual_ownership()
+    {
+        var state = AvailableState("cpuTuning");
+        state = state with { Capabilities = state.Capabilities with { Fields =
+        [
+            new("acMaxFrequencyMhz", CapabilityState.Available, true, true, 0, 6000, 100, "MHz", "windowsPowerApi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0),
+            new("dcMaxFrequencyMhz", CapabilityState.Available, true, true, 0, 6000, 100, "MHz", "windowsPowerApi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0)
+        ] } };
+        var provider = new FakeProvider(state) { FollowFrequencyWrites = true };
+        provider.LiveControls = provider.LiveControls with
+        { CpuTuning = new(null, null, null, 4700, true, null, Guid.NewGuid(), null, null)
+            { AcMaxFrequencyMhz = 4700, DcMaxFrequencyMhz = 3200 } };
+        var runtime = new HomeServiceRuntime(provider);
+        var owner = Guid.NewGuid();
+
+        var applied = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+            new(null, null, null, null, null, null, null, null)
+            { AcMaxFrequencyMhz = 4600, DcMaxFrequencyMhz = 3200 }, true), CancellationToken.None, owner);
+        Assert.AreEqual(CommandState.Applied, applied.State);
+        Assert.IsTrue(applied.ExecutionState!.Fields.ContainsKey("performance.acMaxFrequencyMhz"));
+        Assert.IsFalse(applied.ExecutionState.Fields.ContainsKey("performance.dcMaxFrequencyMhz"));
+
+        var restored = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+            new(null, null, null, null, null, null, null, null)
+            { AcMaxFrequencyMhz = 4700, DcMaxFrequencyMhz = 3200 }, true), CancellationToken.None, owner);
+        Assert.AreEqual(CommandState.Applied, restored.State);
+        Assert.IsFalse(restored.ExecutionState!.Fields.ContainsKey("performance.acMaxFrequencyMhz"));
+        Assert.IsFalse(restored.ExecutionState.Fields.ContainsKey("performance.dcMaxFrequencyMhz"));
+    }
+
+    [TestMethod]
+    public async Task Boost_ownership_retires_only_after_exact_ac_dc_modes_return()
+    {
+        foreach (int originalDcMode in new[] { 2, 5 })
+        {
+            var state = AvailableState("cpuTuning");
+            state = state with { Capabilities = state.Capabilities with { Fields =
+            [new("isBoostEnabled", CapabilityState.Available, true, true, null, null, null, "", "windowsPowerApi",
+                "PreservesSelectedMode", DateTimeOffset.UtcNow, 0)] } };
+            var provider = new FakeProvider(state) { FollowBoostWrites = true };
+            provider.LiveControls = provider.LiveControls with
+            { CpuTuning = new(null, null, null, 3200, true, null, Guid.NewGuid(), null, null)
+                { AcBoostMode = 2, DcBoostMode = originalDcMode } };
+            var runtime = new HomeServiceRuntime(provider);
+            var owner = Guid.NewGuid();
+
+            var disabled = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+                new(null, null, null, null, false, null, null, null), true), CancellationToken.None, owner);
+            Assert.AreEqual(CommandState.Applied, disabled.State);
+            Assert.IsTrue(disabled.ExecutionState!.Fields.ContainsKey("performance.isBoostEnabled"));
+
+            var enabled = await runtime.ExecuteAsync(new SetCpuTuningCommand(Guid.NewGuid(),
+                new(null, null, null, null, true, null, null, null), true), CancellationToken.None, owner);
+            Assert.AreEqual(CommandState.Applied, enabled.State);
+            Assert.AreEqual(originalDcMode != 2,
+                enabled.ExecutionState!.Fields.ContainsKey("performance.isBoostEnabled"));
+
+            if (originalDcMode == 2)
+            {
+                var noReadback = new FakeProvider(state) { LiveControls = provider.LiveControls };
+                var unverified = await new HomeServiceRuntime(noReadback).ExecuteAsync(new SetCpuTuningCommand(
+                    Guid.NewGuid(), new(null, null, null, null, false, null, null, null), true),
+                    CancellationToken.None, Guid.NewGuid());
+                Assert.AreEqual(CommandState.Applied, unverified.State);
+                Assert.IsTrue(unverified.ExecutionState!.Fields.ContainsKey("performance.isBoostEnabled"));
+            }
+        }
+    }
+
     private static HomeHardwareState ReadOnlyState() => new(
         new CapabilitySnapshot(Array.Empty<CapabilityDescriptor>()),
         DeviceSupportState.ReadOnly,
@@ -666,7 +858,9 @@ public sealed class HomeServiceRuntimeTests
             await Task.WhenAll(cycle, disable, manual);
             Assert.AreEqual(1, provider.ExecuteCount);
             Assert.IsNotNull((await store.ReadAsync(CancellationToken.None)).ManualOverrideUntilUtc);
-            await bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration with { Enabled = true }), CancellationToken.None);
+            var enableResult = await bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration with { Enabled = true })
+                { Intent = AutomationConfigurationIntent.Enable, ExpectedRevision = (await store.ReadAsync(CancellationToken.None)).Revision }, CancellationToken.None);
+            Assert.AreEqual(CommandState.Applied, enableResult.State);
             Assert.IsNull((await store.ReadAsync(CancellationToken.None)).ManualOverrideUntilUtc);
             await store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow, true, CancellationToken.None);
             Assert.IsFalse((await store.ReadAsync(CancellationToken.None)).Configuration!.Enabled,
@@ -678,7 +872,9 @@ public sealed class HomeServiceRuntimeTests
                 "Publishing edited snapshots must not enable a manually disabled strategy.");
             await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => store.SetConfigurationAsync(configuration,
                 CancellationToken.None, disabledRevision, AutomationConfigurationIntent.Enable));
-            await bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration with { Enabled = true }), CancellationToken.None);
+            var reenableResult = await bridge.ExecuteAsync(new SetAdaptiveAutomationConfigurationCommand(Guid.NewGuid(), configuration with { Enabled = true })
+                { Intent = AutomationConfigurationIntent.Enable, ExpectedRevision = (await store.ReadAsync(CancellationToken.None)).Revision }, CancellationToken.None);
+            Assert.AreEqual(CommandState.Applied, reenableResult.State);
             Assert.IsNull((await store.ReadAsync(CancellationToken.None)).ManualOverrideUntilUtc);
         }
         finally
@@ -689,8 +885,119 @@ public sealed class HomeServiceRuntimeTests
         }
     }
 
+    [TestMethod]
+    public async Task Legacy_tuning_rejects_readonly_fields_before_capture_or_dispatch()
+    {
+        foreach (var (capability, field, command) in new (string, string, HardwareCommand)[]
+        {
+            ("cpuTuning", "temperatureLimitC", new SetCpuTuningCommand(Guid.NewGuid(), new(80, null, null, null, null, null, null, null), true)),
+            ("cpuTuning", "splWatts", new SetCpuTuningBatchCommand(Guid.NewGuid(),
+                [new(null, null, null, 3800, null, null, null, null), new(null, 60, null, null, null, null, null, null)], true)),
+            ("cpuTuning", "spptWatts", new SetCpuTuningCommand(Guid.NewGuid(), new(null, null, 70, null, null, null, null, null), true)),
+            ("cpuTuning", "advancedCpuTuning", new SetCpuTuningCommand(Guid.NewGuid(),
+                new(null, null, null, null, null, null, null, null) { Advanced = new(FastPptWatts: 60) }, true)),
+            ("gpuFrequencyLimit", "coreFrequencyLimitMhz", new SetGpuFrequencyLimitCommand(Guid.NewGuid(), 2000, true))
+        })
+        {
+            var state = AvailableState(capability);
+            state = state with { Capabilities = state.Capabilities with { Fields =
+                [.. state.Capabilities.Fields, WritableField(field) with { Availability = CapabilityState.ReadOnly, Writable = false }] } };
+            var provider = new FakeProvider(state);
+            var result = await new HomeServiceRuntime(provider).ExecuteAsync(command, CancellationToken.None);
+            Assert.AreEqual(CommandState.Rejected, result.State, field);
+            Assert.AreEqual(ErrorCode.CapabilityUnavailable, result.Error?.Code, field);
+            Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation, field);
+            Assert.AreEqual(0, provider.ExecuteCount, field);
+            Assert.AreEqual(0, provider.ReadControlsCount, field);
+            Assert.AreEqual(0, provider.ReinitializeCount, field);
+        }
+    }
+
+    [TestMethod]
+    public async Task Legacy_tuning_requires_verified_field_metadata()
+    {
+        foreach (var field in new FieldCapability?[] { null,
+            WritableField("coreOffsetKhz") with { VerifiedAtUtc = null },
+            WritableField("coreOffsetKhz") with { Source = "uiSuggestion" },
+            WritableField("coreOffsetKhz") with { Availability = CapabilityState.Unavailable } })
+        {
+            var state = AvailableState("gpuCoreOffset");
+            state = state with { Capabilities = state.Capabilities with { Fields = field is null ? [] : [field] } };
+            var provider = new FakeProvider(state);
+            var result = await new HomeServiceRuntime(provider).ExecuteAsync(
+                new SetGpuCoreOffsetCommand(Guid.NewGuid(), 0, 1000, true), CancellationToken.None);
+            Assert.AreEqual(CommandState.Rejected, result.State);
+            Assert.AreEqual(0, provider.ExecuteCount);
+            Assert.AreEqual(0, provider.ReadControlsCount);
+            Assert.AreEqual(0, provider.ReinitializeCount);
+        }
+    }
+
+    [TestMethod]
+    public async Task Legacy_oem_tuning_requires_ac_preserved_mode_and_verified_bounds()
+    {
+        foreach (var (onAc, field) in new (bool?, FieldCapability)[]
+        {
+            (false, WritableField("temperatureLimitC") with { Minimum = 40, Maximum = 100 }),
+            (null, WritableField("temperatureLimitC") with { Minimum = 40, Maximum = 100 }),
+            (true, WritableField("temperatureLimitC") with { Minimum = 40, Maximum = 100, NativeModeSideEffect = "Unknown" }),
+            (true, WritableField("temperatureLimitC")),
+            (true, WritableField("temperatureLimitC") with { Minimum = 40, Maximum = 75 })
+        })
+        {
+            var state = AvailableState("cpuTuning");
+            state = state with { Capabilities = state.Capabilities with { IsOnAcPower = onAc, Fields = [field] } };
+            var provider = new FakeProvider(state);
+            var result = await new HomeServiceRuntime(provider).ExecuteAsync(
+                new SetCpuTuningCommand(Guid.NewGuid(), new(80, null, null, null, null, null, null, null), true), CancellationToken.None);
+            Assert.AreEqual(CommandState.Rejected, result.State);
+            Assert.AreEqual(0, provider.ExecuteCount);
+            Assert.AreEqual(0, provider.ReadControlsCount);
+        }
+        var bounded = AvailableState("cpuTuning");
+        bounded = bounded with { Capabilities = bounded.Capabilities with { IsOnAcPower = true,
+            Fields = [WritableField("temperatureLimitC") with { Minimum = 40, Maximum = 75 }] } };
+        var batchProvider = new FakeProvider(bounded);
+        var batchResult = await new HomeServiceRuntime(batchProvider).ExecuteAsync(new SetCpuTuningBatchCommand(Guid.NewGuid(),
+            [new(80, null, null, null, null, null, null, null), new(70, null, null, null, null, null, null, null)], true), CancellationToken.None);
+        Assert.AreEqual(CommandState.Rejected, batchResult.State, "Every batch step must satisfy device bounds, including overwritten values.");
+        Assert.AreEqual(0, batchProvider.ExecuteCount);
+        Assert.AreEqual(0, batchProvider.ReadControlsCount);
+    }
+
+    [TestMethod]
+    public async Task Legacy_verified_fields_remain_usable_with_readonly_advanced_limits()
+    {
+        foreach (var (capability, field, command) in new (string, string, HardwareCommand)[]
+        {
+            ("cpuTuning", "acMaxFrequencyMhz", new SetCpuTuningCommand(Guid.NewGuid(),
+                new(null, null, null, null, null, null, null, null) { AcMaxFrequencyMhz = 3800 }, true)),
+            ("cpuTuning", "pboScalar", new SetCpuTuningCommand(Guid.NewGuid(),
+                new(null, null, null, null, null, null, null, null) { Advanced = new(PboScalar: 2) }, true)),
+            ("gpuCoreOffset", "coreOffsetKhz", new SetGpuCoreOffsetCommand(Guid.NewGuid(), 0, 1000, true))
+        })
+        {
+            var state = AvailableState(capability);
+            state = state with { Capabilities = state.Capabilities with { Fields = [WritableField(field),
+                WritableField("advancedCpuTuning") with { Availability = CapabilityState.ReadOnly, Writable = false }] } };
+            var provider = new FakeProvider(state);
+            var result = await new HomeServiceRuntime(provider).ExecuteAsync(command, CancellationToken.None);
+            Assert.AreEqual(CommandState.Applied, result.State, field);
+            Assert.AreEqual(1, provider.ExecuteCount, field);
+        }
+    }
+
+    private static FieldCapability WritableField(string key) => new(key, CapabilityState.Available, true, true,
+        null, null, null, "", "hardwareReadback", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0);
+
     private static HomeHardwareState AvailableState(string key) => new(
-        new CapabilitySnapshot([new CapabilityDescriptor(key, CapabilityState.Available, null)]),
+        new CapabilitySnapshot([new CapabilityDescriptor(key, CapabilityState.Available, null)])
+        { Fields = key == "cpuTuning" ? [
+            WritableField("acMaxFrequencyMhz") with { Minimum = 0, Maximum = 6000 },
+            WritableField("dcMaxFrequencyMhz") with { Minimum = 0, Maximum = 6000 },
+            WritableField("isBoostEnabled")] : key is "fanControl" or "strongCooling"
+            ? new[] { "strategy", "fixedRpm", "maximumRpm", "cpu", "gpu", "shared", "isShared", "strongCooling" }
+                .Select(WritableField).ToArray() : [] },
         DeviceSupportState.Ready,
         null,
         new HardwareIdentity("MRID6-23", "MRID6_23_P_V39", "AMD Ryzen 7 7745HX", "NVIDIA GeForce RTX 4070 Laptop GPU"),
@@ -811,6 +1118,15 @@ public sealed class HomeServiceRuntimeTests
         public HardwareSnapshot? LiveTelemetry { get; set; }
         public PerformanceMode? VerifiedMode { get; init; }
         public bool FollowModeWrites { get; init; }
+        public bool FollowFanWrites { get; init; }
+        public bool FollowStrongCoolingWrites { get; init; }
+        public bool StrongCoolingStaysOnRelease { get; init; }
+        public bool FollowParkingWrites { get; init; }
+        public bool FollowFrequencyWrites { get; init; }
+        public bool FollowBoostWrites { get; init; }
+        public bool FanEcReadbackAvailable { get; init; } = true;
+        public byte FanEcReleaseTarget { get; init; }
+        public int FanEcReleaseAgeSeconds { get; init; }
         public Task<HardwareSnapshot>? PendingTelemetry { get; init; }
 
         public Task<HomeHardwareState> DiagnoseAsync(CancellationToken cancellationToken)
@@ -852,6 +1168,35 @@ public sealed class HomeServiceRuntimeTests
                 LiveControls = LiveControls with { PerformanceMode = mode.Mode };
             if (FollowModeWrites && command is ReleaseFanControlCommand)
                 LiveControls = LiveControls with { StrongCooling = false, ActiveFanControlPlan = null };
+            if (FollowFanWrites && command is SetFanControlCommand fan)
+                LiveControls = LiveControls with { ActiveFanControlPlan = fan.Plan,
+                    FanEcControl = FanEcReadbackAvailable ? new(DateTimeOffset.UtcNow, 0, 0, 35, 35, 0) : null };
+            if (FollowFanWrites && command is ReleaseFanControlCommand)
+                LiveControls = LiveControls with { ActiveFanControlPlan = null,
+                    FanEcControl = FanEcReadbackAvailable ? new(DateTimeOffset.UtcNow.AddSeconds(-FanEcReleaseAgeSeconds),
+                        0, 0, FanEcReleaseTarget, FanEcReleaseTarget, 0) : null };
+            if (FollowStrongCoolingWrites && command is SetStrongCoolingCommand cooling)
+                LiveControls = LiveControls with { StrongCooling = cooling.Enabled,
+                    FanEcControl = FanEcReadbackAvailable ? new(DateTimeOffset.UtcNow, 0, 0,
+                        cooling.Enabled ? (byte)68 : (byte)0, cooling.Enabled ? (byte)68 : (byte)0, 0) : null };
+            if (FollowStrongCoolingWrites && command is ReleaseFanControlCommand)
+                LiveControls = LiveControls with { StrongCooling = StrongCoolingStaysOnRelease,
+                    ActiveFanControlPlan = null,
+                    FanEcControl = FanEcReadbackAvailable ? new(DateTimeOffset.UtcNow.AddSeconds(-FanEcReleaseAgeSeconds),
+                        0, 0, 0, 0, 0) : null };
+            if (FollowParkingWrites && command is SetCpuTuningCommand parking && LiveControls.CpuTuning is { } cpu)
+                LiveControls = LiveControls with { CpuTuning = cpu with
+                    { AcMinActiveCoresPercent = parking.Plan.AcMinActiveCoresPercent,
+                        DcMinActiveCoresPercent = parking.Plan.DcMinActiveCoresPercent } };
+            if (FollowFrequencyWrites && command is SetCpuTuningCommand frequency && LiveControls.CpuTuning is { } frequencyCpu)
+                LiveControls = LiveControls with { CpuTuning = frequencyCpu with
+                    { AcMaxFrequencyMhz = frequency.Plan.AcMaxFrequencyMhz,
+                        DcMaxFrequencyMhz = frequency.Plan.DcMaxFrequencyMhz } };
+            if (FollowBoostWrites && command is SetCpuTuningCommand { Plan.BoostEnabled: bool enabled } &&
+                LiveControls.CpuTuning is { } boostCpu)
+                LiveControls = LiveControls with { CpuTuning = boostCpu with { BoostEnabled = enabled,
+                    AcBoostMode = enabled ? boostCpu.AcBoostMode == 0 ? 2 : boostCpu.AcBoostMode : 0,
+                    DcBoostMode = enabled ? boostCpu.DcBoostMode == 0 ? 2 : boostCpu.DcBoostMode : 0 } };
             return Task.FromResult(new CommandResult(command.OperationId, ResultState, State.Telemetry, RequiredUserAction.None, ReplyError, false)
                 { VerifiedPerformanceMode = VerifiedMode, Mutation = Mutation, ModeEvidence = ReplyEvidence });
         }

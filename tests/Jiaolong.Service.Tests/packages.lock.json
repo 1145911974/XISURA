@@ -512,8 +512,8 @@
       "jiaolong.automation": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Contracts": "[1.0.0, )",
-          "Jiaolong.Hardware.Abstractions": "[1.0.0, )"
+          "Jiaolong.Contracts": "[1.0.110, )",
+          "Jiaolong.Hardware.Abstractions": "[1.0.110, )"
         }
       },
       "jiaolong.contracts": {
@@ -522,32 +522,32 @@
       "jiaolong.diagnostics": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Contracts": "[1.0.0, )"
+          "Jiaolong.Contracts": "[1.0.110, )"
         }
       },
       "jiaolong.hardware.abstractions": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Contracts": "[1.0.0, )"
+          "Jiaolong.Contracts": "[1.0.110, )"
         }
       },
       "jiaolong.hardware.mechrevo": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Hardware.Abstractions": "[1.0.0, )",
+          "Jiaolong.Hardware.Abstractions": "[1.0.110, )",
           "System.Management": "[10.0.10, )",
-          "System.Security.Cryptography.Pkcs": "[10.0.10, )"
+          "System.Security.Cryptography.Pkcs": "[10.0.13, )"
         }
       },
       "jiaolong.service": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Automation": "[1.0.0, )",
-          "Jiaolong.Contracts": "[1.0.0, )",
-          "Jiaolong.Diagnostics": "[1.0.0, )",
-          "Jiaolong.Hardware.Abstractions": "[1.0.0, )",
-          "Jiaolong.Hardware.Mechrevo": "[1.0.0, )",
-          "Jiaolong.Simulator": "[1.0.0, )",
+          "Jiaolong.Automation": "[1.0.110, )",
+          "Jiaolong.Contracts": "[1.0.110, )",
+          "Jiaolong.Diagnostics": "[1.0.110, )",
+          "Jiaolong.Hardware.Abstractions": "[1.0.110, )",
+          "Jiaolong.Hardware.Mechrevo": "[1.0.110, )",
+          "Jiaolong.Simulator": "[1.0.110, )",
           "LibreHardwareMonitorLib": "[0.9.6, )",
           "Microsoft.Extensions.Hosting": "[10.0.10, )",
           "Microsoft.Extensions.Hosting.WindowsServices": "[10.0.10, )",
@@ -557,8 +557,8 @@
       "jiaolong.simulator": {
         "type": "Project",
         "dependencies": {
-          "Jiaolong.Contracts": "[1.0.0, )",
-          "Jiaolong.Hardware.Abstractions": "[1.0.0, )"
+          "Jiaolong.Contracts": "[1.0.110, )",
+          "Jiaolong.Hardware.Abstractions": "[1.0.110, )"
         }
       },
       "LibreHardwareMonitorLib": {
@@ -628,9 +628,9 @@
       },
       "System.Security.Cryptography.Pkcs": {
         "type": "CentralTransitive",
-        "requested": "[10.0.10, )",
-        "resolved": "10.0.10",
-        "contentHash": "KG8t5RHczdgB3IWvRndpI0nE1DSo7ikDYSDbITxfgRFyIvnYiKzuPjaZOsPnwFQ1aOGUl9sEulJul9wlHLEUoA=="
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "a+EovgC1fBnwdlQ6cn3j4JFBfKqiFaFvoAhjisOoSvazLAcIznaBzPQP0oYnvccmeXfqUH1KebVZOxSeH6rMaw=="
       },
       "System.ServiceProcess.ServiceController": {
         "type": "CentralTransitive",
@@ -772,9 +772,9 @@
       },
       "System.Security.Cryptography.Pkcs": {
         "type": "CentralTransitive",
-        "requested": "[10.0.10, )",
-        "resolved": "10.0.10",
-        "contentHash": "KG8t5RHczdgB3IWvRndpI0nE1DSo7ikDYSDbITxfgRFyIvnYiKzuPjaZOsPnwFQ1aOGUl9sEulJul9wlHLEUoA=="
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "a+EovgC1fBnwdlQ6cn3j4JFBfKqiFaFvoAhjisOoSvazLAcIznaBzPQP0oYnvccmeXfqUH1KebVZOxSeH6rMaw=="
       },
       "System.ServiceProcess.ServiceController": {
         "type": "CentralTransitive",

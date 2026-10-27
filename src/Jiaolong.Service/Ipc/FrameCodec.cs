@@ -23,7 +23,7 @@ public sealed class FrameCodec : IFrameCodec
     {
         ArgumentNullException.ThrowIfNull(stream);
         var prefix = new byte[sizeof(int)];
-        await ReadExactlyAsync(stream, prefix, cancellationToken);
+        await ReadExactlyAsync(stream, prefix.AsMemory(), cancellationToken, allowEndOfStream: true);
         var length = BinaryPrimitives.ReadInt32LittleEndian(prefix);
         if (length <= 0 || length > MaxFrameBytes)
         {
@@ -69,7 +69,8 @@ public sealed class FrameCodec : IFrameCodec
         await stream.FlushAsync(cancellationToken);
     }
 
-    private static async Task ReadExactlyAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
+    private static async Task ReadExactlyAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken,
+        bool allowEndOfStream = false)
     {
         var offset = 0;
         while (offset < buffer.Length)
@@ -77,6 +78,7 @@ public sealed class FrameCodec : IFrameCodec
             var read = await stream.ReadAsync(buffer[offset..], cancellationToken);
             if (read == 0)
             {
+                if (allowEndOfStream && offset == 0) throw new EndOfStreamException();
                 throw new FrameCodecException(ErrorCode.InvalidFrame);
             }
 
@@ -84,8 +86,6 @@ public sealed class FrameCodec : IFrameCodec
         }
     }
 
-    private static Task ReadExactlyAsync(Stream stream, byte[] buffer, CancellationToken cancellationToken) =>
-        ReadExactlyAsync(stream, buffer.AsMemory(), cancellationToken);
 }
 
 public sealed class FrameCodecException : Exception

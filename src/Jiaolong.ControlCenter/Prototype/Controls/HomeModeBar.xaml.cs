@@ -34,12 +34,23 @@ public sealed partial class HomeModeBar : UserControl
     private long cardSurfaceTransitionVersion;
     public bool IsCommandPending { get; set; }
     private PrototypePerformanceMode selectedMode = PrototypePerformanceMode.Office;
+    private bool hasModeSelection;
     private readonly ModeIndicatorTransitionCoordinator indicatorTransitions = new();
     private PrototypeMotionTokens currentMotion = PrototypeMotionProfile.Resolve(reducedMotion: false);
 
     public event Action<PrototypePerformanceMode>? ModeRequested;
     public event Action<string>? CustomProfileRequested;
     public event Action<string>? TurboTierRequested;
+
+    public void SetModeSelectionKnown(bool known)
+    {
+        hasModeSelection = known;
+        foreach (var surface in cards.Values) surface.Visibility = known ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var indicator in indicators.Values) indicator.Visibility = known ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var button in modeIcons.Keys)
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button,
+                known && button.Tag?.ToString() == selectedMode.ToString() ? "Selected" : "Unselected");
+    }
 
     public void SetHardwareAvailability(bool available)
     {
@@ -111,7 +122,7 @@ public sealed partial class HomeModeBar : UserControl
         var mode = theme.Mode;
         foreach (var button in modeIcons.Keys)
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button,
-                button.Tag?.ToString() == mode.ToString() ? "Selected" : "Unselected");
+                hasModeSelection && button.Tag?.ToString() == mode.ToString() ? "Selected" : "Unselected");
         var plan = indicatorTransitions.BeginMode(mode, motion, animate);
         TransitionCardSurfaces(theme, !plan.Snap, cardDuration);
         ApplyPersistedChildSelections(plan);

@@ -9,8 +9,11 @@ public sealed class AtomicJsonStore
     private readonly string fileName;
     private readonly JsonSerializerOptions options = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly Action? beforePublish;
 
-    public AtomicJsonStore(string root, string fileName)
+    public AtomicJsonStore(string root, string fileName) : this(root, fileName, null) { }
+
+    internal AtomicJsonStore(string root, string fileName, Action? beforePublish)
     {
         MachinePaths.EnsureSafeDirectory(root);
         if (Path.GetFileName(fileName) != fileName || string.IsNullOrWhiteSpace(fileName))
@@ -20,6 +23,8 @@ public sealed class AtomicJsonStore
 
         this.root = root;
         this.fileName = fileName;
+        this.beforePublish = beforePublish;
+        EnsureCurrentNotLost();
     }
 
     public string FilePath => Path.Combine(root, fileName);
@@ -31,6 +36,8 @@ public sealed class AtomicJsonStore
         {
             MachinePaths.EnsureSafeDirectory(root);
             MachinePaths.EnsureSafeFile(FilePath);
+            EnsureCurrentNotLost();
+            bool replacing = File.Exists(FilePath);
             var bytes = JsonSerializer.SerializeToUtf8Bytes(value, options);
             var tempPath = Path.Combine(root, $".{fileName}.{Guid.NewGuid():N}.tmp");
             try
@@ -49,7 +56,9 @@ public sealed class AtomicJsonStore
                 }
 
                 RotateBackups();
-                File.Move(tempPath, FilePath, true);
+                beforePublish?.Invoke();
+                if (replacing) File.Replace(tempPath, FilePath, BackupPath(1));
+                else File.Move(tempPath, FilePath);
             }
             finally
             {
@@ -66,8 +75,9 @@ public sealed class AtomicJsonStore
     {
         MachinePaths.EnsureSafeDirectory(root);
         MachinePaths.EnsureSafeFile(FilePath);
+        EnsureCurrentNotLost();
         if (!File.Exists(FilePath)) return default;
-        await using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+        await using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.SequentialScan);
         return await JsonSerializer.DeserializeAsync<T>(stream, options, cancellationToken);
     }
 
@@ -88,8 +98,12 @@ public sealed class AtomicJsonStore
                 File.Move(current, BackupPath(index + 1), true);
             }
         }
+    }
 
-        if (File.Exists(FilePath)) File.Move(FilePath, BackupPath(1), true);
+    private void EnsureCurrentNotLost()
+    {
+        if (!File.Exists(FilePath) && Enumerable.Range(1, MaxBackups).Any(index => File.Exists(BackupPath(index))))
+            throw new IOException("Current store file is missing but recovery backups remain; original evidence retained.");
     }
 
     private string BackupPath(int index) => Path.Combine(root, $"{fileName}.{index}.bak");

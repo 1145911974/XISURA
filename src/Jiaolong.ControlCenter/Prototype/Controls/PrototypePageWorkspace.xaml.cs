@@ -164,10 +164,12 @@ public sealed partial class PrototypePageWorkspace : UserControl
         {
             var current = await preferences.LoadAsync(CancellationToken.None);
             SettingsRememberWindowSizeToggle.IsOn = current.RememberWindowSize;
+            SettingsKeepChangesOnExitToggle.IsOn = current.KeepChangesOnExit;
         }
         catch
         {
             SettingsRememberWindowSizeToggle.IsOn = false;
+            SettingsKeepChangesOnExitToggle.IsOn = false;
         }
         finally { synchronizingWindowToggle = false; }
     }
@@ -564,16 +566,15 @@ public sealed partial class PrototypePageWorkspace : UserControl
                     }
                 }
                 else entries["service-export-status.txt"] = "IPC 未连接；已导出本地诊断，服务端遥测未收集。";
-                temporary = Path.Combine(Path.GetTempPath(), $"xisura-diagnostics-{Guid.NewGuid():N}.zip");
+                // TEMP may point to a data drive; keep transient exports in the user's local profile.
+                var stagingDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp");
+                Directory.CreateDirectory(stagingDirectory);
+                temporary = Path.Combine(stagingDirectory, $"xisura-diagnostics-{Guid.NewGuid():N}.zip");
                 await using (var archive = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                     await Jiaolong.Diagnostics.SupportDiagnosticBundle.WriteAsync(archive, entries, serviceExport?.FilePath, deadline.Token);
                 await using (var source = new FileStream(temporary, FileMode.Open, FileAccess.Read, FileShare.Read))
-                await using (var target = new FileStream(destination.Path, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    target.SetLength(0);
-                    await source.CopyToAsync(target, deadline.Token);
-                    await target.FlushAsync(deadline.Token);
-                }
+                    await DiagnosticDestinationCopy.CopyAsync(source, destination.Path, deadline.Token);
                 SettingsStatusText.Text = "诊断日志已导出，可将 ZIP 文件发送给作者排查。";
             }
             finally
@@ -739,6 +740,27 @@ public sealed partial class PrototypePageWorkspace : UserControl
             SettingsRememberWindowSizeToggle.IsOn = preferences.Load().RememberWindowSize;
             synchronizingWindowToggle = false;
             SettingsStatusText.Text = $"保存窗口尺寸设置失败：{exception.Message}";
+        }
+    }
+
+    private void OnSettingsKeepChangesOnExitToggled(object sender, RoutedEventArgs e)
+    {
+        if (synchronizingWindowToggle) return;
+        SettingsStatusText.Visibility = Visibility.Visible;
+        var enabled = SettingsKeepChangesOnExitToggle.IsOn;
+        try
+        {
+            preferences.Update(current => current with { KeepChangesOnExit = enabled });
+            SettingsStatusText.Text = enabled
+                ? "已开启：完全退出后保留已应用配置"
+                : "已关闭：完全退出时按原规则恢复配置";
+        }
+        catch (Exception exception)
+        {
+            synchronizingWindowToggle = true;
+            SettingsKeepChangesOnExitToggle.IsOn = preferences.Load().KeepChangesOnExit;
+            synchronizingWindowToggle = false;
+            SettingsStatusText.Text = $"保存退出配置设置失败：{exception.Message}";
         }
     }
 

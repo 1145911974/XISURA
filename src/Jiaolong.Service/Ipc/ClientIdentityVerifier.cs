@@ -21,6 +21,8 @@ public sealed record ClientIdentity(
     ClientTokenKind TokenKind)
 {
     public Guid ConnectionId { get; init; }
+    public int ProcessId { get; init; }
+    public long ProcessCreationFileTimeUtc { get; init; }
     public static ClientIdentity LocalInteractive(string sid, int sessionId) => new(sid, sessionId, true, false, ClientTokenKind.Interactive);
 
     public static ClientIdentity LocalAdministrator(string sid, int sessionId) => new(sid, sessionId, true, true, ClientTokenKind.Interactive);
@@ -45,7 +47,7 @@ public sealed class ClientIdentityVerifier : IClientIdentityVerifier
     public static bool IsAuthorized(ClientIdentity identity) =>
         identity.IsLocal &&
         identity.SessionId >= 0 &&
-        (identity.IsAdministrator || identity.TokenKind == ClientTokenKind.Interactive) &&
+        identity.IsAdministrator &&
         identity.TokenKind == ClientTokenKind.Interactive;
 
     public ValueTask<ClientIdentity> VerifyAsync(SafePipeHandle pipeHandle, CancellationToken cancellationToken)
@@ -69,6 +71,8 @@ public sealed class ClientIdentityVerifier : IClientIdentityVerifier
 
         try
         {
+            if (!GetProcessTimes(process, out long creationTime, out _, out _, out _) || creationTime <= 0 || processId > int.MaxValue)
+                throw new UnauthorizedAccessException("Pipe client process lifetime could not be established.");
             if (!OpenProcessToken(process, TokenQuery, out var token) || token == IntPtr.Zero)
             {
                 throw new UnauthorizedAccessException("Pipe client token could not be opened.");
@@ -83,10 +87,11 @@ public sealed class ClientIdentityVerifier : IClientIdentityVerifier
                 var kind = tokenType == TokenType.Primary && sessionId > 0
                     ? ClientTokenKind.Interactive
                     : ClientTokenKind.NonInteractive;
-                var result = new ClientIdentity(sid, sessionId, true, isAdministrator, kind);
+                var result = new ClientIdentity(sid, sessionId, true, isAdministrator, kind)
+                { ProcessId = (int)processId, ProcessCreationFileTimeUtc = creationTime };
                 if (!IsAuthorized(result))
                 {
-                    throw new UnauthorizedAccessException("Pipe client is not an allowed local interactive identity.");
+                    throw new UnauthorizedAccessException("Pipe client is not an allowed local interactive administrator.");
                 }
 
                 return ValueTask.FromResult(result);
@@ -169,8 +174,14 @@ public sealed class ClientIdentityVerifier : IClientIdentityVerifier
             var administratorSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null).Value;
             for (var index = 0; index < groupCount; index++)
             {
-                var sidPointer = Marshal.ReadIntPtr(buffer, firstGroupOffset + (index * groupSize));
-                if (new SecurityIdentifier(sidPointer).Value == administratorSid)
+                var groupOffset = firstGroupOffset + (index * groupSize);
+                var sidPointer = Marshal.ReadIntPtr(buffer, groupOffset);
+                var attributes = (uint)Marshal.ReadInt32(buffer, groupOffset + IntPtr.Size);
+                // UAC-filtered tokens retain the Administrators SID as deny-only.
+                const uint groupEnabled = 0x00000004;
+                const uint groupUseForDenyOnly = 0x00000010;
+                if (new SecurityIdentifier(sidPointer).Value == administratorSid &&
+                    (attributes & (groupEnabled | groupUseForDenyOnly)) == groupEnabled)
                 {
                     return true;
                 }
@@ -203,6 +214,11 @@ public sealed class ClientIdentityVerifier : IClientIdentityVerifier
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessTimes(IntPtr process, out long creationTime, out long exitTime,
+        out long kernelTime, out long userTime);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);

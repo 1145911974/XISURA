@@ -19,7 +19,7 @@ public sealed class AdaptivePboRecoveryTests
             new AdvancedCpuTuningPlan(PboScalar: 0),
             new AdvancedCpuTuningPlan(PboScalar: 11),
             new AdvancedCpuTuningPlan(PboScalar: 2, OcClockMhz: 4000),
-            new AdvancedCpuTuningPlan(PboScalar: 2, CurveOptimizerAll: -31),
+            new AdvancedCpuTuningPlan(PboScalar: 2, CurveOptimizerAll: -51),
             new AdvancedCpuTuningPlan(PboScalar: 2, StapmWatts: 45)
         })
             Assert.IsFalse(AdaptiveAutomationConfigurationValidator.IsSafeRestorableCpuPlan(plan with { Advanced = advanced }));

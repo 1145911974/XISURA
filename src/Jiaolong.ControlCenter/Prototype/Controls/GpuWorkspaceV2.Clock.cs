@@ -31,9 +31,11 @@ public sealed partial class GpuWorkspaceV2
     {
         clockReady = available;
         CoreRail.IsEnabled = CoreValueBox.IsEnabled = available && !clockPending;
+        CoreRail.Visibility = CoreValueBox.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
 
         if (!available || state is null)
         {
+            CoreRail.SetValue(null);
             SetGpuHelpState(CoreFrequencyHelp, state is { Error: null, MaximumMhz: > 0 }
                 ? "当前锁频无法独立读回，已暂停写入" : "驱动限频不可用");
             return;

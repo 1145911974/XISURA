@@ -12,6 +12,8 @@ public sealed partial class QuickMenuEditor : UserControl
     private QuickMenuLayout layout = QuickMenuLayout.Default;
     private bool suppressOptionChanged;
     private int maxItems = QuickMenuLayout.MaxEnabledItems;
+    private string? persistenceError;
+    private Dictionary<QuickSettingKind, bool> currentAvailability = [];
 
     public ObservableCollection<QuickMenuOption> Options { get; private set; } = [];
     public ObservableCollection<QuickMenuPreviewSlot> PreviewItems { get; private set; } = [];
@@ -25,17 +27,25 @@ public sealed partial class QuickMenuEditor : UserControl
         PreviewGrid.ItemsSource = PreviewItems;
     }
 
+    public void SetPersistenceStatus(string? message)
+    {
+        persistenceError = message;
+        SelectionLimitText.Text = persistenceError ?? $"最多选择 {maxItems} 项";
+    }
+
     public void ApplyLayout(QuickMenuLayout value, IReadOnlyDictionary<QuickSettingKind, bool>? availability = null,
         int maxItems = QuickMenuLayout.MaxEnabledItems)
     {
         if (maxItems is < 1 or > QuickMenuLayout.MaxEnabledItems) throw new ArgumentOutOfRangeException(nameof(maxItems));
         this.maxItems = maxItems;
-        SelectionLimitText.Text = $"最多选择 {maxItems} 项";
+        currentAvailability = availability is null ? new Dictionary<QuickSettingKind, bool>() : new Dictionary<QuickSettingKind, bool>(availability);
+        SelectionLimitText.Text = persistenceError ?? $"最多选择 {maxItems} 项";
         PreviewSurface.Height = PreviewGrid.Height = maxItems <= 6 ? 164 : 238;
-        layout = new QuickMenuLayout(value.EnabledOrder.Distinct().Take(maxItems).ToArray());
+        layout = new QuickMenuLayout(value.EnabledOrder.Distinct().Take(maxItems).ToArray()) { Order = value.Order };
         var nextOptions = new ObservableCollection<QuickMenuOption>();
         foreach (var item in QuickMenuCatalog.CreateDefault())
         {
+            if (item.Kind == QuickSettingKind.StrongCooling && !currentAvailability.GetValueOrDefault(item.Kind)) continue;
             var option = new QuickMenuOption(item)
             {
                 IsAvailable = QuickMenuCatalog.IsLocal(item.Kind) || item.IsAction || availability?.TryGetValue(item.Kind, out var available) == true && available,
@@ -51,6 +61,13 @@ public sealed partial class QuickMenuEditor : UserControl
 
     public void SetAvailability(QuickSettingKind kind, bool available)
     {
+        bool changed = currentAvailability.GetValueOrDefault(kind) != available;
+        currentAvailability[kind] = available;
+        if (kind == QuickSettingKind.StrongCooling && changed)
+        {
+            ApplyLayout(layout, currentAvailability, maxItems);
+            return;
+        }
         var option = Options.FirstOrDefault(item => item.Item.Kind == kind);
         if (option is not null && !option.Item.IsAction)
         {
@@ -95,7 +112,8 @@ public sealed partial class QuickMenuEditor : UserControl
 
     private void OnPreviewDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
-        layout = QuickMenuPreviewLayout.ToLayout(PreviewItems, maxItems);
+        var reordered = QuickMenuPreviewLayout.ToLayout(PreviewItems, maxItems);
+        layout = layout.WithReorderedEnabled(reordered.EnabledOrder);
         suppressOptionChanged = true;
         try
         {

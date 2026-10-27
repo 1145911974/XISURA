@@ -8,12 +8,12 @@ public sealed record LightingDraft(string Effect, int Brightness, string Hex, bo
     public double Speed { get; init; } = 1;
     public static LightingDraft? FromPlan(Jiaolong.Contracts.Models.KeyboardLightingPlan? plan) =>
         plan is { Red: byte red, Green: byte green, Blue: byte blue } && plan.IsValid()
-            ? new(plan.Effect == "Fixed" ? "Static" : plan.Effect,
+            ? new(plan.Effect switch { "Fixed" => "Static", "Cycle" => "Gradient", _ => plan.Effect },
                 plan.BrightnessLevel ?? (int)Math.Round(plan.Brightness * 3d / 100),
                 new LightingColor(red, green, blue).Hex, plan.LogoEnabled ?? false) { Speed = plan.Speed }
             : null;
     public bool IsValid() => double.IsFinite(Speed) && Jiaolong.Contracts.Models.PresetValidation.ValidatePayload(Jiaolong.Contracts.Models.ControlPageId.Lighting,
-        System.Text.Json.JsonSerializer.SerializeToElement(this)).IsValid && Effect is "Static" or "Gradient" or "Cycle" && Brightness is >= 0 and <= 3 && LightingColor.TryParse(Hex, out _) && Speed is >= .5 and <= 2;
+        System.Text.Json.JsonSerializer.SerializeToElement(this)).IsValid && Effect is "Static" or "Gradient" && Brightness is >= 0 and <= 3 && LightingColor.TryParse(Hex, out _) && Speed is >= .5 and <= 2;
     public LightingColor PreviewColor(double seconds)
     {
         var color = ToPlan().ColorAt(seconds);
@@ -23,7 +23,7 @@ public sealed record LightingDraft(string Effect, int Brightness, string Hex, bo
     public Jiaolong.Contracts.Models.KeyboardLightingPlan ToPlan()
     {
         LightingColor.TryParse(Hex, out var color);
-        return new(Effect, (int)Math.Round(Brightness * 100d / 3))
+        return new(Effect == "Cycle" ? "Gradient" : Effect, (int)Math.Round(Brightness * 100d / 3))
         {
             Red = color.R, Green = color.G, Blue = color.B,
             BrightnessLevel = Brightness, LogoEnabled = Logo, Speed = Speed

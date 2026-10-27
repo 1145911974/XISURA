@@ -109,7 +109,7 @@ public sealed partial class GpuWorkspaceV2
         try
         {
             gpuEditorResetClock = draft.ResetCoreFrequencyLimit;
-            CoreValueBox.Visibility = Visibility.Visible;
+            CoreRail.Visibility = CoreValueBox.Visibility = Visibility.Visible;
             CoreLiveUnknown.Visibility = Visibility.Collapsed;
             if (draft.CoreFrequencyLimitMhz is int clock) { CoreRail.SetValue(clock); CoreValueBox.Value = clock; }
             else if (draft.ResetCoreFrequencyLimit)
@@ -315,7 +315,7 @@ public sealed partial class GpuWorkspaceV2
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot, Title = "使用 GPU 预设",
-                Content = $"将按顺序提交 {actions.Count} 项；未应用项：{(skipped.Count == 0 ? "无" : string.Join("、", skipped))}。每步成功后不会自动回滚，后续失败时已应用项保留。功耗和限频未读回时无法恢复未知旧值。",
+                Content = $"将按顺序提交 {actions.Count} 项；跳过项：{(skipped.Count == 0 ? "无" : string.Join("、", skipped))}。已提交操作不会自动回滚；后续失败时可能保留硬件效果。功耗和限频未读回时无法恢复未知旧值。",
                 PrimaryButtonText = "确认应用", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
             };
             if (!automatic && await Jiaolong_ControlCenter.Services.ContentDialogCoordinator.ShowAsync(dialog) != ContentDialogResult.Primary) return false;
@@ -324,7 +324,7 @@ public sealed partial class GpuWorkspaceV2
                 var result = await action.Apply();
                 if (result.State != CommandState.Applied || result.Error is not null)
                 {
-                    await PresetToolbar.ShowStatusAsync($"已应用 {applied}/{actions.Count} 项；{action.Name}失败，后续未应用。未应用项：{string.Join("、", skipped)}；已应用项保留");
+                    await PresetToolbar.ShowStatusAsync($"已提交 {applied}/{actions.Count} 项；{action.Name}失败，后续未提交。跳过：{(skipped.Count == 0 ? "无" : string.Join("、", skipped))}；请核查硬件读回");
                     return false;
                 }
                 applied++;
@@ -341,7 +341,7 @@ public sealed partial class GpuWorkspaceV2
             if (livePreset is null && skipped.Count == 0)
             {
                 try { followPreferences.Update(value => value with { GpuPresetSlots = new(value.GpuPresetSlots) { [key.Mode.ToString()] = key.Slot } }); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await PresetToolbar.ShowStatusAsync("配置已提交，但记忆档位保存失败"); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { await PresetToolbar.ShowStatusAsync("配置已提交，但记忆档位保存失败"); }
             }
             UpdateGpuActiveBadge(activeSession.State);
             if (appliedGpuPreset is not null && !GpuPresetMatchesReadback(appliedGpuPreset, activeSession.State))
@@ -349,10 +349,12 @@ public sealed partial class GpuWorkspaceV2
                 PresetToolbar.SetCurrentPreset(null);
                 PresetToolbar.SetSubmittedPreset(key);
             }
-            await PresetToolbar.ShowStatusAsync($"已提交 {applied} 项；未应用项：{(skipped.Count == 0 ? "无" : string.Join("、", skipped))}。驱动状态将随后刷新");
+            await (skipped.Count == 0
+                ? PresetToolbar.ShowTransientStatusAsync($"已提交 {applied} 项")
+                : PresetToolbar.ShowStatusAsync($"已提交 {applied} 项；未提交项：{string.Join("、", skipped)}"));
             return skipped.Count == 0;
         }
-        catch { await PresetToolbar.ShowStatusAsync($"已应用 {applied}/{actions.Count} 项；请求中断，已应用项保留"); return false; }
+        catch { await PresetToolbar.ShowStatusAsync($"已提交 {applied}/{actions.Count} 项；请求中断，硬件效果请核查"); return false; }
         finally
         {
             gpuPresetApplying = false;
@@ -382,8 +384,8 @@ public sealed partial class GpuWorkspaceV2
     private static bool ValidPreset(GpuWorkspacePreset draft)
     {
         if (!PresetValidation.ValidatePayload(ControlPageId.Gpu, JsonSerializer.SerializeToElement(draft)).IsValid) return false;
-        bool memoryValid = draft.MemoryOffsetKhz is not int memory || memory is >= -200_000 and <= 200_000 && memory % 1000 == 0;
-        bool coreValid = draft.CoreOffsetKhz is not int core || core is >= -200_000 and <= 200_000 && core % 1000 == 0;
+        bool memoryValid = draft.MemoryOffsetKhz is not int memory || memory is >= -1_000_000 and <= 3_000_000 && memory % 1000 == 0;
+        bool coreValid = draft.CoreOffsetKhz is not int core || core is >= -1_000_000 and <= 1_000_000 && core % 1000 == 0;
         return (draft.CoreFrequencyLimitMhz is null or > 0) && memoryValid && coreValid &&
             !(draft.ResetCoreFrequencyLimit && draft.CoreFrequencyLimitMhz is not null) &&
             (draft.VfOffsetsKhz is null || draft.VfOffsetsKhz is { Length: 127 } vf && vf[0] == 0 && vf.All(value => value is >= -200_000 and <= 200_000)) &&
@@ -395,8 +397,8 @@ public sealed partial class GpuWorkspaceV2
     {
         var vf = state.Controls.GpuVf;
         return !(preset.CoreFrequencyLimitMhz is int clock && state.Controls.GpuClockLimit is { Error: null } range && (clock < range.MinimumMhz || clock > range.MaximumMhz)) &&
-            !(preset.MemoryOffsetKhz is int memory && vf?.MemoryMinimumOffsetKhz is int memoryMin && vf.MemoryMaximumOffsetKhz is int memoryMax && (memory < memoryMin || memory > memoryMax)) &&
-            !(preset.CoreOffsetKhz is int core && vf?.CoreMinimumOffsetKhz is int coreMin && vf.CoreMaximumOffsetKhz is int coreMax && (core < coreMin || core > coreMax)) &&
+            !(preset.MemoryOffsetKhz is int memory && (vf?.PstateOffsetRange(memory: true) is not { } memoryRange || memory < memoryRange.MinimumKhz || memory > memoryRange.MaximumKhz)) &&
+            !(preset.CoreOffsetKhz is int core && (vf?.PstateOffsetRange(memory: false) is not { } coreRange || core < coreRange.MinimumKhz || core > coreRange.MaximumKhz)) &&
             !(preset.VfOffsetsKhz is { } offsets && vf is not null && offsets.Any(value => value < vf.MinimumOffsetKhz || value > vf.MaximumOffsetKhz));
     }
 }

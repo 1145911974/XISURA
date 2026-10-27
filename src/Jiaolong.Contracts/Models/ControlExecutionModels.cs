@@ -5,7 +5,7 @@ using Jiaolong.Contracts.Commands;
 namespace Jiaolong.Contracts.Models;
 
 [JsonConverter(typeof(LowerCamelEnumConverter<ControlOrigin>))]
-public enum ControlOrigin { ManualMode, ManualLive, PresetUse, Adaptive, StartupRestore, TurboBranch }
+public enum ControlOrigin { ManualMode, ManualLive, PresetUse, Adaptive, StartupRestore, TurboBranch, ModeFollow }
 [JsonConverter(typeof(LowerCamelEnumConverter<ApplyState>))]
 public enum ApplyState { Pending, Confirmed, SubmittedUnverified, Partial, Failed, Superseded, Unknown }
 [JsonConverter(typeof(LowerCamelEnumConverter<SettingIntent>))]
@@ -28,14 +28,24 @@ public sealed record ControlRequest(Guid OperationId, long Generation, ControlOr
 public sealed record FieldExecutionState(Guid OwnerOperationId, ControlOrigin Origin,
     SettingRequest? Baseline, SettingRequest? LastWritten, ApplyState WriteState)
 {
+    public Guid? ClientSessionId { get; init; }
     public CpuFieldRestorationValue? BaselineDetails { get; init; }
     public CpuFieldRestorationValue? LastWrittenDetails { get; init; }
+    public SettingRequest? WriteBefore { get; init; }
+    public CpuFieldRestorationValue? WriteBeforeDetails { get; init; }
+    public CpuFieldRestorationValue? WriteTargetDetails { get; init; }
 }
 public sealed record CpuFieldRestorationValue(int? AcBoostMode, int? DcBoostMode, Dictionary<int, int>? PerCoreCurveOptimizer);
+public sealed record PendingControlStep(HardwareCommand Command, string[] Fields);
 public sealed record ControlExecutionState(long Generation, long HardwareEpoch, long ConfigurationRevision,
     ControlModeId LogicalMode, PerformanceMode NativeMode, PageApplyResult[] Pages,
     Dictionary<string, FieldExecutionState> Fields)
 {
     public ApplyState NativeModeApplyState { get; init; } = ApplyState.Pending;
+    public Guid? NativeModeOwnerClientSessionId { get; init; }
+    public Guid? WindowsScopeSessionId { get; init; }
+    public SetCpuTuningBatchCommand? CpuWriteBatch { get; init; }
+    public string? WindowsWriteProofHash { get; init; }
+    public PendingControlStep? PendingStep { get; init; }
 }
 public sealed record PublishPresetCatalogResult(long CatalogRevision);

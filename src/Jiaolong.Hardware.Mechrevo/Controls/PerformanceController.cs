@@ -243,9 +243,17 @@ public sealed class PerformanceController(
             }
             // Mode selection can reset the burst ceiling; order against its fresh hardware value.
             await AccessHardwareAsync(() => OrderPowerFieldsAsync(requested, cpuTransport, cancellationToken));
-            foreach (var (field, value) in requested)
+            for (int index = 0; index < requested.Length; index++)
             {
+                var (field, value) = requested[index];
                 failureStage = field.ToString();
+                if (value is PartialFrequencyValue partial)
+                {
+                    var current = await AccessHardwareAsync(() => cpuTransport.ReadFieldAsync(field, cancellationToken)) as WindowsPowerFrequencyValue
+                        ?? throw new InvalidOperationException("frequencyPairUnavailable");
+                    value = new WindowsPowerFrequencyValue(partial.Ac ?? current.Ac, partial.Dc ?? current.Dc);
+                    requested[index] = (field, value);
+                }
                 // Firmware mode selection may reset values: compare fresh readback, not the rollback snapshot.
                 if (cpuTransport.IsReadBackRequired(field) &&
                     cpuTransport.IsReadBackMatch(field, value,
@@ -271,7 +279,7 @@ public sealed class PerformanceController(
             failureStage = "NativeModeVerify";
             if (verifyNativeMode is not null && !await AccessHardwareAsync(() => verifyNativeMode(cancellationToken)))
                 throw new CpuTuningReadBackException("nativeModeMismatch");
-            var finalValues = requested.ToDictionary(
+            var finalValues = requested.GroupBy(item => item.Field).Select(group => group.Last()).ToDictionary(
                 item => item.Field,
                 item => item.Value);
             return new CpuTuningTransactionResult(
@@ -284,10 +292,12 @@ public sealed class PerformanceController(
                 attemptedMutation ? CommandState.RecoveryRequired : CommandState.Rejected, snapshots,
                 Failure(attemptedMutation ? ErrorCode.HardwareWriteFailed : ErrorCode.CancelledBeforeApply, error), false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
         {
-            if (nativeModeAttempted || attempted.Count > 0)
-                await RestoreAsync(attempted, snapshots, CancellationToken.None, nativeModeAttempted ? restoreNativeMode : null);
+            if ((nativeModeAttempted || attempted.Count > 0) &&
+                !await RestoreAsync(attempted, snapshots, CancellationToken.None, nativeModeAttempted ? restoreNativeMode : null))
+                return new CpuTuningTransactionResult(operationId, CommandState.RecoveryRequired, snapshots,
+                    Failure(ErrorCode.RollbackFailed, error), HardwareReadBackConfirmed: false);
             throw;
         }
         catch (CpuTuningReadBackException error)
@@ -296,7 +306,7 @@ public sealed class PerformanceController(
                 nativeModeAttempted ? restoreNativeMode : null);
             return new CpuTuningTransactionResult(
                 operationId,
-                rollbackFailed && !IsHardwareAccessAllowed() ? CommandState.RecoveryRequired : CommandState.RolledBack,
+                rollbackFailed ? CommandState.RecoveryRequired : CommandState.RolledBack,
                 new Dictionary<CpuTuningField, object?>(snapshots),
                 Failure(
                     rollbackFailed ? ErrorCode.RollbackFailed : ErrorCode.ReadBackMismatch,
@@ -311,7 +321,7 @@ public sealed class PerformanceController(
                 nativeModeAttempted ? restoreNativeMode : null);
             return new CpuTuningTransactionResult(
                 operationId,
-                rollbackFailed && !IsHardwareAccessAllowed() ? CommandState.RecoveryRequired : CommandState.RolledBack,
+                rollbackFailed ? CommandState.RecoveryRequired : CommandState.RolledBack,
                 new Dictionary<CpuTuningField, object?>(snapshots),
                 Failure(
                     rollbackFailed ? ErrorCode.RollbackFailed : ErrorCode.HardwareWriteFailed,
@@ -379,19 +389,15 @@ public sealed class PerformanceController(
         if (plan.WindowsPowerSchemeId is { } scheme) yield return (CpuTuningField.WindowsPowerSchemeId, scheme);
         if (plan.SplWatts is { } spl) yield return (CpuTuningField.SplWatts, spl);
         if (plan.SpptWatts is { } sppt) yield return (CpuTuningField.SpptWatts, sppt);
-        var ac = plan.AcMaxFrequencyMhz;
-        var dc = plan.DcMaxFrequencyMhz;
+        var ac = plan.AcMaxFrequencyMhz ?? plan.MaxFrequencyMhz;
+        var dc = plan.DcMaxFrequencyMhz ?? plan.MaxFrequencyMhz;
         if (ac is not null || dc is not null)
         {
-            var legacy = plan.MaxFrequencyMhz ?? ac ?? dc ?? throw new InvalidOperationException("frequencyValueMissing");
             yield return (CpuTuningField.MaxFrequencyMhz,
-                new WindowsPowerFrequencyValue(ac ?? legacy, dc ?? legacy));
+                ac is int acValue && dc is int dcValue ? new WindowsPowerFrequencyValue(acValue, dcValue) : new PartialFrequencyValue(ac, dc));
         }
-        else if (plan.MaxFrequencyMhz is { } frequency)
-        {
-            yield return (CpuTuningField.MaxFrequencyMhz, new WindowsPowerFrequencyValue(frequency, frequency));
-        }
-        if (plan.BoostEnabled is { } boost) yield return (CpuTuningField.BoostEnabled, boost);
+        if (plan.BoostPolicy is { } policy) yield return (CpuTuningField.BoostEnabled, new WindowsPowerBoostValue(policy.AcMode, policy.DcMode));
+        else if (plan.BoostEnabled is { } boost) yield return (CpuTuningField.BoostEnabled, boost);
         if (plan.AcMinActiveCoresPercent is int acParking && plan.DcMinActiveCoresPercent is int dcParking)
             yield return (CpuTuningField.CoreParkingPercent, new WindowsCoreParkingValue(acParking, dcParking));
         if (plan.EnabledCoreCount is { } cores) yield return (CpuTuningField.EnabledCoreCount, cores);
@@ -422,4 +428,6 @@ public sealed class PerformanceController(
     {
         public CpuTuningReadBackException(string message) : base(message) { }
     }
+
+    private sealed record PartialFrequencyValue(int? Ac, int? Dc);
 }

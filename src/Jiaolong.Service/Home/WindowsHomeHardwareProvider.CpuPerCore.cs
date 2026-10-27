@@ -19,7 +19,7 @@ public sealed partial class WindowsHomeHardwareProvider
             (plan with { Advanced = null }) == new CpuTuningPlan(null, null, null, null, null, null, null, null) &&
             (plan.Advanced! with { PerCoreCurveOptimizer = null }) == new AdvancedCpuTuningPlan();
         if (!onlyPerCore || values!.Count is < 1 or > 16 ||
-            values.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -30 or > 0))
+            values.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -50 or > 0))
             return Rejected(command.OperationId, ErrorCode.ValidationFailed);
 
         if (compatibilityDecision?.Mode != CompatibilityMode.Writable ||

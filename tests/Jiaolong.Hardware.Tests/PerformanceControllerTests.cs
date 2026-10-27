@@ -50,6 +50,21 @@ public sealed class PerformanceControllerTests
     }
 
     [TestMethod]
+    public async Task Cpu_batch_repeated_field_reports_last_target_without_rolling_back_successful_writes()
+    {
+        var fixture = new CpuTuningFixture(CpuTuningField.SplWatts);
+        var result = await fixture.Controller.ApplyCpuTuningBatchAsync([
+            new(null, null, null, 4400, null, null, null, null),
+            new(null, null, null, 4600, null, null, null, null)
+        ], true, CancellationToken.None);
+        Assert.AreEqual(CommandState.Applied, result.State, result.Error?.Details.GetValueOrDefault("cause"));
+        Assert.IsNull(result.Error);
+        Assert.AreEqual(new WindowsPowerFrequencyValue(4600, 4600), result.FinalValues[CpuTuningField.MaxFrequencyMhz]);
+        Assert.AreEqual(new WindowsPowerFrequencyValue(4600, 4600), fixture.CurrentValues[CpuTuningField.MaxFrequencyMhz]);
+        Assert.AreEqual(2, fixture.WriteCount);
+    }
+
+    [TestMethod]
     public async Task Batch_skips_confirmed_equal_values_but_rechecks_after_native_mode_reset()
     {
         var unchanged = new CpuTuningFixture(CpuTuningField.SplWatts);
@@ -127,7 +142,7 @@ public sealed class PerformanceControllerTests
             prepareNativeMode: _ => Task.CompletedTask,
             restoreNativeMode: _ => throw new InvalidOperationException("nativeRestoreFailed"),
             verifyNativeMode: _ => Task.FromResult(true));
-        Assert.AreEqual(CommandState.RolledBack, failedRecovery.State);
+        Assert.AreEqual(CommandState.RecoveryRequired, failedRecovery.State);
         Assert.AreEqual(ErrorCode.RollbackFailed, failedRecovery.Error!.Code);
         Assert.AreEqual("SplWatts", failedRecovery.Error.Details["stage"]);
         Assert.AreEqual("simulatedWriteFailure", failedRecovery.Error.Details["cause"]);
@@ -216,6 +231,18 @@ public sealed class PerformanceControllerTests
 
         Assert.AreEqual(95, transport.Value);
         Assert.AreEqual(1, transport.RestoreCount);
+
+        using var failedCancellation = new CancellationTokenSource();
+        var failedTransport = new CancelOnWriteTransport(failedCancellation, failRestore: true);
+        var failedController = new PerformanceController(cpuTransport: failedTransport);
+        var failedResult = await failedController.ApplyCpuTuningAsync(
+            new CpuTuningPlan(90, null, null, null, null, null, null, null),
+            isAcConnected: true,
+            failedCancellation.Token);
+        Assert.AreEqual(CommandState.RecoveryRequired, failedResult.State);
+        Assert.AreEqual(ErrorCode.RollbackFailed, failedResult.Error!.Code);
+        Assert.AreEqual(90, failedTransport.Value);
+        Assert.AreEqual(1, failedTransport.RestoreCount);
     }
 
     [TestMethod]
@@ -363,7 +390,7 @@ public sealed class PerformanceControllerTests
             Task.CompletedTask;
     }
 
-    private sealed class CancelOnWriteTransport(CancellationTokenSource cancellation) : ICpuTuningTransport
+    private sealed class CancelOnWriteTransport(CancellationTokenSource cancellation, bool failRestore = false) : ICpuTuningTransport
     {
         public int Value { get; private set; } = 95;
         public int RestoreCount { get; private set; }
@@ -384,8 +411,9 @@ public sealed class PerformanceControllerTests
         public Task RestoreFieldAsync(CpuTuningField field, object? value, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Value = (int)value!;
             RestoreCount++;
+            if (failRestore) throw new InvalidOperationException("restoreFailed");
+            Value = (int)value!;
             return Task.CompletedTask;
         }
     }

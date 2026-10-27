@@ -58,7 +58,7 @@ public sealed class CpuCurveModeTests
         Assert.AreEqual(-5, Read(mixed, null).PerCoreCurveOptimizer![7]);
         foreach (var unknown in new[] { null, state with { CurveOptimizerVerification = "cached" },
             state with { PerCoreCurveOptimizer = new Dictionary<int, int> { [0] = -12 } },
-            state with { PerCoreCurveOptimizer = values.ToDictionary(pair => pair.Key, _ => -31) } })
+            state with { PerCoreCurveOptimizer = values.ToDictionary(pair => pair.Key, _ => -51) } })
         {
             var waiting = Read(unknown, CpuCurveOptimizerMode.AllCore);
             Assert.AreEqual(CpuCurveOptimizerMode.AllCore, waiting.CurveOptimizerMode);

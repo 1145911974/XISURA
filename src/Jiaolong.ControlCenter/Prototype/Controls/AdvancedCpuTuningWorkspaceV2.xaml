@@ -27,7 +27,7 @@
                     <shared:AdvancedCpuFieldRowV2 x:Name="StapmRow" Label="STAPM（短时功耗）" Description="平台短时功耗限制" Minimum="45" Maximum="75" RecommendedValue="55" LimitValue="75" Unit="W" />
                     <shared:AdvancedCpuFieldRowV2 x:Name="FastPptRow" Label="Fast PPT（瞬时功耗）" Description="瞬时封装功耗限制" Minimum="45" Maximum="75" RecommendedValue="55" LimitValue="75" Unit="W" />
                     <shared:AdvancedCpuFieldRowV2 x:Name="SlowPptRow" Label="Slow PPT（长时功耗）" Description="持续封装功耗限制" Minimum="45" Maximum="75" RecommendedValue="55" LimitValue="75" Unit="W" />
-                    <shared:AdvancedCpuFieldRowV2 x:Name="PptRow" Label="PPT（总封装功耗）" Description="总封装功耗边界" Minimum="45" Maximum="75" RecommendedValue="55" LimitValue="75" Unit="W" />
+                    <shared:AdvancedCpuFieldRowV2 x:Name="PptRow" Label="PPT（总封装功耗）" Description="总封装功耗边界" Minimum="45" Maximum="75" RecommendedValue="55" LimitValue="75" StepFrequency="0.001" Unit="W" />
                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,2">
                         <TextBlock Text="电流边界" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}" />
                         <shared:ParameterHelpButton x:Name="CurrentBoundaryHelp" ParameterName="电流边界" />
@@ -84,14 +84,14 @@
                     <TextBlock x:Name="PerCoreModeHint" Text="逐核偏移" FontSize="12" Foreground="{StaticResource PrototypeSecondaryTextBrush}" />
                     <StackPanel x:Name="PerCoreCurvePanel" Spacing="8" Margin="0,8,0,0">
                         <ComboBox x:Name="CurveCoreSelector" HorizontalAlignment="Stretch" PlaceholderText="等待核心拓扑" SelectionChanged="OnCoreSelectionChanged" AutomationProperties.Name="选择曲线优化核心，显示已编辑偏移" />
-                        <shared:AdvancedCpuFieldRowV2 x:Name="PerCoreCurveRow" Label="核心偏移" Description="仅编辑所选核心，其他核心值保留" Minimum="-30" Maximum="0" RecommendedValue="0" LimitValue="0" Unit="步" />
+                        <shared:AdvancedCpuFieldRowV2 x:Name="PerCoreCurveRow" Label="核心偏移" Description="仅编辑所选核心，其他核心值保留" Minimum="-50" Maximum="0" RecommendedValue="0" LimitValue="0" Unit="步" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,2">
                         <TextBlock Text="温度边界" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource PrototypeTextBrush}" />
                         <shared:ParameterHelpButton x:Name="TemperatureBoundaryHelp" ParameterName="温度边界" />
                     </StackPanel>
                     <shared:AdvancedCpuFieldRowV2 x:Name="Mp1Row" Label="MP1（核心温度上限）" Description="核心温度保护阈值" Minimum="40" Maximum="100" RecommendedValue="95" LimitValue="100" Unit="°C" />
-                    <shared:AdvancedCpuFieldRowV2 x:Name="RsmuRow" Label="RSMU（核心温度上限）" Description="本机与 MP1 为同一温限" Minimum="40" Maximum="100" RecommendedValue="90" LimitValue="100" Unit="°C" />
+                    <shared:AdvancedCpuFieldRowV2 x:Name="RsmuRow" Label="RSMU（核心温度上限）" Description="按独立能力验证开放" Minimum="40" Maximum="100" RecommendedValue="90" LimitValue="100" Unit="°C" />
                 </StackPanel>
             </Border>
         </Grid>

@@ -30,6 +30,7 @@ public sealed partial class AdvancedCpuFieldRowV2 : UserControl
     public double DisplayScale { get; set; } = 1d;
     public double StepFrequency { get; set; } = 1d;
     public string Unit { get; set; } = string.Empty;
+    public bool UseHardwareFallback { get; set; } = true;
 
     public double? Value => hasPendingValue ? pendingValue : draftValue;
 
@@ -65,9 +66,9 @@ public sealed partial class AdvancedCpuFieldRowV2 : UserControl
         synchronizing = true;
         draftValue = value;
         // A movable seed is not a submitted target until the user edits this row.
-        double? displayedValue = value ?? hardwareRawValue;
-        Rail.SetValue(displayedValue ?? (allowUnknownDraft ? RecommendedValue : null));
-        ValueBox.IsEnabled = value.HasValue || allowUnknownDraft;
+        double? displayedValue = value ?? (UseHardwareFallback ? hardwareRawValue : null);
+        Rail.SetValue(displayedValue ?? (UseHardwareFallback && allowUnknownDraft ? RecommendedValue : null));
+        ValueBox.IsEnabled = displayedValue.HasValue || allowUnknownDraft;
         SetSynchronizedText(displayedValue is double actual ? Format(actual) : string.Empty);
         synchronizing = false;
     }
@@ -139,7 +140,7 @@ public sealed partial class AdvancedCpuFieldRowV2 : UserControl
     }
 
     private string Format(double value) =>
-        PerformanceDisplayValue.ToDisplay(value, DisplayScale).ToString("0.##", CultureInfo.CurrentCulture);
+        PerformanceDisplayValue.ToDisplay(value, DisplayScale).ToString("0.###", CultureInfo.CurrentCulture);
 
     private void SetSynchronizedText(string text)
     {

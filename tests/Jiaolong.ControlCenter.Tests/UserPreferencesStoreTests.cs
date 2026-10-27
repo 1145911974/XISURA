@@ -4,6 +4,28 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class UserPreferencesStoreTests
 {
     [TestMethod]
+    public void Keep_changes_defaults_off_and_roundtrips_without_changing_other_preferences()
+    {
+        var paths = new RecordingPathProvider();
+        try
+        {
+            var store = new Jiaolong_ControlCenter.Services.UserPreferencesStore(paths);
+            Assert.IsFalse(store.Load().KeepChangesOnExit);
+            string file = Path.Combine(paths.LocalAppDataRoot, "Jiaolong Control Center", "preferences.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, "{\"Theme\":\"dark\",\"MinimizeToTrayOnClose\":true,\"ReduceMotion\":false}");
+            Assert.IsFalse(store.Load().KeepChangesOnExit);
+            store.Update(current => current with { KeepChangesOnExit = true });
+            Assert.IsTrue(store.Load().KeepChangesOnExit);
+            Assert.AreEqual("dark", store.Load().Theme);
+            Assert.IsTrue(store.Load().MinimizeToTrayOnClose);
+            store.Update(current => current with { KeepChangesOnExit = false });
+            Assert.IsFalse(store.Load().KeepChangesOnExit);
+        }
+        finally { if (Directory.Exists(paths.LocalAppDataRoot)) Directory.Delete(paths.LocalAppDataRoot, true); }
+    }
+
+    [TestMethod]
     public async Task User_preferences_never_write_program_data()
     {
         var paths = new RecordingPathProvider();

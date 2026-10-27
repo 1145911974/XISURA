@@ -24,15 +24,7 @@ public sealed record SettingsSnapshot(
     string CircuitState,
     string LastRecovery);
 
-public sealed record DiagnosticExportRequest(Guid OperationId);
-
 public sealed record DiagnosticExportCopyResult(bool StagingCleanupConfirmed);
-
-public interface IDiagnosticExportClient
-{
-    Task<DiagnosticExport> StageDiagnosticsAsync(DiagnosticExportRequest request, CancellationToken cancellationToken);
-    Task DeleteStagedDiagnosticsAsync(DiagnosticExport export, CancellationToken cancellationToken);
-}
 
 public sealed class SettingsViewModel : INotifyPropertyChanged
 {

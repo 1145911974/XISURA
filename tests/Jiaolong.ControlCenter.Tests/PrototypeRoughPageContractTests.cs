@@ -21,7 +21,8 @@ public sealed class PrototypeRoughPageContractTests
         Assert.IsTrue(preview >= 0 && apply > preview, "Preview precedes asynchronous hardware submission.");
         StringAssert.Contains(code, "if (revision != manualModeRevision) return false;");
         StringAssert.Contains(code, "() => revision == manualModeRevision");
-        StringAssert.Contains(catalog, "intent == Volatile.Read(ref applyVersion) && isCurrent?.Invoke() != false");
+        StringAssert.Contains(catalog,
+            "intent == Volatile.Read(ref applyVersion) && (explicitRequest || !followApplicationsStopped) && isCurrent?.Invoke() != false");
         StringAssert.Contains(catalog, "if (!Current()) return null;");
         StringAssert.Contains(catalog, "session.ApplyControlRequestAsync");
     }
@@ -237,10 +238,14 @@ public sealed class PrototypeRoughPageContractTests
         int start = code.IndexOf("private async void OnUsePreset", StringComparison.Ordinal);
         string use = code[start..code.IndexOf("public void SetPageActive", start, StringComparison.Ordinal)];
         Assert.IsFalse(use.Contains("confirmation.ShowAsync", StringComparison.Ordinal), "Saved lighting presets apply directly.");
-        StringAssert.Contains(use, "await Catalog.ApplyAsync");
-        StringAssert.Contains(use, "ControlOrigin.PresetUse, ControlPageId.Lighting, key");
+        StringAssert.Contains(use, "await presets.LoadAsync(ControlPageId.Lighting, key");
+        StringAssert.Contains(use, "await session.ExecuteAsync(new SetKeyboardLightingCommand");
+        Assert.IsFalse(use.Contains("Catalog.ApplyAsync", StringComparison.Ordinal), "Lighting selection must not apply a whole-machine mode.");
+        Assert.IsFalse(use.Contains("SetPerformanceModeCommand", StringComparison.Ordinal));
         StringAssert.Contains(use, "if (result.State == CommandState.Applied && result.Error is null)");
-        StringAssert.Contains(use, "Pages.FirstOrDefault(p => p.Page == ControlPageId.Lighting)?.State == Jiaolong.Contracts.Models.ApplyState.Confirmed");
+        StringAssert.Contains(use, "LightingPresetPolicy.SameEffect(plan, session?.State?.Controls.KeyboardLighting)");
+        Assert.IsTrue(use.IndexOf("lightingSlots[key.Mode.ToString()] = key.Slot", StringComparison.Ordinal) >
+            use.IndexOf("if (result.State == CommandState.Applied && result.Error is null)", StringComparison.Ordinal));
         StringAssert.Contains(use, "PresetToolbar.SetCurrentPreset(key)");
         StringAssert.Contains(use, "PresetToolbar.SetSubmittedPreset(key)");
     }
@@ -422,7 +427,11 @@ public sealed class PrototypeRoughPageContractTests
         StringAssert.Contains(workspace, "x:Name=\"AdvancedWorkspace\"");
         StringAssert.Contains(code, "ApplyTelemetry(HardwareSnapshot snapshot)");
         StringAssert.Contains(code, "CpuBoundary.ApplyTelemetry(snapshot)");
-        StringAssert.Contains(code, "currentState = available ? snapshot.Controls.CpuTuning : null");
+        int applyState = code.IndexOf("public void ApplyState(HomeStateSnapshot snapshot)", StringComparison.Ordinal);
+        int nextMethod = code.IndexOf("private void ApplyHardwareState", applyState, StringComparison.Ordinal);
+        string apply = code[applyState..nextMethod];
+        StringAssert.Contains(apply, "var presentation = CpuReadbackPresentation.From(snapshot);");
+        StringAssert.Contains(apply, "currentState = presentation.HardwareState;");
         StringAssert.Contains(boundaryCode, "temperatureValue = snapshot.CpuTemperatureC");
         StringAssert.Contains(boundaryCode, "powerValue = snapshot.CpuPowerWatts is int power ? power : null");
     }

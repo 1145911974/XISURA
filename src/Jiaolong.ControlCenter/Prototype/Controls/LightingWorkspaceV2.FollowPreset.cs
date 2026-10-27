@@ -55,11 +55,13 @@ public sealed partial class LightingWorkspaceV2
     {
         if (syncing || applying || loading || followSettingPending) { PresetToolbar.SetFollowPreset(followPreset); return; }
         if (requested == followPreset) return;
+        bool saved = false;
         try
         {
             await RestoreHardwarePreviewAsync();
             followSettingPending = true;
             preferences.Update(current => current with { LightingFollowPreset = requested });
+            saved = true;
             followPreset = requested;
             // Enabling automation applies once; disabling keeps the real current settings.
             lastAutomaticTarget = null;
@@ -77,7 +79,11 @@ public sealed partial class LightingWorkspaceV2
             PresetToolbar.SetFollowPreset(followPreset);
             UpdateActionAvailability();
         }
-        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(requested);
+        if (!saved) return;
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(ControlPageId.Lighting, requested);
+        if (requested && session?.State is { } current &&
+            LightingPresetPolicy.ResolveTarget(current.Controls, lightingSlots, confirmedCustomLighting, confirmedPerformanceLighting) is { } key)
+            await UsePresetAsync(key);
         await FollowCurrentPresetAsync();
     }
 

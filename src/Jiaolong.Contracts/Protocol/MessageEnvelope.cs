@@ -30,7 +30,10 @@ public sealed record HelloAckEnvelope(
     Guid MessageId,
     DateTimeOffset SentAtUtc,
     Guid ReplyToMessageId,
-    string ServiceVersion) : MessageEnvelope(ProtocolVersion, MessageId, SentAtUtc);
+    string ServiceVersion) : MessageEnvelope(ProtocolVersion, MessageId, SentAtUtc)
+{
+    public Guid? ServiceInstanceId { get; init; }
+}
 
 public sealed record RequestEnvelope(
     ProtocolVersion ProtocolVersion,

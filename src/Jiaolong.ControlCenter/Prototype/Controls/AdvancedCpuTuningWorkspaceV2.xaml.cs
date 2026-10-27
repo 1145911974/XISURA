@@ -8,11 +8,14 @@ namespace Jiaolong_ControlCenter.Prototype.Controls;
 public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
 {
     private readonly Dictionary<int, int> perCoreCurveOptimizer = new();
+    private readonly HashSet<AdvancedCpuFieldRowV2> liveEditedRows = new();
+    private readonly HashSet<int> liveEditedCores = new();
+    private bool liveCurveEdited;
+    private bool curveModeEdited;
     private IReadOnlyDictionary<int, int>? hardwareCurveOptimizer;
     private bool synchronizing;
     private bool touched;
     private bool advancedEdited;
-    public bool BasicAliasesEdited { get; private set; }
     private AdvancedCpuTuningDraft? loadedDraft;
     private int? loadedLegacyAllCore;
     private int selectedCore;
@@ -25,6 +28,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
     private bool pboAvailable;
     private int? hardwareAcParking;
     private int? hardwareDcParking;
+    private bool useHardwareFallback = true;
     private bool parkingAvailable;
 
     public AdvancedCpuTuningWorkspaceV2()
@@ -43,10 +47,10 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
             "输入范围 0–100%；100% 禁用核心停泊，0% 允许系统尽量停泊，不代表关闭全部核心。",
             "使用预设前必须能读回原值；过高增加待机功耗，过低可能增加响应延迟。");
         PowerBoundaryHelp.Help = Help(
-            "限制处理器长时和短时允许消耗的功率；提高可改善持续性能，也会增加热量与噪声。本机 Fast PPT、PPT 与 SPPT 对应同一上限，须一致。",
-            "优先采用本机厂商当前值；软件功耗参考起点 55 W，仅在 45–75 W 输入范围内调整。",
+            "限制处理器长时和短时允许消耗的功率；提高可改善持续性能，也会增加热量与噪声。各字段按独立读回和验证结果开放。",
+            "优先采用本机厂商当前值；PPT 软件输入 45–120 W，其余功耗项 45–75 W；优先保留当前值。",
             "保留已验证的当前值；需降温时逐步下调，避免同时提高多个功耗项。",
-            "75 W 为软件输入上限，不是硬件安全保证；实际写入受本机能力约束，恢复固件原值不受此边界截断。",
+            "PPT 的 120 W 来自本机 V35 原生档读值，是软件输入上限，不是稳定保证；准确恢复不受输入上限截断。",
             "保存是草稿，使用后才写入；过高可能触发温度或供电保护，过低降低持续性能。");
         CurrentBoundaryHelp.Help = Help(
             "限制处理器持续和瞬时可用电流；提高可能减少电流限制降频，也会增加供电压力。本机 VRM 与 TDC 为同一限值，须一致。",
@@ -55,7 +59,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
             "200 A（200000 mA）仅是软件输入上限；没有通用硬件安全电流，不以界面最大值作为建议。",
             "供电和处理器承受能力因设备而异；过高可能过热或触发保护。");
         TemperatureBoundaryHelp.Help = Help(
-            "设置处理器开始温度限制的阈值；调低更容易降温、降噪，调高会延后温度限制。本机温度墙、MP1、RSMU 是同一阈值，须一致。",
+            "设置处理器开始温度限制的阈值；调低更容易降温、降噪，调高会延后温度限制。编辑 MP1 不会自动提交 RSMU 或 OEM 温限。",
             "优先保留本机厂商温限；内置办公、游戏、狂飙标准档分别使用 75、85、90°C，仅作软件参考。",
             "保持厂商值，或在性能可接受时逐步降低；软件输入范围 40–100°C。",
             "100°C 是软件输入上限，不是推荐温度或硬件安全保证；实际可写范围以本机能力为准。",
@@ -70,7 +74,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
             "调整处理器频率对应的电压请求；负偏移可能降低功耗、温度，但过大会崩溃。全核统一调整，逐核只提交已编辑的核心。",
             "优先沿用 BIOS；需要调整时从接近 0 步开始，验证轻载、待机和重负载稳定性。",
             "沿用 BIOS 不额外写入；0 步是一个新目标，不等于恢复此前 BIOS 值。",
-            "输入 -30–0 步；-30 只是软件负向边界，步数不等于固定毫伏，不能作为通用稳定值。",
+            "输入 -50–0 步；-50 只是软件负向边界，步数不等于固定毫伏，不能作为通用稳定值。",
             "使用保存的性能预设后才提交；沿用 BIOS 不撤销已有软件偏移，异常时应恢复已知稳定设置。");
         UpdateCurveMode();
         foreach (var row in SmuLimitRows())
@@ -83,7 +87,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
             else
             {
                 row.Minimum = 45;
-                row.Maximum = row.LimitValue = 75;
+                row.Maximum = row.LimitValue = ReferenceEquals(row, PptRow) ? 120 : 75;
                 row.RecommendedValue = 55;
             }
         }
@@ -111,11 +115,19 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         preserveLoaded && !parkingDraftSpecified ? null : DraftCoreParking;
     public int? LegacyCurveOptimizer => advancedEdited ? null : loadedLegacyAllCore;
 
-    public void SetAvailability(bool available, bool advancedAvailable, bool pboScalarAvailable = false)
+    private bool independentTdcAvailable;
+
+    public void SetAvailability(bool available, bool advancedAvailable, bool pboScalarAvailable = false,
+        bool pptAvailable = false, bool mp1Available = false, bool tdcAvailable = false, bool edcAvailable = false)
     {
         IsEnabled = available;
         foreach (AdvancedCpuFieldRowV2 row in Rows())
             row.IsEnabled = available && advancedAvailable && SmuLimitRows().Contains(row);
+        PptRow.IsEnabled = available && pptAvailable;
+        Mp1Row.IsEnabled = available && mp1Available;
+        TdcRow.IsEnabled = available && tdcAvailable;
+        EdcRow.IsEnabled = available && edcAvailable;
+        independentTdcAvailable = tdcAvailable;
         pboAvailable = available && pboScalarAvailable && hardwarePboScalar is not null;
         PboScalarRow.IsEnabled = pboAvailable;
         RefreshPboStatus();
@@ -127,14 +139,14 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         CurveCoreSelector.IsEnabled = CurveCoreSelector.Items.Count > 0;
         UpdateCurveMode();
         AvailabilityText.Text = available
-            ? advancedAvailable || pboAvailable ? "已连接" : "高级能力不可用"
+            ? advancedAvailable || pboAvailable || pptAvailable || mp1Available || tdcAvailable || edcAvailable ? "已连接" : "高级能力不可用"
             : "硬件不可用";
     }
 
     public void SetPboHardware(int? scalar)
     {
         hardwarePboScalar = scalar;
-        if (!pboDraftDirty && !pboDraftSpecified)
+        if (useHardwareFallback && !pboDraftDirty && !pboDraftSpecified)
         {
             bool wasSynchronizing = synchronizing;
             synchronizing = true;
@@ -157,24 +169,6 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         RsmuRow.SetHardwareValue(limits?.RsmuTemperatureC);
     }
 
-    public void SynchronizeBasicAliases(double? temperature, double? fastPpt)
-    {
-        if (temperature is double limit && (Mp1Row.Value is not null || RsmuRow.Value is not null) &&
-            (Mp1Row.Value != limit || RsmuRow.Value != limit))
-        {
-            advancedEdited = touched = BasicAliasesEdited = true;
-            Mp1Row.SetValue(limit);
-            RsmuRow.SetValue(limit);
-        }
-        if (fastPpt is double watts && (FastPptRow.Value is not null || PptRow.Value is not null) &&
-            (FastPptRow.Value != watts || PptRow.Value != watts))
-        {
-            advancedEdited = touched = BasicAliasesEdited = true;
-            FastPptRow.SetValue(watts);
-            PptRow.SetValue(watts);
-        }
-    }
-
     public void SetCurveHardware(IReadOnlyDictionary<int, int>? values)
     {
         hardwareCurveOptimizer = values;
@@ -182,7 +176,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
             values?.TryGetValue(selectedCore, out int current) == true
                 ? $"已读回 {values.Count} 核；核心 {selectedCore + 1}：{current} 步。"
                 : "硬件偏移未读回。" };
-        if (touched) return;
+        if (!useHardwareFallback || touched) return;
         bool wasSynchronizing = synchronizing;
         synchronizing = true;
         if (values?.TryGetValue(selectedCore, out int actual) == true)
@@ -205,7 +199,7 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
             (draft.Ac != hardwareAcParking || draft.Dc != hardwareDcParking);
         hardwareAcParking = ac;
         hardwareDcParking = dc;
-        if (!parkingDraftSpecified && (!hasDraft || ac is null || dc is null))
+        if (useHardwareFallback && !parkingDraftSpecified && (!hasDraft || ac is null || dc is null))
         {
             CoreParkingAcRow.SetValue(ac);
             CoreParkingDcRow.SetValue(dc);
@@ -226,14 +220,20 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         AdvancedCpuTuningDraft? draft,
         int? legacyAllCore = null,
         int? coreParkingAc = null,
-        int? coreParkingDc = null)
+        int? coreParkingDc = null,
+        bool useHardwareFallback = true)
     {
+        this.useHardwareFallback = useHardwareFallback;
+        foreach (var row in Rows().Concat([CoreParkingAcRow, CoreParkingDcRow])) row.UseHardwareFallback = useHardwareFallback;
         synchronizing = true;
         touched = draft is not null || legacyAllCore.HasValue;
         advancedEdited = false;
-        BasicAliasesEdited = false;
         loadedDraft = draft;
         loadedLegacyAllCore = legacyAllCore;
+        liveEditedRows.Clear();
+        liveEditedCores.Clear();
+        liveCurveEdited = false;
+        curveModeEdited = false;
         perCoreCurveOptimizer.Clear();
 
         if (draft?.PerCoreCurveOptimizer is not null)
@@ -248,12 +248,12 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         EdcRow.SetValue(draft?.EdcCurrentMilliamps);
         Mp1Row.SetValue(draft?.Mp1TemperatureC);
         RsmuRow.SetValue(draft?.RsmuTemperatureC);
-        PboScalarRow.SetValue(draft?.PboScalar ?? hardwarePboScalar);
+        PboScalarRow.SetValue(draft?.PboScalar ?? (useHardwareFallback ? hardwarePboScalar : null));
         pboDraftDirty = false;
         pboDraftSpecified = draft?.PboScalar is not null;
         parkingDraftSpecified = coreParkingAc is not null && coreParkingDc is not null;
-        CoreParkingAcRow.SetValue(coreParkingAc ?? hardwareAcParking);
-        CoreParkingDcRow.SetValue(coreParkingDc ?? hardwareDcParking);
+        CoreParkingAcRow.SetValue(coreParkingAc ?? (useHardwareFallback ? hardwareAcParking : null));
+        CoreParkingDcRow.SetValue(coreParkingDc ?? (useHardwareFallback ? hardwareDcParking : null));
         curveMode = draft?.ResolveCurveOptimizerMode(legacyAllCore)
             ?? (legacyAllCore.HasValue ? CpuCurveOptimizerMode.AllCore : CpuCurveOptimizerMode.Bios);
         allCoreCurveValue = draft?.CurveOptimizerAll ?? legacyAllCore ?? 0;
@@ -286,6 +286,31 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         };
     }
 
+    public bool HasLiveCoreParkingEdit => liveEditedRows.Contains(CoreParkingAcRow) || liveEditedRows.Contains(CoreParkingDcRow);
+
+    public AdvancedCpuTuningDraft? ReadPresetEditDraft() =>
+        Jiaolong_ControlCenter.Services.PerformancePresetProjection.AdvancedEditTarget(
+            ReadLiveDraft(), curveModeEdited ? curveMode : null);
+
+    public AdvancedCpuTuningDraft? ReadLiveDraft()
+    {
+        if (!liveCurveEdited && !liveEditedRows.Any(row => !ReferenceEquals(row, CoreParkingAcRow) && !ReferenceEquals(row, CoreParkingDcRow)))
+            return null;
+        double? Value(AdvancedCpuFieldRowV2 row) => liveEditedRows.Contains(row) ? row.Value : null;
+        return new()
+        {
+            StapmWatts = Value(StapmRow), FastPptWatts = Value(FastPptRow),
+            SlowPptWatts = Value(SlowPptRow), PptWatts = Value(PptRow),
+            VrmCurrentMilliamps = ToInt(Value(VrmRow)), TdcCurrentMilliamps = ToInt(Value(TdcRow)),
+            EdcCurrentMilliamps = ToInt(Value(EdcRow)), Mp1TemperatureC = ToInt(Value(Mp1Row)),
+            RsmuTemperatureC = ToInt(Value(RsmuRow)), PboScalar = ToInt(Value(PboScalarRow)),
+            CurveOptimizerMode = liveCurveEdited ? curveMode : null,
+            CurveOptimizerAll = liveCurveEdited && curveMode == CpuCurveOptimizerMode.AllCore ? allCoreCurveValue : null,
+            PerCoreCurveOptimizer = liveCurveEdited && curveMode == CpuCurveOptimizerMode.PerCore && liveEditedCores.Count > 0
+                ? liveEditedCores.ToDictionary(core => core, core => perCoreCurveOptimizer[core]) : null
+        };
+    }
+
     private IEnumerable<AdvancedCpuFieldRowV2> Rows()
     {
         yield return StapmRow;
@@ -306,18 +331,14 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         if (synchronizing)
             return;
 
+        if (sender is AdvancedCpuFieldRowV2 editedRow) liveEditedRows.Add(editedRow);
+        if (!independentTdcAvailable && (ReferenceEquals(sender, VrmRow) || ReferenceEquals(sender, TdcRow))) liveEditedRows.UnionWith([VrmRow, TdcRow]);
         synchronizing = true;
-        if (ReferenceEquals(sender, FastPptRow)) PptRow.SetValue(value);
-        if (ReferenceEquals(sender, PptRow)) FastPptRow.SetValue(value);
-        if (ReferenceEquals(sender, VrmRow)) TdcRow.SetValue(value);
-        if (ReferenceEquals(sender, TdcRow)) VrmRow.SetValue(value);
-        if (ReferenceEquals(sender, Mp1Row)) RsmuRow.SetValue(value);
-        if (ReferenceEquals(sender, RsmuRow)) Mp1Row.SetValue(value);
+        if (!independentTdcAvailable && ReferenceEquals(sender, VrmRow)) TdcRow.SetValue(value);
+        if (!independentTdcAvailable && ReferenceEquals(sender, TdcRow)) VrmRow.SetValue(value);
         synchronizing = false;
         if (!ReferenceEquals(sender, CoreParkingAcRow) && !ReferenceEquals(sender, CoreParkingDcRow))
             advancedEdited = true;
-        if (ReferenceEquals(sender, FastPptRow) || ReferenceEquals(sender, PptRow) ||
-            ReferenceEquals(sender, Mp1Row) || ReferenceEquals(sender, RsmuRow)) BasicAliasesEdited = true;
         if (ReferenceEquals(sender, PboScalarRow))
         {
             pboDraftDirty = true;
@@ -331,6 +352,8 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         if (ReferenceEquals(sender, PerCoreCurveRow) && value is double curve)
         {
             perCoreCurveOptimizer[selectedCore] = (int)Math.Round(curve);
+            liveCurveEdited = true;
+            liveEditedCores.Add(selectedCore);
             bool wasSynchronizing = synchronizing;
             synchronizing = true;
             RefreshCoreLabels();
@@ -354,7 +377,8 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
     private void ApplySelectedCoreValues()
     {
         int? hardware = hardwareCurveOptimizer?.TryGetValue(selectedCore, out int actual) == true ? actual : null;
-        PerCoreCurveRow.SetValue(perCoreCurveOptimizer.TryGetValue(selectedCore, out int curve) ? curve : hardware ?? 0);
+        PerCoreCurveRow.SetValue(perCoreCurveOptimizer.TryGetValue(selectedCore, out int curve)
+            ? curve : useHardwareFallback ? hardware ?? 0 : null);
     }
 
     public CpuCurveOptimizerMode CurveMode => curveMode;
@@ -364,8 +388,9 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
     public void SetAllCoreCurveOffset(double value, bool userEdited = true)
     {
         if (curveMode != CpuCurveOptimizerMode.AllCore || !double.IsFinite(value)) return;
-        allCoreCurveValue = (int)Math.Round(Math.Clamp(value, -30, 30));
+        allCoreCurveValue = (int)Math.Round(Math.Clamp(value, -50, 30));
         if (!userEdited) return;
+        liveCurveEdited = true;
         advancedEdited = true;
         touched = true;
         UnsavedText.Visibility = Visibility.Visible;
@@ -377,6 +402,11 @@ public sealed partial class AdvancedCpuTuningWorkspaceV2 : UserControl
         if (!Enum.IsDefined(mode)) return;
         if (curveMode == mode) return;
         curveMode = mode;
+        curveModeEdited = true;
+        // Choosing an editor never converts old values into a numeric request.
+        liveCurveEdited = false;
+        liveEditedCores.Clear();
+        liveEditedRows.Remove(PerCoreCurveRow);
         UpdateCurveMode();
         advancedEdited = true;
         touched = true;

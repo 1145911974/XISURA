@@ -28,7 +28,8 @@ public sealed partial class PrototypeWindow : Window
     private readonly ModeBackgroundSelector backgrounds = new();
     private readonly WindowChromeSubscription chromeSubscription = new();
     private readonly AccessibilitySettings accessibilitySettings = new();
-    private readonly HomeControlSession homeSession = new();
+    private readonly HomeControlSession homeSession = new(manageClientSession: true);
+    private bool sessionRecoveryCompleted;
     private readonly KeyboardIndicatorService keyboardIndicators = new();
     private readonly WindowsKeyLockController windowsKeyLock = new();
     private readonly IDisplayPowerController displayPowerController = new WindowsDisplayPowerController();
@@ -79,6 +80,7 @@ public sealed partial class PrototypeWindow : Window
     private TrayQuickConsoleWindow? trayQuickConsole;
     private TrayContextMenuWindow? trayContextMenu;
     private bool allowClose;
+    private bool exitPending;
     private Task? shutdownTask;
 
     public PrototypeWindow(string? acceptancePage = null, bool acceptanceSecondaryDisplay = false)
@@ -151,11 +153,13 @@ public sealed partial class PrototypeWindow : Window
         HomeModeBar.TurboTierRequested += OnTurboTierRequested;
         Hero.AdaptiveModeChanged += OnAdaptiveModeChanged;
         homeSession.StateChanged += OnHomeStateChanged;
+        homeSession.ModeReadbackObserved += OnModeReadback;
         homeSession.TelemetryUpdated += OnHomeTelemetryUpdated;
         homeSession.RestoreWarning += OnRestoreWarning;
         homeSession.NotificationRequested += OnHardwareOperationNotification;
         StartConnectionAvailabilityTimer();
         RequestModeVisuals(PrototypePerformanceMode.Office, animate: false);
+        HomeModeBar.SetModeSelectionKnown(false);
         Hero.SetBrandingState(userPreferences.LogoStyle, null, animate: false);
         _ = RefreshTrayPresetCatalogAsync();
     }
@@ -373,7 +377,11 @@ public sealed partial class PrototypeWindow : Window
             // logical size and shrink the physical client area again on the 96-DPI
             // 1920x1080 secondary display.
             AppWindow.Move(new PointInt32(workArea.Left + 1, workArea.Top + 1));
-            ResizeToWorkArea(.96, workArea);
+            if (userPreferences.RememberWindowSize && WindowSizePersistence.IsUsable(
+                    new WindowSizePreference(userPreferences.WindowWidthDip, userPreferences.WindowHeightDip)))
+                ResizeToWorkArea(GetStartupClientSize(), workArea);
+            else
+                ResizeToWorkArea(.96, workArea);
         }
         else ResizeToPrimaryDisplayAtStartup();
     }
@@ -578,11 +586,14 @@ public sealed partial class PrototypeWindow : Window
 
     private async Task CompleteShutdownAsync()
     {
+        allowClose = true;
+        await presetCatalog.StopModeFollowAsync();
         try { await presetCatalog.FlushAsync(); }
         catch (Exception error) { AppRuntimeLog.Write($"Preset shutdown flush: {error}"); }
         allowClose = true;
         PerformanceWorkspace.Shutdown();
         homeSession.StateChanged -= OnHomeStateChanged;
+        homeSession.ModeReadbackObserved -= OnModeReadback;
         homeSession.TelemetryUpdated -= OnHomeTelemetryUpdated;
         try
         {
@@ -608,7 +619,7 @@ public sealed partial class PrototypeWindow : Window
             .ToArray();
         try { await Task.WhenAll(pendingTasks); } catch { }
         AppRuntimeLog.Write($"[{DateTime.Now:O}] Shutdown operations settled; process={Environment.ProcessId}\n");
-        try { if (turboBranch is not null) await turboBranch.ReleaseAsync(CancellationToken.None); }
+        try { if (!sessionRecoveryCompleted && turboBranch is not null) await turboBranch.ReleaseAsync(CancellationToken.None); }
         catch (Exception error) { AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Turbo branch shutdown restore: {error}\n"); }
         await homeSession.DisposeAsync();
         AppRuntimeLog.Write($"[{DateTime.Now:O}] Shutdown session disposed; process={Environment.ProcessId}\n");
@@ -760,7 +771,35 @@ public sealed partial class PrototypeWindow : Window
 
     private async void ExitFromTray()
     {
-        if (allowClose) return;
+        if (allowClose || exitPending) return;
+        exitPending = true;
+        try { await presetCatalog.StopModeFollowAsync(); await presetCatalog.FlushAsync(); }
+        catch (Exception error)
+        {
+            exitPending = false;
+            AppRuntimeLog.Write($"Preset exit flush: {error}");
+            RestoreExistingWindow();
+            homeSession.ReportOperationFailure("预设未能保存，已取消退出；请检查存储后重试");
+            return;
+        }
+        try
+        {
+            PageWorkspace.StopAutomationClient();
+            bool keepChanges = preferences.Load().KeepChangesOnExit;
+            if (!keepChanges && turboBranch is not null) await turboBranch.ReleaseAsync(CancellationToken.None);
+            var restored = await homeSession.EndControlSessionAsync(CancellationToken.None, keepChanges);
+            if (restored is { } result && (result.State != CommandState.Applied || result.Error is not null))
+                throw new InvalidOperationException("退出收尾尚未完成，请检查后重试退出。");
+            sessionRecoveryCompleted = true;
+        }
+        catch (Exception error)
+        {
+            exitPending = false;
+            AppRuntimeLog.Write($"Session exit recovery: {error}");
+            RestoreExistingWindow();
+            homeSession.ReportOperationFailure("退出收尾未完成，已保留记录；请重试退出。");
+            return;
+        }
         // Normalize while every island is alive; a minimized window cannot safely
         // regain focus when WinUI later destroys its retained popup windows.
         try
@@ -769,15 +808,16 @@ public sealed partial class PrototypeWindow : Window
         }
         catch { }
         allowClose = true;
+        exitPending = false;
         SaveWindowSizeIfEnabled();
         homeSession.StateChanged -= OnHomeStateChanged;
+        homeSession.ModeReadbackObserved -= OnModeReadback;
         homeSession.TelemetryUpdated -= OnHomeTelemetryUpdated;
         keyboardStateTimer?.Stop();
         connectionAvailabilityTimer?.Stop();
         restoreWarningTimer?.Stop();
         StopModeColorTransition();
-        try { await PageWorkspace.RestoreLightingPreviewAsync(); }
-        catch (Exception error) { AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Exit lighting restoration: {error}\n"); }
+        // End already restores the captured lighting plan and cancels its preview.
         await ShutdownSessionAsync();
         // Leave the input callback before closing all retained WinUI windows.
         var queued = DispatcherQueue.TryEnqueue(() =>
@@ -855,6 +895,19 @@ public sealed partial class PrototypeWindow : Window
         catch (Exception error) { AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Home session startup: {error}\n"); }
     }
 
+    private void OnModeReadback(HomeStateSnapshot snapshot, long connectionGeneration) =>
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                if (allowClose || exitPending) return;
+                await presetCatalog.ObserveModeAsync(snapshot, connectionGeneration, lifetimeCancellation.Token,
+                    () => !allowClose && !exitPending);
+            }
+            catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested) { }
+            catch (Exception error) { AppRuntimeLog.Write($"Preset mode follow observation: {error}"); }
+        });
+
     private void OnHomeStateChanged(HomeStateSnapshot snapshot) =>
         DispatcherQueue.TryEnqueue(() =>
         {
@@ -882,7 +935,6 @@ public sealed partial class PrototypeWindow : Window
                 latestTelemetry = snapshot;
                 if (Content?.XamlRoot?.IsHostVisible == true) ApplyPageTelemetry(snapshot, activePage);
                 PageWorkspace.ApplyTelemetry(snapshot);
-                RefreshReadbackBranding();
                 trayQuickConsole?.ApplyModeReadback(homeSession.State?.Controls);
                 trayQuickConsole?.ApplyTelemetry(snapshot);
             }
@@ -919,6 +971,7 @@ public sealed partial class PrototypeWindow : Window
     private void ApplyHomeState(HomeStateSnapshot snapshot)
     {
         if (homeSession.State is { } current) snapshot = current;
+        ReconcileConfirmedBranding(snapshot, animate: true);
         var identity = snapshot.Capabilities.Identity ?? new HardwareIdentity("未知", "未知", "未知", "未知");
         Hero.ApplyHardwareIdentity(identity);
         var telemetry = snapshot.Telemetry;
@@ -928,6 +981,11 @@ public sealed partial class PrototypeWindow : Window
             if (Content?.XamlRoot?.IsHostVisible == true) ApplyPageTelemetry(telemetry, activePage);
             PageWorkspace.ApplyTelemetry(telemetry);
             trayQuickConsole?.ApplyTelemetry(telemetry);
+        }
+        foreach (var setting in snapshot.Controls.QuickSettings)
+        {
+            if (ShouldApplyQuickSettingState(setting.Setting, setting.Enabled))
+                ApplySharedQuickSettingState(setting.Setting, setting.Enabled, HasCapability(snapshot, CapabilityKey(setting.Setting)));
         }
         PageWorkspace.SetConfirmedPerformanceTarget(customActivationPending || HasConfirmedPerformanceIdentity(snapshot) ? confirmedPerformancePreset : null);
         PageWorkspace.ApplyState(snapshot);
@@ -958,7 +1016,6 @@ public sealed partial class PrototypeWindow : Window
             SetTurboTierVisual("Normal");
             modeCommandTask = ReleaseInvalidatedTurboBranchAsync();
         }
-        ReconcileConfirmedBranding(snapshot, animate: true);
         if (!adaptiveActivationPending && snapshot.Controls.AdaptiveAutomation is { } automation)
         {
             adaptiveModeEnabled = automation.Enabled;
@@ -979,11 +1036,6 @@ public sealed partial class PrototypeWindow : Window
         Sidebar.ApplyQuickSettingState(QuickSettingKind.WinKey, windowsKeyLock.IsEnabled, true);
         trayQuickConsole?.ApplyQuickSettingState(QuickSettingKind.WinKey, windowsKeyLock.IsEnabled);
         ApplyKeyboardIndicatorStates();
-        foreach (var setting in snapshot.Controls.QuickSettings)
-        {
-            if (ShouldApplyQuickSettingState(setting.Setting, setting.Enabled))
-                ApplySharedQuickSettingState(setting.Setting, setting.Enabled, HasCapability(snapshot, CapabilityKey(setting.Setting)));
-        }
     }
 
     private bool ShouldApplyQuickSettingState(QuickSettingKind setting, bool? hardwareEnabled)
@@ -1259,7 +1311,7 @@ public sealed partial class PrototypeWindow : Window
         {
             if (turboBranch?.ActiveTier is not null) await ExitTurboBranchAsync(lifetimeCancellation.Token);
             if (revision != manualModeRevision) return false;
-            var native = presetCatalog.NativeModeFor(explicitPreset ?? PresetKey.Create(logical, 2));
+            var native = presetCatalog.NativeModeForSelection(logical, explicitPreset);
             var result = await presetCatalog.ApplyAsync(logical, native,
                 explicitPreset is null ? ControlOrigin.ManualMode : ControlOrigin.PresetUse,
                 explicitPreset is null ? null : ControlPageId.Performance, explicitPreset,
@@ -1302,10 +1354,7 @@ public sealed partial class PrototypeWindow : Window
 
     private void PreviewModeVisuals(ControlModeId mode)
     {
-        var profile = mode is ControlModeId.Custom1 or ControlModeId.Custom2 or ControlModeId.Custom3
-            ? $"Profile{(int)mode - (int)ControlModeId.Custom1 + 1}" : customProfile;
-        var visualMode = PrototypeModeCommandCoordinator.Map(AdaptiveTargetMap.PerformanceModeFor(PresetKey.Create(mode, 2)));
-        RequestModeVisuals(visualMode, animate: true, profile);
+        requestedDisplayMode = mode;
         RefreshReadbackBranding(animate: true);
         trayQuickConsole?.PreviewSelection(mode);
     }
@@ -1328,7 +1377,7 @@ public sealed partial class PrototypeWindow : Window
             });
             return;
         }
-        RequestModeVisuals(state.Mode, animate: true);
+        requestedDisplayMode = null;
         RefreshReadbackBranding(animate: true);
         trayQuickConsole?.PreviewSelection(null);
     }
@@ -1644,6 +1693,8 @@ public sealed partial class PrototypeWindow : Window
         if (pendingQuickSettings.ShouldPreserve(setting, null)) return;
         var requestVersion = pendingQuickSettings.Set(setting, enabled);
         trayQuickConsole?.SetQuickSettingBusy(setting, true);
+        if (setting == QuickSettingKind.LidLogo)
+            ApplySharedQuickSettingState(setting, enabled, available: false);
         _ = ApplyQuickSettingAsync(setting, enabled, requestVersion);
     }
 

@@ -14,6 +14,9 @@
 
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <Compile Include="..\..\src\Jiaolong.ControlCenter\Services\ClientControlSessionLifecycle.cs" Link="Client\ClientControlSessionLifecycle.cs" />
+    <Compile Include="..\..\src\Jiaolong.ControlCenter\Services\ControlCenterClient.cs" Link="Client\ControlCenterClient.cs" />
+    <Compile Include="..\..\src\Jiaolong.ControlCenter\ViewModels\DiagnosticExportContracts.cs" Link="Client\DiagnosticExportContracts.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -47,10 +47,10 @@ public sealed partial class GpuWorkspaceV2
     {
         if (GpuWritePending) { PresetToolbar.SetFollowPreset(IsFollowingPreset); return; }
         try { followPreferences.Update(value => value with { GpuFollowPreset = enabled }); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         { PresetToolbar.SetFollowPreset(IsFollowingPreset); await PresetToolbar.ShowStatusAsync("保存跟随设置失败"); return; }
         IsFollowingPreset = enabled;
-        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(enabled);
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(ControlPageId.Gpu, enabled);
     }
 
     public async void SetFollowPresetTarget(PresetKey key)

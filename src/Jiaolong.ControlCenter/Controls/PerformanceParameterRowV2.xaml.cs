@@ -254,7 +254,7 @@ public sealed partial class PerformanceParameterRowV2 : UserControl
             HelpSafeRange,
             HelpExtremeLimit,
             HelpRisk);
-        SetValue(hasPendingValue ? pendingValue : null);
+        SetValueCore(hasPendingValue ? pendingValue : null);
         hasPendingValue = false;
         pendingValue = null;
     }

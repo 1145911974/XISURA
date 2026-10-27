@@ -12,12 +12,14 @@ public sealed partial class PrototypeWindow
         if (trayQuickConsole is null) return;
         var plan = snapshot?.Controls.ActiveFanControlPlan;
         bool connected = snapshot is not null && homeSession.Status == Services.HomeSessionStatus.Connected;
-        trayQuickConsole.ApplyFanState(connected,
-            connected && snapshot!.Controls.FanAutomaticCeilingAvailable,
-            connected && HasCapability(snapshot!, "fanControl"),
+        bool Writable(string key) => snapshot?.Capabilities.Fields.Any(field =>
+            field.Key == key && field.Availability == CapabilityState.Available && field.Writable) == true;
+        trayQuickConsole.ApplyFanState(connected && HasCapability(snapshot!, "fanControl"),
+            connected && snapshot!.Controls.FanAutomaticCeilingAvailable && Writable("maximumRpm"),
+            connected && Writable("fixedRpm"),
             plan?.Strategy == "Auto" ? plan.MaximumRpm : null,
             plan?.Strategy == "Fixed" ? plan.FixedRpm : null,
-            snapshot?.Controls.StrongCooling, maximumRpm: 5800);
+            snapshot?.Controls.StrongCooling, maximumRpm: 5800, strongAvailable: connected && Writable("strongCooling"));
         trayQuickConsole.SetFanBusy(trayFanCommandPending || pendingQuickSettings.ShouldPreserve(QuickSettingKind.StrongCooling, null));
     }
 
@@ -31,6 +33,9 @@ public sealed partial class PrototypeWindow
         }
         if (automaticCeiling is not null && automaticCeiling is < 1800 or > 5800 ||
             fixedRpm is not null && fixedRpm is < 1800 or > 5800) return;
+        string? requiredField = fixedRpm is not null ? "fixedRpm" : automaticCeiling is not null ? "maximumRpm" : null;
+        if (requiredField is not null && homeSession.State?.Capabilities.Fields.Any(field =>
+            field.Key == requiredField && field.Availability == CapabilityState.Available && field.Writable) != true) return;
         trayFanCommandPending = true;
         RefreshTrayFanState(homeSession.State);
         try

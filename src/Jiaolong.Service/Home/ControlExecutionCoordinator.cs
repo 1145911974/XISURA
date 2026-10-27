@@ -2,6 +2,7 @@ using System.Text.Json;
 using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Errors;
 using Jiaolong.Contracts.Protocol;
+using Jiaolong.Service.Ipc;
 
 namespace Jiaolong.Service.Home;
 
@@ -36,7 +37,7 @@ public sealed class ControlExecutionCoordinator(
     }
 
     public Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken token,
-        Guid connectionId = default, string owner = "service")
+        Guid connectionId = default, string owner = "service", ClientIdentity? clientIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(command);
         if (command is ApplyControlRequestCommand apply && (apply.Request is null || apply.Request.OperationId != command.OperationId ||
@@ -63,7 +64,8 @@ public sealed class ControlExecutionCoordinator(
             if (operations.Count >= MaximumOperations)
                 return Task.FromResult(Rejected(command, ErrorCode.CommandInProgress));
             bool managed = IsManaged(command);
-            operation = new(owner, fingerprint, managed ? Interlocked.Increment(ref generation) : Generation, managed, automatic);
+            operation = new(owner, fingerprint, managed ? Interlocked.Increment(ref generation) : Generation, managed, automatic)
+                { ClientIdentity = clientIdentity };
             operations.Add(command.OperationId, operation);
         }
         _ = ExecuteCoreAsync(command, operation, token, connectionId);
@@ -72,6 +74,16 @@ public sealed class ControlExecutionCoordinator(
 
     public bool IsCurrent(long expected) => Generation == expected;
     public void InvalidateIntent() { lock (admission) Interlocked.Increment(ref generation); }
+
+    // Caller holds the hardware gate; recovery keeps the original owner's durable GPU journal scope.
+    internal async Task<T> WithRecoveryAdmissionAsync<T>(Guid operationId, string owner, Func<Task<T>> action)
+    {
+        var previous = currentAdmission.Value;
+        currentAdmission.Value = new(Generation, owner, false)
+            { OperationId = operationId, CommandKind = "EndClientControlSession" };
+        try { return await action(); }
+        finally { currentAdmission.Value = previous; }
+    }
 
     public async Task<T> WithHardwareGateAsync<T>(Func<Task<T>> action, CancellationToken token = default,
         HardwareCommand? lifecycleCommand = null)
@@ -118,7 +130,7 @@ public sealed class ControlExecutionCoordinator(
             started = true;
             Interlocked.Increment(ref activeWrites);
             currentAdmission.Value = new(operation.Generation, operation.Owner, operation.Automatic)
-                { CommandKind = command.GetType().Name, OperationId = command.OperationId };
+                { CommandKind = command.GetType().Name, OperationId = command.OperationId, ClientIdentity = operation.ClientIdentity };
             var result = await execute(command, token, connectionId);
             operation.Completion.TrySetResult(result);
         }
@@ -163,10 +175,12 @@ public sealed class ControlExecutionCoordinator(
 
     private sealed record Operation(string Owner, string Fingerprint, long Generation, bool Managed, bool Automatic)
     {
+        public ClientIdentity? ClientIdentity { get; init; }
         public TaskCompletionSource<CommandResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
     public sealed record ExecutionAdmission(long Generation, string Owner, bool Automatic)
     {
+        public ClientIdentity? ClientIdentity { get; init; }
         public Guid OperationId { get; init; }
         public string? CommandKind { get; init; }
     }

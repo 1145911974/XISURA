@@ -23,6 +23,8 @@ public static class SavedPerformancePreset
             throw new InvalidOperationException("预设来自更新版本，请升级应用；原文件未修改，未应用。");
         if (envelope.Page != ControlPageId.Performance || envelope.Key != requestedKey || envelope.SchemaVersion is < 1 or > PagePresetEnvelope.CurrentSchemaVersion)
             throw new InvalidOperationException("性能预设身份或版本不匹配，未应用。");
+        var envelopeValidation = PresetValidation.Validate(envelope);
+        if (!envelopeValidation.IsValid) throw new InvalidOperationException(envelopeValidation.Errors[0]);
         var payload = envelope.Payload;
         if (payload.ValueKind != JsonValueKind.Object || RequiredFields.Any(field => !payload.TryGetProperty(field, out _)))
             throw new InvalidOperationException("性能预设字段不完整，请在性能页重新保存；不会补入默认参数。");

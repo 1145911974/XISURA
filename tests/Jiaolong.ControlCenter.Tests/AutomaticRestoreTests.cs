@@ -298,11 +298,15 @@ public sealed class AutomaticRestoreTests
     [TestMethod]
     public async Task Session_records_real_reply_and_restores_on_start_and_only_one_wake_event()
     {
+        var preferences = new UserPreferencesStore(paths);
+        preferences.Save(preferences.Load() with { PerformanceFollowPreset = true });
         await using var server = new RestorePipeService();
         var command = new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced);
         await using (var session = new HomeControlSession(new ControlCenterClient(server.Name),
             automaticRestore: new AppliedConfigurationRestore(paths)))
         {
+            typeof(HomeControlSession).GetField("preferences", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(session, preferences);
             var result = await session.ExecuteAsync(command, Token);
             Assert.AreEqual(CommandState.Applied, result.State);
             Assert.AreEqual(command.OperationId, (await server.Next()).OperationId);
@@ -310,6 +314,8 @@ public sealed class AutomaticRestoreTests
         await using (var session = new HomeControlSession(new ControlCenterClient(server.Name),
             automaticRestore: new AppliedConfigurationRestore(paths)))
         {
+            typeof(HomeControlSession).GetField("preferences", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(session, preferences);
             await session.StartAsync(Token);
             var startup = await server.Next();
             Assert.IsInstanceOfType<SetPerformanceModeCommand>(startup);

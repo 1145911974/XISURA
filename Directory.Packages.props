@@ -14,7 +14,7 @@
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageVersion Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageVersion Include="System.IO.Pipes.AccessControl" Version="5.0.0" />
-    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.10" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageVersion Include="MSTest.TestFramework" Version="4.3.3" />
     <PackageVersion Include="MSTest.TestAdapter" Version="4.3.3" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />

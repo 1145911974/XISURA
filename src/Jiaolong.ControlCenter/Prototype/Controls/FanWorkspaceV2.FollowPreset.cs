@@ -29,10 +29,10 @@ public sealed partial class FanWorkspaceV2
     {
         if (applyingPreset || savingPreset) { PresetToolbar.SetFollowPreset(IsFollowingPreset); return; }
         try { followPreferences.Update(value => value with { FanFollowPreset = enabled }); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         { PresetToolbar.SetFollowPreset(IsFollowingPreset); await PresetToolbar.ShowStatusAsync("保存跟随设置失败"); return; }
         IsFollowingPreset = enabled;
-        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(enabled);
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(ControlPageId.Fan, enabled);
         if (!enabled) pendingFanFollowTarget = null;
     }
 
@@ -102,7 +102,7 @@ public sealed partial class FanWorkspaceV2
         FixedTarget.Visibility = FixedTargetSlider.Visibility = fixedSpeed ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         MaximumRpmTarget.Visibility = AutoStrategy.IsChecked == true && MaximumRpmToggle.IsOn ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         FanCurveWorkspace.Opacity = curve ? 1 : 0.48;
-        FanCurveWorkspace.SetEditingEnabled(curve && FanHardwareAvailable);
+        FanCurveWorkspace.SetEditingEnabled(curve && FanDraftEditable);
         FanCurveWorkspace.SetPresetCaption(!curve
             ? fixedSpeed ? "固定转速控制 · 曲线未运行" : "EC 自动控制 · 参考曲线未运行"
             : session?.State?.Controls.ActiveFanControlPlan?.Strategy == "Curve"

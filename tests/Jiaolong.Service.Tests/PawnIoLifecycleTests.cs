@@ -84,6 +84,26 @@ public sealed class PawnIoLifecycleTests
         Assert.IsTrue(api.Handles.All(handle => handle.IsClosed), "Handle cleanup must remain possible while paused.");
     }
 
+    [TestMethod]
+    public void Native_response_requires_complete_bytes_before_publishing_any_output()
+    {
+        byte[] bytes = new byte[16];
+        Buffer.BlockCopy(new ulong[] { 28, 0x540105 }, 0, bytes, 0, 16);
+        foreach (uint returned in new uint[] { 0, 7, 8, 15, 17 })
+        {
+            ulong[] output = [99, 98];
+            Assert.IsFalse(PawnIoCurveOptimizerTransport.CopyNativeResponse(true, returned, bytes, output), $"length={returned}");
+            CollectionAssert.AreEqual(new ulong[] { 99, 98 }, output, "Incomplete output must remain untouched");
+        }
+        ulong[] complete = [99, 98];
+        Assert.IsFalse(PawnIoCurveOptimizerTransport.CopyNativeResponse(false, 16, bytes, complete));
+        CollectionAssert.AreEqual(new ulong[] { 99, 98 }, complete);
+        Assert.IsTrue(PawnIoCurveOptimizerTransport.CopyNativeResponse(true, 16, bytes, complete));
+        CollectionAssert.AreEqual(new ulong[] { 28, 0x540105 }, complete);
+        Assert.IsTrue(PawnIoCurveOptimizerTransport.CopyNativeResponse(true, 0, null, null));
+        Assert.IsFalse(PawnIoCurveOptimizerTransport.CopyNativeResponse(true, 8, null, null));
+    }
+
     private sealed class FakeDeviceApi : IPawnIoDeviceApi
     {
         private readonly Dictionary<ulong, ulong> registers = new()

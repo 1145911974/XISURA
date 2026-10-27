@@ -1,6 +1,7 @@
 using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Errors;
 using Jiaolong.Contracts.Models;
+using Jiaolong.Hardware.Mechrevo.Controls;
 using System.Text.Json;
 
 namespace Jiaolong.Service.Home;
@@ -20,13 +21,39 @@ public interface IHomeHardwareProvider
     // Notification path: update an in-memory flag only; never perform hardware I/O or wait for a lock.
     void SetBackgroundWorkPaused(bool paused) { }
     void SetBackgroundWorkState(PowerLifecycleState lifecycle) { }
+    // In-memory normal-stop transition only; no hardware I/O or restoration authorization.
+    long? PrepareShutdownCleanup() => null;
     Task<HomeHardwareState> DiagnoseAsync(CancellationToken cancellationToken);
     Task<HomeHardwareState> ReinitializeAsync(CancellationToken cancellationToken);
     Task<HardwareSnapshot> ReadTelemetryAsync(CancellationToken cancellationToken);
     Task<HomeControlState> ReadControlsAsync(CancellationToken cancellationToken);
     Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false) => ReadControlsAsync(token);
+    // Retry-safe: stop software lighting without hardware writes; throw InvalidDataException if the final frame cannot be verified.
+    Task StopClientLightingDynamicsAsync(CancellationToken token) { token.ThrowIfCancellationRequested(); return Task.CompletedTask; }
+    Task<OemCpuConfigurationSnapshot?> ReadOemCpuConfigurationAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return Task.FromResult<OemCpuConfigurationSnapshot?>(null); }
+    Task<bool> ReconcileGpuRecoveryAsync(CancellationToken token) { token.ThrowIfCancellationRequested(); return Task.FromResult(true); }
+    Task<bool> VerifyPendingGpuTargetAsync(Guid id, CancellationToken token) => Task.FromResult(false);
+    Task<CommandResult> RecoverPendingGpuAsync(Guid id, CancellationToken token) => Task.FromResult(new CommandResult(id,
+        CommandState.Rejected, null, RequiredUserAction.None, ServiceError.Create(ErrorCode.CapabilityUnavailable, id, false), false)
+        { Mutation = HardwareMutation.NoMutation });
+    Task<CommandResult> RecoverSessionFanAsync(Guid id, FanEcRecoveryScope scope, CancellationToken token) => Task.FromResult(new CommandResult(id,
+        CommandState.Rejected, null, RequiredUserAction.None, ServiceError.Create(ErrorCode.CapabilityUnavailable, id, false), false)
+        { Mutation = HardwareMutation.NoMutation });
+    Task<string?> ReadDeviceRecoveryKeyAsync(HardwareIdentity identity, CancellationToken token) => Task.FromResult<string?>(null);
     Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken);
+    Task<WindowsPowerSettingsSnapshot?> ReadWindowsPowerSchemeAsync(Guid scheme, CancellationToken token) =>
+        Task.FromResult<WindowsPowerSettingsSnapshot?>(null);
+    Task<CommandResult> RestoreWindowsPowerSettingAsync(Guid operationId, Guid scheme, WindowsCpuSetting setting,
+        int expected, int target, CancellationToken token) => Task.FromResult(new CommandResult(operationId,
+            CommandState.Rejected, null, RequiredUserAction.None, ServiceError.Create(ErrorCode.CapabilityUnavailable, operationId, false), false)
+        { Mutation = HardwareMutation.NoMutation });
     Task<PerformanceModeEvidence?> ReadModeEvidenceAsync(CancellationToken token) => Task.FromResult<PerformanceModeEvidence?>(null);
+    Task<PerformanceModeEvidence?> ReadNativeModeEvidenceAsync(CancellationToken token) => ReadModeEvidenceAsync(token);
+    Task<CommandResult> RestoreCpuScalarAsync(Guid operationId, string field, SettingRequest baseline,
+        SettingRequest expected, CancellationToken token) => Task.FromResult(new CommandResult(operationId,
+            CommandState.Rejected, null, RequiredUserAction.None, ServiceError.Create(ErrorCode.CapabilityUnavailable, operationId, false), false)
+        { Mutation = HardwareMutation.NoMutation });
     Task<CommandResult> RestoreCpuFieldAsync(Guid operationId, string field, CpuFieldRestorationValue baseline,
         CpuFieldRestorationValue expected, CancellationToken token) => Task.FromResult(new CommandResult(operationId,
             CommandState.Rejected, null, RequiredUserAction.None, ServiceError.Create(ErrorCode.CapabilityUnavailable, operationId, false), false)
@@ -34,11 +61,18 @@ public interface IHomeHardwareProvider
 }
 
 public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, Jiaolong.Diagnostics.IDiagnosticEventWriter? diagnostics = null,
-    ControlExecutionJournal? journal = null)
+    ControlExecutionJournal? journal = null, bool requireClientSessions = false,
+    Func<CancellationToken, Task<DateTimeOffset?>>? readBootTime = null,
+    Func<CancellationToken, Task<PowerContinuityEvidence?>>? readPowerContinuity = null,
+    IClientProcessProbe? clientProcessProbe = null)
 {
+    private readonly IClientProcessProbe sessionProcessProbe = clientProcessProbe ?? new WindowsClientProcessProbe();
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly Func<CancellationToken, Task<DateTimeOffset?>>? readSystemBootTime = readBootTime;
+    private readonly Func<CancellationToken, Task<PowerContinuityEvidence?>>? readSystemPowerContinuity = readPowerContinuity;
     private readonly SemaphoreSlim fanGate = new(1, 1);
     private Guid? fanOwner;
+    private Guid? fanOwnerClientSessionId;
     private HomeHardwareState? state;
     private bool repairAttempted;
     private string? latestModeOperation;
@@ -98,12 +132,22 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
         { value.Generation, value.HardwareEpoch, value.ConfigurationRevision, value.LogicalMode, value.NativeMode,
           value.NativeModeApplyState, value.Pages,
           fields = value.Fields.Select(pair => new { field = pair.Key, pair.Value.Origin, pair.Value.WriteState, pair.Value.OwnerOperationId }) };
-    private Task PersistExecutionAsync(Guid operationId, bool pending, CancellationToken token, bool noMutation = false) =>
-        journal is not null && noMutation
-            ? journal.ResolveNoMutationAsync(operationId, Volatile.Read(ref controlExecutionState), token)
+    private Task PersistExecutionAsync(Guid operationId, bool pending, CancellationToken token, bool noMutation = false, string? commandKind = null)
+    {
+        if (Volatile.Read(ref controlExecutionState) is { } current)
+            Volatile.Write(ref controlExecutionState, current with { NativeModeOwnerClientSessionId = lastSubmittedModeClientSessionId,
+                WindowsScopeSessionId = windowsScopeSessionId });
+        var recoveryScope = Volatile.Read(ref controlExecutionState) is not null ? new ControlJournalRecoveryScope(JournalServiceSessionId,
+            ownedFields.ToDictionary(pair => pair.Key, pair => new ControlFieldRecoveryScope(pair.Value.OwnerSid,
+                pair.Value.Epoch, pair.Value.Scheme, pair.Value.Generation)),
+            lastSubmittedModeClientSessionId is not null ? lastSubmittedMode : null,
+            lastSubmittedModeClientSessionId is not null ? lastModeEpoch : 0, fanOwnerClientSessionId) : null;
+        return journal is not null && noMutation
+            ? journal.ResolveNoMutationAsync(operationId, Volatile.Read(ref controlExecutionState), token, recoveryScope)
             : journal is not null && Volatile.Read(ref controlExecutionState) is { } executionState
             ? journal.SaveAsync(executionState, State.Identity, operationId, pending, token, Execution.CurrentAdmission?.Owner,
-                Execution.CurrentAdmission?.CommandKind, noMutation) : Task.CompletedTask;
+                commandKind ?? Execution.CurrentAdmission?.CommandKind, noMutation, recoveryScope) : Task.CompletedTask;
+    }
 
     public async Task<Guid[]> ReadUnresolvedOperationsAsync(CancellationToken token) =>
         journal is null ? [] : await journal.ReadUnresolvedOperationsAsync(token);
@@ -178,12 +222,12 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
                     ["verificationLevel"] = observed.VerificationLevel,
                     ["acFrequencyLimitMhz"] = controls.CpuTuning?.AcMaxFrequencyMhz?.ToString() ?? "unreadable",
                     ["dcFrequencyLimitMhz"] = controls.CpuTuning?.DcMaxFrequencyMhz?.ToString() ?? "unreadable",
-                    ["oemSplWatts"] = controls.CpuTuning?.SplWatts?.ToString() ?? "unreadable",
-                    ["oemSpptWatts"] = controls.CpuTuning?.SpptWatts?.ToString() ?? "unreadable",
+                    ["oemSplWatts"] = ((double?)controls.CpuTuning?.SplWatts ?? controls.CpuTuning?.ObservedSplWatts)?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable",
+                    ["oemSpptWatts"] = ((double?)controls.CpuTuning?.SpptWatts ?? controls.CpuTuning?.AdvancedLimits?.FastPptWatts)?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable",
                     ["beforeAcFrequencyLimitMhz"] = current.Controls.CpuTuning?.AcMaxFrequencyMhz?.ToString() ?? "unreadable",
                     ["beforeDcFrequencyLimitMhz"] = current.Controls.CpuTuning?.DcMaxFrequencyMhz?.ToString() ?? "unreadable",
-                    ["beforeOemSplWatts"] = current.Controls.CpuTuning?.SplWatts?.ToString() ?? "unreadable",
-                    ["beforeOemSpptWatts"] = current.Controls.CpuTuning?.SpptWatts?.ToString() ?? "unreadable",
+                    ["beforeOemSplWatts"] = ((double?)current.Controls.CpuTuning?.SplWatts ?? current.Controls.CpuTuning?.ObservedSplWatts)?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable",
+                    ["beforeOemSpptWatts"] = ((double?)current.Controls.CpuTuning?.SpptWatts ?? current.Controls.CpuTuning?.AdvancedLimits?.FastPptWatts)?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable",
                     ["beforeObservationUtc"] = previous.CapturedAtUtc.ToString("O")
                 }
             }, cancellationToken);
@@ -200,36 +244,24 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
-    public async Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken, Guid connectionId = default, string? userSid = null)
+    public async Task<CommandResult> ExecuteAsync(HardwareCommand command, CancellationToken cancellationToken, Guid connectionId = default, string? userSid = null,
+        Jiaolong.Service.Ipc.ClientIdentity? clientIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (Execution.FindOperation(command, userSid ?? "service") is { } replay) return await replay;
-        if (ControlExecutionCoordinator.IsManaged(command) && journal is not null)
+        command = command switch
         {
-            try
-            {
-                var saved = await journal.ReadAsync(cancellationToken);
-                if (saved.Unresolved.Any(item => item.OperationId == command.OperationId))
-                    return Rejected(command, ErrorCode.IdempotencyConflict) with { State = CommandState.RecoveryRequired, Mutation = HardwareMutation.NoMutation };
-                if (ControlExecutionJournal.RequiresGpuRecoveryCheck(command) &&
-                    saved.Unresolved.Any(ControlExecutionJournal.HasPendingGpuRecovery))
-                    return Rejected(command, ErrorCode.RollbackFailed) with
-                    {
-                        State = CommandState.RecoveryRequired, Mutation = HardwareMutation.NoMutation,
-                        Error = ServiceError.Create(ErrorCode.RollbackFailed, command.OperationId, false) with
-                        { Details = new() { ["reason"] = "gpuPersistedRecoveryRequired", ["writeAttempted"] = bool.FalseString } }
-                    };
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
-            {
-                return Rejected(command, ErrorCode.InternalFailure) with
-                { Mutation = HardwareMutation.NoMutation, Error = ServiceError.Create(ErrorCode.InternalFailure, command.OperationId, false) with
-                    { Details = new() { ["reason"] = "controlJournalUnreadable", ["errorType"] = error.GetType().Name,
-                        ["writeAttempted"] = bool.FalseString } } };
-            }
-        }
+            SetQuickSettingCommand { Setting: QuickSettingKind.LidLogo } logo =>
+                new SetLidLogoCommand(logo.OperationId, logo.Enabled) { ClientSessionId = logo.ClientSessionId },
+            SetQuickSettingCommand { Setting: QuickSettingKind.StrongCooling } cooling =>
+                new SetStrongCoolingCommand(cooling.OperationId, cooling.Enabled) { ClientSessionId = cooling.ClientSessionId },
+            _ => command
+        };
+        if (ValidateClientSessionCommand(command, clientIdentity, userSid) is { } refused) return refused;
+        if (Execution.FindOperation(command, userSid ?? "service") is { } replay) return await replay;
+        if (await CheckPersistedAdmissionAsync(command, cancellationToken, blockAnyPending: false) is { } journalRefusal)
+            return journalRefusal;
         var timing = System.Diagnostics.Stopwatch.StartNew();
-        var result = await Execution.ExecuteAsync(command, cancellationToken, connectionId, userSid ?? "service");
+        var result = await Execution.ExecuteAsync(command, cancellationToken, connectionId, userSid ?? "service", clientIdentity);
         if (command is ApplyControlRequestCommand or ApplyTurboBranchCommand or ReleaseTurboBranchCommand or PublishPresetCatalogCommand &&
             result.Error is not null && result.Mutation == HardwareMutation.NoMutation)
             await RecordModeTimingAsync(command, result, timing.ElapsedMilliseconds, 0);
@@ -238,7 +270,11 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
 
     private async Task<CommandResult> ExecuteDirectAsync(HardwareCommand command, CancellationToken cancellationToken, Guid connectionId)
     {
+        if (ValidateClientSessionCommand(command, Execution.CurrentAdmission?.ClientIdentity, Execution.CurrentAdmission?.Owner) is { } refused)
+            return refused;
         if (IsSuspended) return Rejected(command, ErrorCode.CancelledBeforeApply);
+        if (await CheckPersistedAdmissionAsync(command, cancellationToken, blockAnyPending: true) is { } journalRefusal)
+            return journalRefusal;
         hardwareDispatched.Value = new(powerLifecycle.Version);
         if (!ControlExecutionCoordinator.IsManaged(command))
         {
@@ -255,7 +291,9 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
             {
                 ApplyTurboBranchCommand branch => await ApplyTurboBranchAsync(branch, cancellationToken, connectionId),
                 ReleaseTurboBranchCommand release => await ReleaseTurboBranchAsync(release, cancellationToken, connectionId),
-                ApplyControlRequestCommand request => await ExecuteControlRequestAsync(request, cancellationToken, connectionId),
+                ApplyControlRequestCommand request => await ExecuteControlRequestAsync(request, cancellationToken, connectionId,
+                    applyNativeMode: provider is not AdaptiveAutomationHardwareProvider lightingFollowProvider ||
+                        !lightingFollowProvider.IsModeLightingFollowOperation(request.OperationId)),
                 _ => await ExecuteTrackedCommandAsync(command, cancellationToken, connectionId)
             };
             if (ControlExecutionCoordinator.IsManaged(command))
@@ -306,14 +344,16 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
         return result;
     }
 
-    private async Task<CommandResult> ExecuteHardwareDirectAsync(HardwareCommand command, CancellationToken cancellationToken, Guid connectionId)
+    private async Task<CommandResult> ExecuteHardwareDirectAsync(HardwareCommand command, CancellationToken cancellationToken, Guid connectionId,
+        Dictionary<string, OwnedField?>? priorFields = null)
     {
         EnsureControlHardwareAccess();
         if (command is not (SetFanControlCommand or ReleaseFanControlCommand or SetStrongCoolingCommand))
-            return await ExecuteCoreAsync(command, cancellationToken);
+            return await ExecuteCoreAsync(command, cancellationToken, priorFields);
 
         await fanGate.WaitAsync(cancellationToken);
         var previousOwner = fanOwner;
+        var previousSessionOwner = fanOwnerClientSessionId;
         try
         {
             if (command is SetFanControlCommand { PreserveStrongCooling: true } or ReleaseFanControlCommand { PreserveStrongCooling: true } &&
@@ -322,12 +362,15 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
             // Claim before dispatch: cancellation can arrive after a partial EC write.
             EnsureControlHardwareAccess();
             fanOwner = connectionId;
+            fanOwnerClientSessionId = AdmittedClientSessionId;
             var result = await ExecuteCoreAsync(command, cancellationToken);
             if (result.State == CommandState.Applied)
             {
-                if (command is ReleaseFanControlCommand or SetStrongCoolingCommand { Enabled: false }) fanOwner = null;
+                if (command is ReleaseFanControlCommand or SetStrongCoolingCommand { Enabled: false })
+                { fanOwner = null; fanOwnerClientSessionId = null; }
             }
-            else if (result.State != CommandState.RecoveryRequired) fanOwner = previousOwner;
+            else if (result.State != CommandState.RecoveryRequired)
+            { fanOwner = previousOwner; fanOwnerClientSessionId = previousSessionOwner; }
             return result;
         }
         finally { fanGate.Release(); }
@@ -346,16 +389,19 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
         try
         {
             if (fanOwner != connectionId) return null;
+            // A reconnecting pipe is not the end of the verified client process.
+            if (fanOwnerClientSessionId is not null) return null;
             // Bypass capability refresh: losing telemetry must not prevent EC cleanup.
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var result = await ReleaseLifecycleFanCoreAsync(command, deadline.Token);
-            if (result.State == CommandState.Applied) fanOwner = null;
+            if (result.State == CommandState.Applied) { fanOwner = null; fanOwnerClientSessionId = null; }
             return result;
         }
         finally { fanGate.Release(); }
     }
 
-    private async Task<CommandResult> ExecuteCoreAsync(HardwareCommand command, CancellationToken cancellationToken)
+    private async Task<CommandResult> ExecuteCoreAsync(HardwareCommand command, CancellationToken cancellationToken,
+        Dictionary<string, OwnedField?>? priorFields = null)
     {
         ArgumentNullException.ThrowIfNull(command);
         EnsureControlHardwareAccess();
@@ -368,11 +414,12 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
             if (!CanExecute(command, current)) return Rejected(command, ErrorFor(current));
         }
 
+        if (!CanWriteTuningFields(command, current)) return Rejected(command, ErrorCode.CapabilityUnavailable);
         var commandClock = System.Diagnostics.Stopwatch.StartNew();
         if (Execution.CurrentAdmission is { } admitted && ControlExecutionCoordinator.IsManaged(command) && !Execution.IsCurrent(admitted.Generation))
             return Rejected(command, ErrorCode.CancelledBeforeApply);
         if (command is SetPerformanceModeCommand) Volatile.Write(ref latestModeOperation, command.OperationId.ToString("N"));
-        var result = await ExecuteProviderAsync(command, cancellationToken);
+        var result = await ExecuteProviderAsync(command, cancellationToken, priorFields);
         long applyMs = commandClock.ElapsedMilliseconds;
         if (result.Error is null || !result.Error.IsRetryable || result.Mutation != HardwareMutation.NoMutation)
         {
@@ -388,11 +435,18 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
         if (Execution.CurrentAdmission is { } retryAdmission && ControlExecutionCoordinator.IsManaged(command) && !Execution.IsCurrent(retryAdmission.Generation))
             return Rejected(command, ErrorCode.CancelledBeforeApply);
         if (!CanExecute(command, current)) return Rejected(command, ErrorFor(current));
-        result = await ExecuteProviderAsync(command, cancellationToken);
+        if (!CanWriteTuningFields(command, current)) return Rejected(command, ErrorCode.CapabilityUnavailable);
+        result = await ExecuteProviderAsync(command, cancellationToken, priorFields);
         await RefreshCommandStateAsync(command, result, cancellationToken);
         return result;
     }
     internal long PreparePowerTransition(bool resume) => resume ? powerLifecycle.Version : powerLifecycle.Pause();
+
+    public Task HandleShutdownAsync(CancellationToken token)
+    {
+        long version = provider.PrepareShutdownCleanup() ?? powerLifecycle.Pause();
+        return HandleLifecycleAsync(false, token, version);
+    }
 
     public Task HandleLifecycleAsync(bool resume, CancellationToken token, long? notificationVersion = null)
     {
@@ -403,7 +457,8 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
         return Execution.WithHardwareGateAsync(async () =>
         {
             if (powerLifecycle.Version != version) return false;
-            if (State.Controls.ActiveFanControlPlan is not null || State.Controls.StrongCooling == true)
+            if (State.Controls.ActiveFanControlPlan is not null || fanOwner is not null || fanOwnerClientSessionId is not null ||
+                ownedFields.Keys.Any(key => key.StartsWith("fan.", StringComparison.OrdinalIgnoreCase)))
                 await ReleaseLifecycleFanCoreAsync(command, token);
             if (resume)
             {
@@ -449,6 +504,7 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
             if (result.State == CommandState.Applied && result.Error is null)
             {
                 fanOwner = null;
+                fanOwnerClientSessionId = null;
                 foreach (string field in ownedFields.Keys.Where(key => key.StartsWith("Fan.", StringComparison.OrdinalIgnoreCase)).ToArray()) ownedFields.Remove(field);
             }
             Volatile.Write(ref controlExecutionState, controlExecutionState! with { Fields = SnapshotFields(),
@@ -462,6 +518,7 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
 
     private void EnsureControlHardwareAccess()
     {
+        CheckedPriorRestore();
         var attempt = hardwareDispatched.Value;
         if (!IsSuspended && (attempt is null || attempt.LifecycleVersion == powerLifecycle.Version)) return;
         if (attempt?.Started == true) throw new IOException("hardwareLifecycleChangedAfterDispatch");
@@ -479,6 +536,8 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
     private async Task<CommandResult> TrackHardwareDispatchAsync(Func<Task<CommandResult>> dispatch)
     {
         EnsureControlHardwareAccess();
+        await VerifyPriorRestoreWriteAsync();
+        EnsureControlHardwareAccess();
         var attempt = hardwareDispatched.Value;
         bool previousStarted = attempt?.Started == true;
         if (attempt is not null) attempt.Started = true;
@@ -487,16 +546,24 @@ public sealed partial class HomeServiceRuntime(IHomeHardwareProvider provider, J
         return result;
     }
 
-    private Task<CommandResult> ExecuteProviderAsync(HardwareCommand command, CancellationToken token) =>
-        TrackHardwareDispatchAsync(async () =>
+    private async Task<CommandResult> ExecuteProviderAsync(HardwareCommand command, CancellationToken token,
+        Dictionary<string, OwnedField?>? priorFields = null)
+    {
+        var windowsWrite = await PrepareWindowsWriteAsync(command, token, priorFields);
+        return await TrackHardwareDispatchAsync(async () =>
         {
             var admission = Execution.CurrentAdmission;
             using var gpuScope = journal is not null && admission is not null &&
                 command is SetGpuVfCurveCommand or SetGpuCoreOffsetCommand or SetGpuMemoryOffsetCommand
-                ? journal.BindGpuOperation(new(admission.OperationId, SessionId, Execution.HardwareEpoch, admission.Owner)) : null;
-            return provider is AdaptiveAutomationHardwareProvider adaptive
+                ? journal.BindGpuOperation(new(admission.OperationId, JournalServiceSessionId, JournalHardwareEpoch, admission.Owner)) : null;
+            using var modeScope = journal is not null && admission is not null && AdmittedClientSessionId is Guid applicationSession &&
+                command is SetPerformanceModeCommand or SetCpuTuningCommand or SetCpuTuningBatchCommand
+                ? journal.BindNativeModeOperation(new(admission.OperationId, JournalServiceSessionId, JournalHardwareEpoch, admission.Owner, applicationSession)) : null;
+            var result = provider is AdaptiveAutomationHardwareProvider adaptive
                 ? await adaptive.ExecuteCoordinatedAsync(command, token, admission?.Owner) : await provider.ExecuteAsync(command, token);
+            return await CompleteWindowsWriteAsync(windowsWrite, result, token);
         });
+    }
 
     private async Task RecordModeTimingAsync(HardwareCommand command, CommandResult result, long applyMs, long refreshMs)
     {

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Errors;
 using Jiaolong.Contracts.Models;
+using Jiaolong.Hardware.Mechrevo.Controls;
 using Jiaolong_ControlCenter.Services;
 using Jiaolong.Service.Storage;
 
@@ -106,7 +107,7 @@ public sealed class AdaptiveAutomationStateStore
     public async Task SetConfigurationAsync(AdaptiveAutomationConfiguration value, CancellationToken cancellationToken,
         long? expectedRevision = null, AutomationConfigurationIntent? intent = null, string? ownerSid = null)
     {
-        AdaptiveAutomationConfigurationValidator.Validate(value);
+        ArgumentNullException.ThrowIfNull(value);
         await gate.WaitAsync(cancellationToken);
         try
         {
@@ -124,7 +125,11 @@ public sealed class AdaptiveAutomationStateStore
                 AutomationConfigurationIntent.Update => prior?.Enabled == true,
                 _ => value.Enabled
             };
-            configuration = AdaptiveAutomationConfigurationValidator.Clone(value with { Enabled = enabled, Revision = revision + 1 });
+            if (enabled && recovery is not null)
+                throw new InvalidOperationException("adaptiveRecoveryPending");
+            var candidate = value with { Enabled = enabled, Revision = revision + 1 };
+            AdaptiveAutomationConfigurationValidator.Validate(candidate);
+            configuration = AdaptiveAutomationConfigurationValidator.Clone(candidate);
             configurationOwnerSid = ownerSid;
             if (configuration.Enabled && prior?.Enabled != true)
             {
@@ -210,6 +215,7 @@ public sealed class AdaptiveAutomationStateStore
         try
         {
             await EnsureLoadedLockedAsync(cancellationToken);
+            if (recovery is not null) return;
             if (configuration?.Enabled != true && manualOverrideUntilUtc == DateTimeOffset.MaxValue && (!modeChanged || manualModeChanged)) return;
             var priorConfiguration = configuration;
             var priorOverride = manualOverrideUntilUtc;
@@ -362,7 +368,7 @@ public sealed class AdaptiveAutomationStateStore
     }
 }
 
-public sealed class AdaptiveAutomationHardwareProvider(
+public sealed partial class AdaptiveAutomationHardwareProvider(
     IHomeHardwareProvider inner,
     AdaptiveAutomationStateStore store) : IHomeHardwareProvider
 {
@@ -371,18 +377,24 @@ public sealed class AdaptiveAutomationHardwareProvider(
     private readonly ConcurrentDictionary<Guid, long> automaticOperations = new();
     private readonly SemaphoreSlim cpuModeCommandGate = new(1, 1);
     private readonly SemaphoreSlim automationCycleGate = new(1, 1);
-    public bool IsAutomaticOperation(Guid operationId) => automaticOperations.ContainsKey(operationId);
+    public bool IsAutomaticOperation(Guid operationId) => automaticOperations.ContainsKey(operationId) || modeLightingOperations.ContainsKey(operationId);
     public Task<object> ReadDiagnosticsAsync(CancellationToken token, string? requestingSid = null) => store.ReadDiagnosticsAsync(token, requestingSid);
     public async Task<long?> ReadAutomaticConfigurationRevisionAsync(Guid operationId, CancellationToken token)
     {
+        if (modeLightingOperations.TryGetValue(operationId, out var lighting))
+            return await IsModeLightingIntentCurrentAsync(lighting, token) ? lighting.Revision : null;
         if (!automaticOperations.TryGetValue(operationId, out long expected)) return null;
         var state = await store.ReadAsync(token);
-        return state.Configuration?.Enabled == true && (expected < 0 || state.Revision == expected)
+        return state.Recovery is null && state.Configuration?.Enabled == true && (expected < 0 || state.Revision == expected)
             ? state.Revision : null;
     }
 
+    internal async Task<bool> HasRetainedLegacyRecoveryAsync(CancellationToken token) =>
+        (await store.ReadAsync(token)).Recovery is not null;
+
     public Task PrepareManualCommandAsync(HardwareCommand command, CancellationToken token) =>
-        ControlExecutionCoordinator.IsManaged(command) && !automaticOperations.ContainsKey(command.OperationId)
+        ControlExecutionCoordinator.IsManaged(command) && !IsAutomaticOperation(command.OperationId) &&
+            command is not ApplyControlRequestCommand { Request.Origin: ControlOrigin.ModeFollow }
             ? store.MarkManualModeChangeAsync(DateTimeOffset.UtcNow,
                 command is SetPerformanceModeCommand or ApplyControlRequestCommand or ApplyTurboBranchCommand or ReleaseTurboBranchCommand or SetCpuTuningBatchCommand { NativeMode: not null }, token)
             : Task.CompletedTask;
@@ -406,7 +418,7 @@ public sealed class AdaptiveAutomationHardwareProvider(
         if (automaticOperations.TryGetValue(command.OperationId, out long expected))
         {
             var current = await store.ReadAsync(token);
-            if (current.Configuration?.Enabled != true || expected >= 0 && current.Revision != expected)
+            if (current.Recovery is not null || current.Configuration?.Enabled != true || expected >= 0 && current.Revision != expected)
                 return Rejected(command.OperationId, ErrorCode.CancelledBeforeApply) with { Mutation = HardwareMutation.NoMutation };
         }
         return await inner.ExecuteAsync(command, token);
@@ -428,13 +440,30 @@ public sealed class AdaptiveAutomationHardwareProvider(
     public Task<HardwareSnapshot> ReadTelemetryAsync(CancellationToken cancellationToken) => inner.ReadTelemetryAsync(cancellationToken);
     public void SetBackgroundWorkPaused(bool paused) => inner.SetBackgroundWorkPaused(paused);
     public void SetBackgroundWorkState(PowerLifecycleState lifecycle) => inner.SetBackgroundWorkState(lifecycle);
+    public long? PrepareShutdownCleanup() => inner.PrepareShutdownCleanup();
     public Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false) =>
         inner.ReadControlBaselineAsync(token, includeCpuAdvanced);
+    public Task StopClientLightingDynamicsAsync(CancellationToken token) => inner.StopClientLightingDynamicsAsync(token);
+    public Task<OemCpuConfigurationSnapshot?> ReadOemCpuConfigurationAsync(CancellationToken token) =>
+        inner.ReadOemCpuConfigurationAsync(token);
+    public Task<string?> ReadDeviceRecoveryKeyAsync(HardwareIdentity identity, CancellationToken token) =>
+        inner.ReadDeviceRecoveryKeyAsync(identity, token);
+    public Task<bool> ReconcileGpuRecoveryAsync(CancellationToken token) => inner.ReconcileGpuRecoveryAsync(token);
+    public Task<CommandResult> RecoverPendingGpuAsync(Guid id, CancellationToken token) => inner.RecoverPendingGpuAsync(id, token);
+    public Task<bool> VerifyPendingGpuTargetAsync(Guid id, CancellationToken token) => inner.VerifyPendingGpuTargetAsync(id, token);
+    public Task<CommandResult> RecoverSessionFanAsync(Guid id, FanEcRecoveryScope scope, CancellationToken token) => inner.RecoverSessionFanAsync(id, scope, token);
+    public Task<WindowsPowerSettingsSnapshot?> ReadWindowsPowerSchemeAsync(Guid scheme, CancellationToken token) => inner.ReadWindowsPowerSchemeAsync(scheme, token);
+    public Task<CommandResult> RestoreWindowsPowerSettingAsync(Guid id, Guid scheme, WindowsCpuSetting setting, int expected, int target, CancellationToken token) =>
+        inner.RestoreWindowsPowerSettingAsync(id, scheme, setting, expected, target, token);
     public Task<CommandResult> RestoreCpuFieldAsync(Guid id, string field, CpuFieldRestorationValue baseline,
         CpuFieldRestorationValue expected, CancellationToken token) => inner.RestoreCpuFieldAsync(id, field, baseline, expected, token);
+    public Task<CommandResult> RestoreCpuScalarAsync(Guid id, string field, SettingRequest baseline,
+        SettingRequest expected, CancellationToken token) => inner.RestoreCpuScalarAsync(id, field, baseline, expected, token);
 
     public Task<PerformanceModeEvidence?> ReadModeEvidenceAsync(CancellationToken cancellationToken) =>
         inner.ReadModeEvidenceAsync(cancellationToken);
+    public Task<PerformanceModeEvidence?> ReadNativeModeEvidenceAsync(CancellationToken token) =>
+        inner.ReadNativeModeEvidenceAsync(token);
 
     public async Task<HomeControlState> ReadControlsAsync(CancellationToken cancellationToken)
     {
@@ -453,7 +482,7 @@ public sealed class AdaptiveAutomationHardwareProvider(
                     await automationCycleGate.WaitAsync(cancellationToken);
                     try
                     {
-                        await store.SetConfigurationAsync(set.Configuration, cancellationToken);
+                        await store.SetConfigurationAsync(set.Configuration, cancellationToken, set.ExpectedRevision, set.Intent);
                         return Applied(command.OperationId);
                     }
                     finally { automationCycleGate.Release(); }
@@ -469,6 +498,10 @@ public sealed class AdaptiveAutomationHardwareProvider(
         catch (InvalidDataException)
         {
             return Rejected(command.OperationId, ErrorCode.ValidationFailed);
+        }
+        catch (InvalidOperationException) when (command is SetAdaptiveAutomationConfigurationCommand)
+        {
+            return Rejected(command.OperationId, ErrorCode.IdempotencyConflict) with { Mutation = HardwareMutation.NoMutation };
         }
         catch (IOException)
         {
@@ -505,6 +538,8 @@ public sealed class AdaptiveAutomationHardwareProvider(
                 if (serialize && automaticOperations.TryGetValue(command.OperationId, out var expectedRevision))
                 {
                     var automation = await store.ReadAsync(cancellationToken);
+                    if (automation.Recovery is not null)
+                        return Rejected(command.OperationId, ErrorCode.CommandInProgress) with { Mutation = HardwareMutation.NoMutation };
                     if (automation.ManualOverrideUntilUtc is { } until && DateTimeOffset.UtcNow < until)
                         return Rejected(command.OperationId, ErrorCode.CommandInProgress);
                     if (expectedRevision >= 0 && automation.Revision != expectedRevision)
@@ -525,6 +560,8 @@ public sealed class AdaptiveAutomationHardwareProvider(
         long? expectedConfigurationRevision = null)
     {
         var state = await store.ReadAsync(cancellationToken);
+        if (state.Recovery is not null)
+            return Rejected(command.OperationId, ErrorCode.CommandInProgress) with { Mutation = HardwareMutation.NoMutation };
         if (state.ManualOverrideUntilUtc is { } until && DateTimeOffset.UtcNow < until)
             return new(command.OperationId, CommandState.Rejected, null, RequiredUserAction.None,
                 ServiceError.Create(ErrorCode.CommandInProgress, command.OperationId, true), false);
@@ -593,7 +630,9 @@ public static class AdaptiveAutomationConfigurationValidator
             PresetKey.Create(preset.Key.Mode, preset.Key.Slot);
             var expectedMode = AdaptiveTargetMap.HardwareModeFor(preset.Key);
             bool custom = preset.Key.Mode is ControlModeId.Custom1 or ControlModeId.Custom2 or ControlModeId.Custom3;
-            if ((!custom && preset.PerformanceMode != expectedMode || custom &&
+            // Slot 2 restores the device's captured native mode, regardless of its logical group.
+            bool capturedMode = custom || preset.Key.Slot == 2;
+            if ((!capturedMode && preset.PerformanceMode != expectedMode || capturedMode &&
                 preset.PerformanceMode is not (PerformanceMode.Quiet or PerformanceMode.Balanced or PerformanceMode.Turbo)) ||
                 preset.CpuWindowsTuning is { } cpu && !IsSafeRestorableCpuPlan(cpu))
                 throw new ArgumentException("Preset snapshots may contain only the saved mode, restorable Windows CPU tuning, PBO Scalar and CO.");
@@ -609,12 +648,12 @@ public static class AdaptiveAutomationConfigurationValidator
     {
         if (plan.TemperatureLimitC is not null || plan.SplWatts is not null || plan.SpptWatts is not null ||
             plan.EnabledCoreCount is not null ||
-            plan.NegativeCurveOptimizer is < -30 or > 0 ||
+            plan.NegativeCurveOptimizer is < -50 or > 0 ||
             plan.Advanced is { } advanced &&
             ((advanced with { PboScalar = null, CurveOptimizerAll = null, PerCoreCurveOptimizer = null }) != new AdvancedCpuTuningPlan() ||
-             advanced.CurveOptimizerAll is < -30 or > 0 ||
+             advanced.CurveOptimizerAll is < -50 or > 0 ||
              advanced.PerCoreCurveOptimizer is { } cores && (cores.Count is < 1 or > 16 ||
-                 cores.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -30 or > 0))))
+                 cores.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -50 or > 0))))
             return false;
         if (plan.AcMaxFrequencyMhz.HasValue != plan.DcMaxFrequencyMhz.HasValue ||
             plan.AcMinActiveCoresPercent.HasValue != plan.DcMinActiveCoresPercent.HasValue ||
@@ -622,7 +661,7 @@ public static class AdaptiveAutomationConfigurationValidator
             return false;
         var result = CommandValidation.Validate(new SetCpuTuningCommand(Guid.NewGuid(), plan, true));
         return result is null && (plan.MaxFrequencyMhz is not null || plan.AcMaxFrequencyMhz is not null ||
-            plan.BoostEnabled is not null || plan.WindowsPowerSchemeId is not null || plan.AcMinActiveCoresPercent is not null ||
+            plan.BoostEnabled is not null || plan.BoostPolicy is not null || plan.WindowsPowerSchemeId is not null || plan.AcMinActiveCoresPercent is not null ||
             plan.Advanced?.PboScalar is not null || plan.NegativeCurveOptimizer is not null ||
             plan.Advanced?.CurveOptimizerAll is not null || plan.Advanced?.PerCoreCurveOptimizer is { Count: > 0 });
     }

@@ -11,6 +11,28 @@ namespace Jiaolong.ControlCenter.Tests;
 public sealed class TrayInteractionTests
 {
     [TestMethod]
+    public void Lighting_preset_use_dispatches_only_lighting_and_uses_its_readback()
+    {
+        var code = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "LightingWorkspaceV2.xaml.cs");
+        const string signature = "private async Task UsePresetAsync(PresetKey key)";
+        StringAssert.Contains(code, signature);
+        int start = code.IndexOf(signature, StringComparison.Ordinal);
+        int end = code.IndexOf("\n    private ", start + signature.Length, StringComparison.Ordinal);
+        Assert.IsTrue(end > start);
+        var use = code[start..end];
+        StringAssert.Contains(use, "session.ExecuteAsync(new SetKeyboardLightingCommand(");
+        StringAssert.Contains(use, "LogoEnabled = null");
+        StringAssert.Contains(use, "LightingPresetPolicy.SameEffect(plan, session?.State?.Controls.KeyboardLighting)");
+        Assert.IsFalse(use.Contains("Catalog.ApplyAsync", StringComparison.Ordinal));
+        Assert.IsFalse(use.Contains("NativeModeFor", StringComparison.Ordinal));
+        Assert.IsFalse(use.Contains("SetPerformanceModeCommand", StringComparison.Ordinal));
+        var follow = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "Controls", "LightingWorkspaceV2.FollowPreset.cs");
+        StringAssert.Contains(follow, "if (requested && session?.State is { } current &&");
+        StringAssert.Contains(follow, "LightingPresetPolicy.ResolveTarget(current.Controls, lightingSlots, confirmedCustomLighting, confirmedPerformanceLighting) is { } key)");
+        StringAssert.Contains(follow, "await UsePresetAsync(key);");
+    }
+
+    [TestMethod]
     public void Initial_launch_initializes_tray_and_session_without_activating_main_window()
     {
         var app = ReadSource("src", "Jiaolong.ControlCenter", "App.xaml.cs");
@@ -66,6 +88,68 @@ public sealed class TrayInteractionTests
         Assert.IsFalse(show.Contains("acceptanceSecondaryDisplay", StringComparison.Ordinal));
         Assert.IsFalse(show.Contains("IsModalActionPending = true", StringComparison.Ordinal));
         StringAssert.Contains(show, "ShowDocked(anchor)");
+    }
+
+    [TestMethod]
+    public void Mode_presentation_has_one_preview_and_restore_path_ahead_of_workspace_refresh()
+    {
+        var shell = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.xaml.cs");
+        var branding = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "PrototypeWindow.Branding.cs");
+        var preview = shell[shell.IndexOf("private void PreviewModeVisuals", StringComparison.Ordinal)..shell.IndexOf("private void RequestModeVisuals", StringComparison.Ordinal)];
+        Assert.IsFalse(preview.Contains("RequestModeVisuals(", StringComparison.Ordinal), "Preview and completion must not paint a second mode before shared presentation resolves.");
+        StringAssert.Contains(branding, "displayedBranding?.Mode ?? confirmedControlMode, requestedDisplayMode");
+        var apply = shell[shell.IndexOf("private void ApplyHomeState", StringComparison.Ordinal)..shell.IndexOf("private bool ShouldApplyQuickSettingState", StringComparison.Ordinal)];
+        StringAssert.Contains(apply, "ReconcileConfirmedBranding(snapshot, animate: true)");
+        Assert.IsTrue(apply.IndexOf("ReconcileConfirmedBranding(snapshot, animate: true)", StringComparison.Ordinal) <
+            apply.IndexOf("PageWorkspace.ApplyState(snapshot)", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void Pending_mode_selection_is_shared_until_completion_then_returns_to_actual_readback()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var controls = new HomeControlState(PerformanceMode.Turbo, false, [])
+        {
+            ModeEvidence = new Jiaolong.Contracts.Commands.PerformanceModeEvidence(now, "WMI", 4, "01", 1,
+                PerformanceMode.Turbo, null, "RequestStateUnverified")
+        };
+        Assert.AreEqual(ControlModeId.Office, TrayIconAssetCatalog.DisplayMode(controls, true, now, ControlModeId.Turbo, ControlModeId.Office));
+        Assert.AreEqual(ControlModeId.Office, TrayIconAssetCatalog.DisplayMode(null, false, now, ControlModeId.Turbo, ControlModeId.Office));
+        Assert.AreEqual(ControlModeId.Turbo, TrayIconAssetCatalog.DisplayMode(controls, true, now, ControlModeId.Office));
+        controls = controls with { ModeEvidence = controls.ModeEvidence! with { ParsedMode = PerformanceMode.Quiet } };
+        Assert.AreEqual(ControlModeId.Office, TrayIconAssetCatalog.DisplayMode(controls, true, now, ControlModeId.Turbo));
+    }
+
+    [TestMethod]
+    public void Mode_selection_survives_missing_readback_and_accepts_the_next_actual_mode()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var controls = new HomeControlState(PerformanceMode.Turbo, false, [])
+        {
+            ModeEvidence = new Jiaolong.Contracts.Commands.PerformanceModeEvidence(now, "WMI", 4, "01", 1,
+                PerformanceMode.Turbo, null, "RequestStateUnverified")
+        };
+        var selected = TrayIconAssetCatalog.DisplayMode(controls, true, now, null);
+        Assert.AreEqual(ControlModeId.Turbo, selected);
+        Assert.AreEqual(selected, TrayIconAssetCatalog.DisplayMode(controls, false, now, selected));
+        Assert.AreEqual(selected, TrayIconAssetCatalog.DisplayMode(controls, true, now.AddSeconds(4), selected));
+        Assert.AreEqual(selected, TrayIconAssetCatalog.DisplayMode(controls, true, now.AddSeconds(-2), selected));
+        Assert.AreEqual(selected, TrayIconAssetCatalog.DisplayMode(null, true, now, selected));
+        controls = controls with { ModeEvidence = controls.ModeEvidence! with { ParsedMode = PerformanceMode.Quiet } };
+        Assert.AreEqual(ControlModeId.Office, TrayIconAssetCatalog.DisplayMode(controls, true, now, selected));
+        controls = controls with
+        {
+            ExecutionState = new(1, 1, 1, ControlModeId.Custom2, PerformanceMode.Quiet, [], [])
+                { NativeModeApplyState = ApplyState.Confirmed }
+        };
+        Assert.AreEqual(ControlModeId.Custom2, TrayIconAssetCatalog.DisplayMode(controls, true, now, selected));
+        controls = controls with
+        {
+            ModeEvidence = controls.ModeEvidence! with { VerificationLevel = "EffectiveStateConfirmed" },
+            ExecutionState = controls.ExecutionState! with { NativeModeApplyState = ApplyState.Pending }
+        };
+        Assert.AreEqual(ControlModeId.Office, TrayIconAssetCatalog.DisplayMode(controls, true, now, selected));
+        Assert.IsNull(TrayIconAssetCatalog.DisplayMode(null, false, now, null));
     }
 
     [TestMethod]
@@ -311,7 +395,7 @@ public sealed class TrayInteractionTests
         var fan = ReadSource("src", "Jiaolong.ControlCenter", "Prototype", "TrayQuickConsoleWindow.Fan.cs");
         StringAssert.Contains(fan, "ConfigureFanActions");
         StringAssert.Contains(fan, "fixedFanRequested?.Invoke(target)");
-        StringAssert.Contains(fan, "fanConnected && !fanBusy && fanStrongCooling");
+        StringAssert.Contains(fan, "fanConnected && !fanBusy && fanStrongAvailable && fanStrongCooling is not null");
         StringAssert.Contains(shell, "if (trayFanCommandPending)");
         Assert.IsFalse(fan.Contains("Navigate(", StringComparison.Ordinal));
         Assert.IsFalse(xaml.Contains("OnCloseClick", StringComparison.Ordinal));

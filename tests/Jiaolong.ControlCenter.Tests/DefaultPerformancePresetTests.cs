@@ -45,13 +45,13 @@ public sealed class DefaultPerformancePresetTests
             Assert.IsTrue(PerformanceDraftValidator.Validate(draft).IsValid);
             Assert.IsTrue(draft.SpptWatts >= draft.SplWatts);
             Assert.IsTrue(draft.SplWatts is >= 45 and <= 75 && draft.SpptWatts is >= 45 and <= 75);
-            Assert.AreEqual(-30, draft.NegativeCurveOptimizer);
+            Assert.IsNull(draft.NegativeCurveOptimizer);
             Assert.IsNull(draft.AdvancedCpuTuning);
             Assert.AreEqual(Guid.Empty, draft.WindowsPowerSchemeId);
             Assert.AreEqual(SettingIntent.Official, preset.Settings["windowsPowerSchemeId"].Intent);
-            Assert.AreEqual(SettingIntent.Official, preset.Settings["acMaxFrequencyMhz"].Intent);
-            Assert.AreEqual(SettingIntent.Set, preset.Settings["negativeCurveOptimizer"].Intent);
-            Assert.AreEqual(-30, preset.Settings["negativeCurveOptimizer"].Value!.Value.GetInt32());
+            Assert.AreEqual(SettingIntent.Keep, preset.Settings["acMaxFrequencyMhz"].Intent);
+            Assert.AreEqual(SettingIntent.Keep, preset.Settings["negativeCurveOptimizer"].Intent);
+            Assert.IsNull(preset.Settings["negativeCurveOptimizer"].Value);
         }
         foreach (var mode in Enum.GetValues<ControlModeId>())
         {
@@ -66,8 +66,8 @@ public sealed class DefaultPerformancePresetTests
         var verified = new CapabilitySnapshot([]) { Identity = new("MRID6-23", "V38", "AMD Ryzen 7 7745HX", "NVIDIA RTX 4070"),
             Fields = [new("acMaxFrequencyMhz", CapabilityState.Available, true, true, 1500, 5400, 1, "MHz", "verifiedProfile", "PreservesSelectedMode", DateTimeOffset.UtcNow, 1)] };
         var resolved = DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), verified);
-        Assert.AreEqual(SettingIntent.Set, resolved.Settings["acMaxFrequencyMhz"].Intent);
-        Assert.AreEqual(3200, resolved.Settings["acMaxFrequencyMhz"].Value!.Value.GetInt32());
+        Assert.AreEqual(SettingIntent.Keep, resolved.Settings["acMaxFrequencyMhz"].Intent);
+        Assert.IsNull(resolved.Settings["acMaxFrequencyMhz"].Value);
         var windowsFrequency = verified with { Fields = [verified.Fields[0], verified.Fields[0] with { Key = "dcMaxFrequencyMhz" }] };
         foreach (var (mode, balancedAc, balancedDc) in new[] { (ControlModeId.Office, 4200, 2800),
             (ControlModeId.Gaming, 4800, 3300), (ControlModeId.Turbo, 5100, 3600),
@@ -76,14 +76,14 @@ public sealed class DefaultPerformancePresetTests
             var balanced = DefaultPerformancePresets.Create(PresetKey.Create(mode, 2), windowsFrequency);
             foreach (var (field, expected) in new[] { ("acMaxFrequencyMhz", balancedAc), ("dcMaxFrequencyMhz", balancedDc) })
             {
-                Assert.AreEqual(SettingIntent.Set, balanced.Settings[field].Intent, $"{mode}:2 must replace a stale Windows frequency cap.");
-                Assert.AreEqual(expected, balanced.Settings[field].Value!.Value.GetInt32());
-                Assert.AreEqual(expected, balanced.Payload.GetProperty(field).GetInt32());
+                Assert.AreEqual(SettingIntent.Keep, balanced.Settings[field].Intent, $"{mode}:2 must preserve the current Windows frequency cap.");
+                Assert.IsNull(balanced.Settings[field].Value);
+                Assert.AreEqual(4500, balanced.Payload.GetProperty(field).GetInt32());
             }
             Assert.AreEqual(SettingIntent.Official, balanced.Settings["temperatureLimitC"].Intent);
             var migrated = DefaultControlPresets.Complete(balanced with { FactoryRevision = "2026-10-10.control-v3",
                 Revision = 7, DisplayName = "保留名称", Settings = new(balanced.Settings) { ["acMaxFrequencyMhz"] = SettingRequest.Official } }, windowsFrequency, true);
-            Assert.AreEqual(SettingIntent.Set, migrated.Settings["acMaxFrequencyMhz"].Intent);
+            Assert.AreEqual(SettingIntent.Keep, migrated.Settings["acMaxFrequencyMhz"].Intent);
             Assert.AreEqual(7L, migrated.Revision);
             Assert.AreEqual("保留名称", migrated.DisplayName);
         }
@@ -91,10 +91,10 @@ public sealed class DefaultPerformancePresetTests
         foreach (var limits in new (double? Minimum, double? Maximum)[] { (null, null), (1500, null), (null, 5400), (1500, double.PositiveInfinity), (5400, 1500) })
         {
             var withoutRange = verified with { Fields = [verified.Fields[0] with { Minimum = limits.Minimum, Maximum = limits.Maximum }] };
-            Assert.AreEqual(SettingIntent.Official, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Gaming, 2), withoutRange).Settings["acMaxFrequencyMhz"].Intent,
+            Assert.AreEqual(SettingIntent.Keep, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Gaming, 2), withoutRange).Settings["acMaxFrequencyMhz"].Intent,
                 "Frequency defaults require a complete finite ordered capability range.");
         }
-        Assert.AreEqual(SettingIntent.Official, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), unverifiedWindows).Settings["acMaxFrequencyMhz"].Intent,
+        Assert.AreEqual(SettingIntent.Keep, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), unverifiedWindows).Settings["acMaxFrequencyMhz"].Intent,
             "Writable alone must not turn an unverified factory value into a required command");
         var officeBalanced = DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 2), verified with
         { Fields = [new("isBoostEnabled", CapabilityState.Available, true, true, null, null, null, "", "windowsPowerApi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 1)] });
@@ -102,11 +102,11 @@ public sealed class DefaultPerformancePresetTests
         Assert.IsFalse(officeBalanced.Settings["isBoostEnabled"].Value!.Value.GetBoolean());
         Assert.IsTrue(PresetValidation.Validate(officeBalanced).IsValid);
         var unreadableWindows = verified with { Fields = verified.Fields.Select(field => field with { Readable = false }).ToArray() };
-        Assert.AreEqual(SettingIntent.Official, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), unreadableWindows).Settings["acMaxFrequencyMhz"].Intent);
+        Assert.AreEqual(SettingIntent.Keep, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), unreadableWindows).Settings["acMaxFrequencyMhz"].Intent);
         var mixedEpoch = verified with { Fields = [verified.Fields[0], verified.Fields[0] with { Key = "dcMaxFrequencyMhz", HardwareEpoch = 2 }] };
-        Assert.AreEqual(SettingIntent.Official, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), mixedEpoch).Settings["acMaxFrequencyMhz"].Intent);
+        Assert.AreEqual(SettingIntent.Keep, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), mixedEpoch).Settings["acMaxFrequencyMhz"].Intent);
         var unknown = DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), verified with { Identity = verified.Identity with { CpuModel = "Ryzen 9 7940HX" } });
-        Assert.AreEqual(SettingIntent.Official, unknown.Settings["acMaxFrequencyMhz"].Intent);
+        Assert.AreEqual(SettingIntent.Keep, unknown.Settings["acMaxFrequencyMhz"].Intent);
         var testedAt = DateTimeOffset.UtcNow;
         var oem = verified with { IsOnAcPower = true, Fields = verified.Fields.Concat(new FieldCapability[]
         {
@@ -123,19 +123,22 @@ public sealed class DefaultPerformancePresetTests
         var changesMode = oem with { Fields = oem.Fields.Select(field => field with { NativeModeSideEffect = "ChangesToTurbo" }).ToArray() };
         Assert.AreEqual(SettingIntent.Official, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), changesMode).Settings["splWatts"].Intent);
         var narrow = verified with { Fields = verified.Fields.Select(field => field with { Maximum = 2500 }).ToArray() };
-        Assert.AreEqual(SettingIntent.Official, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), narrow).Settings["acMaxFrequencyMhz"].Intent);
+        Assert.AreEqual(SettingIntent.Keep, DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1), narrow).Settings["acMaxFrequencyMhz"].Intent);
         var oldFactoryPaths = new RecordingPathProvider();
         var oldFactoryStore = new ControlPresetStore(oldFactoryPaths);
         await oldFactoryStore.SaveAsync(DefaultPerformancePresets.Create(PresetKey.Create(ControlModeId.Office, 1)), CancellationToken.None);
         var capableStore = new ControlPresetStore(oldFactoryPaths, () => verified);
         var loadedFactory = await capableStore.LoadAsync(ControlPageId.Performance, PresetKey.Create(ControlModeId.Office, 1), CancellationToken.None);
-        Assert.AreEqual(SettingIntent.Set, loadedFactory!.Settings["acMaxFrequencyMhz"].Intent,
+        Assert.AreEqual(SettingIntent.Keep, loadedFactory!.Settings["acMaxFrequencyMhz"].Intent,
             "Saved factory slots must resolve with the same live capabilities as reset and execution");
         await capableStore.SaveAsync(loadedFactory with
-        { Settings = new(loadedFactory.Settings) { ["acMaxFrequencyMhz"] = SettingRequest.Keep } }, CancellationToken.None);
+        { Settings = new(loadedFactory.Settings) { ["acMaxFrequencyMhz"] = SettingRequest.Set(4000) },
+            Payload = JsonSerializer.SerializeToElement(SavedPerformancePreset.ReadDraft(loadedFactory, loadedFactory.Key)
+                with { AcMaxFrequencyMhz = 4000 }, new JsonSerializerOptions(JsonSerializerDefaults.Web)) }, CancellationToken.None);
         var userIntent = await capableStore.LoadAsync(ControlPageId.Performance, loadedFactory.Key, CancellationToken.None);
         Assert.IsTrue(userIntent!.UserModified, "Changing an intent alone must stop factory re-resolution");
-        Assert.AreEqual(SettingIntent.Keep, userIntent.Settings["acMaxFrequencyMhz"].Intent);
+        Assert.AreEqual(SettingIntent.Set, userIntent.Settings["acMaxFrequencyMhz"].Intent);
+        Assert.AreEqual(4000, userIntent.Settings["acMaxFrequencyMhz"].Value!.Value.GetInt32());
         var unavailableReason = typeof(Jiaolong_ControlCenter.Prototype.PrototypeWindow).GetMethod("PresetUnavailableReason",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
         var withoutCo = new CapabilitySnapshot([new("cpuTuning", CapabilityState.Available, null)])

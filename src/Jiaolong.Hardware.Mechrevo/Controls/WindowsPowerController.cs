@@ -36,6 +36,8 @@ public sealed record WindowsPowerSettingsSnapshot(
 
 public sealed record WindowsCoreParkingValue(int Ac, int Dc);
 
+public enum WindowsCpuSetting { AcMaxFrequencyMhz, DcMaxFrequencyMhz, AcBoostMode, DcBoostMode, AcMinActiveCoresPercent, DcMinActiveCoresPercent }
+
 public interface IWindowsPowerSettingsTransport
 {
     Task<WindowsPowerSettingsSnapshot> ReadAsync(CancellationToken cancellationToken);
@@ -55,8 +57,65 @@ internal interface IWindowsPowerSettingsApi
     uint ReadFriendlyName(Guid scheme, byte[]? buffer, ref uint size);
 }
 
-public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTransport
+public interface IWindowsPowerSettingsRecoveryTransport
 {
+    Task<WindowsPowerSettingsSnapshot> ReadSchemeAsync(Guid schemeId, CancellationToken token);
+    Task<bool> RestoreSettingAsync(Guid schemeId, WindowsCpuSetting setting, int expected, int target, CancellationToken token);
+}
+
+public sealed class WindowsPowerSettingsTransport : IWindowsPowerSettingsTransport, IWindowsPowerSettingsRecoveryTransport
+{
+    public Task<WindowsPowerSettingsSnapshot> ReadSchemeAsync(Guid schemeId, CancellationToken token)
+    {
+        // ActiveSchemeId in this legacy DTO identifies the queried scheme, not the OS active scheme.
+        token.ThrowIfCancellationRequested();
+        if (schemeId == Guid.Empty) throw new ArgumentException("Power scheme is empty.", nameof(schemeId));
+        EnsureHardwareAccess(readOnly: true);
+        return Task.FromResult(ReadScheme(schemeId));
+    }
+
+    // Internal recovery primitive: writes one known index without activating another power scheme.
+    public Task<bool> RestoreSettingAsync(Guid schemeId, WindowsCpuSetting setting, int expected, int target, CancellationToken token)
+    {
+        bool attempted = false;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            if (schemeId == Guid.Empty) throw new ArgumentException("Power scheme is empty.", nameof(schemeId));
+            var (key, ac, maximum) = setting switch
+            {
+                WindowsCpuSetting.AcMaxFrequencyMhz => (ProcessorMaximumFrequency, true, int.MaxValue),
+                WindowsCpuSetting.DcMaxFrequencyMhz => (ProcessorMaximumFrequency, false, int.MaxValue),
+                WindowsCpuSetting.AcBoostMode => (ProcessorBoostMode, true, 6),
+                WindowsCpuSetting.DcBoostMode => (ProcessorBoostMode, false, 6),
+                WindowsCpuSetting.AcMinActiveCoresPercent => (ProcessorCoreParkingMinCores, true, 100),
+                WindowsCpuSetting.DcMinActiveCoresPercent => (ProcessorCoreParkingMinCores, false, 100),
+                _ => throw new ArgumentOutOfRangeException(nameof(setting))
+            };
+            if (target < 0 || target > maximum || expected < 0 || expected > maximum)
+                throw new ArgumentOutOfRangeException(nameof(target));
+            EnsureHardwareAccess();
+            Guid active = ReadActiveScheme();
+            uint current = ReadIndex(schemeId, key, ac);
+            if (current == (uint)target) return Task.FromResult(false);
+            if (current != (uint)expected) throw new InvalidOperationException("windowsPowerSettingExternallyChanged");
+            token.ThrowIfCancellationRequested();
+            attempted = true;
+            WriteIndex(schemeId, key, (uint)target, ac);
+            if (ReadActiveScheme() != active) throw new IOException("windowsActiveSchemeChangedDuringRestore");
+            // Windows must refresh the active policy; inactive policies stay inactive.
+            if (active == schemeId) SetActiveScheme(schemeId);
+            token.ThrowIfCancellationRequested();
+            if (ReadIndex(schemeId, key, ac) != (uint)target || ReadActiveScheme() != active)
+                throw new IOException("windowsPowerSettingRestoreMismatch");
+            return Task.FromResult(true);
+        }
+        catch (Exception error)
+        {
+            error.Data["windowsPowerWriteAttempted"] = attempted;
+            throw;
+        }
+    }
     private readonly IWindowsPowerSettingsApi? nativeApi;
     private readonly Func<bool>? hardwareAccessAllowed;
     private readonly Func<bool>? hardwareReadAllowed;

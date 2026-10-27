@@ -31,7 +31,7 @@ public sealed class DiagnosticExportIpcTests
             diagnosticBundleBuilder: builder,
             telemetryRingBuffer: buffer,
             diagnosticEventReader: new StaticDiagnosticEventReader("{\"eventName\":\"service.started\"}"));
-        var client = ClientIdentity.LocalInteractive(sid, 1);
+        var client = ClientIdentity.LocalAdministrator(sid, 1);
 
         var exported = await dispatcher.DispatchAsync(Request("exportDiagnostics", exportId,
             JsonSerializer.SerializeToElement(new { operationId = exportId })), client, CancellationToken.None);

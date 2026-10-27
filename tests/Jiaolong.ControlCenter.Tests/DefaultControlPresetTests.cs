@@ -29,6 +29,10 @@ public sealed class DefaultControlPresetTests
                 step.Command.Plan.SplWatts is null && step.Command.Plan.SpptWatts is null && step.Command.Plan.Advanced is null));
             var fan = DefaultControlPresets.Create(ControlPageId.Fan, key).Payload.Deserialize<FanCurveState>()!;
             Assert.AreEqual("Auto", fan.Strategy);
+            var fanSettings = DefaultControlPresets.Create(ControlPageId.Fan, key).Settings;
+            Assert.AreEqual(SettingIntent.Set, fanSettings["strategy"].Intent);
+            Assert.AreEqual("Auto", fanSettings["strategy"].Value!.Value.GetString());
+            Assert.IsTrue(fanSettings.Where(pair => pair.Key != "strategy").All(pair => pair.Value.Intent == SettingIntent.Keep));
             Assert.IsNull(fan.MaximumRpm);
             Assert.IsTrue(fan.IsValid());
             var customized = draft with { SplWatts = 90, SpptWatts = 90,
@@ -40,7 +44,11 @@ public sealed class DefaultControlPresetTests
             var restored = SavedPerformancePreset.ReadDraft(saved, key);
             Assert.AreEqual(90, restored.SplWatts);
             Assert.AreEqual(-30, restored.AdvancedCpuTuning!.CurveOptimizerAll);
-            var curvePlan = PerformanceCommandFactory.CreatePresetCommands(restored, state with { EnabledCoreCount = 16 }, true, true, true, true, true);
+            var capabilities = new CapabilitySnapshot([]) { Fields = [new("advancedCpuTuning",
+                CapabilityState.Available, true, true, null, null, null, "", "hardwareReadback",
+                "PreservesSelectedMode", DateTimeOffset.UtcNow, 7)] };
+            var curvePlan = PerformanceCommandFactory.CreatePresetCommands(restored, state with { EnabledCoreCount = 16 },
+                true, true, true, true, true, capabilities, 7);
             Assert.IsNull(curvePlan.Error);
             Assert.IsTrue(curvePlan.Steps.Any(step => step.Command.Plan.Advanced?.SlowPptWatts == 65), "Explicit SMU requests are independent of Official OEM limits");
             var invalidSmu = PerformanceCommandFactory.CreatePresetCommands(restored with { AdvancedCpuTuning = restored.AdvancedCpuTuning with { SlowPptWatts = 82 } }, state, true, true, true, true);
@@ -124,12 +132,13 @@ public sealed class DefaultControlPresetTests
             Assert.AreEqual(key, preset.Key);
             Assert.AreEqual(page, preset.Page);
             Assert.AreEqual(DateTimeOffset.UnixEpoch, preset.SavedAtUtc);
-            Assert.AreEqual(2, preset.SchemaVersion);
+            Assert.AreEqual(PagePresetEnvelope.CurrentSchemaVersion, preset.SchemaVersion);
             Assert.AreEqual(DefaultPerformancePresets.FactoryRevision, preset.FactoryRevision);
             Assert.IsFalse(preset.UserModified);
             Assert.IsTrue(preset.Settings.Count > 0);
             if (page is ControlPageId.Fan or ControlPageId.Lighting)
-                Assert.IsTrue(preset.Settings.Values.All(setting => setting.Intent != SettingIntent.Set),
+                Assert.IsTrue(preset.Settings.All(pair => pair.Value.Intent != SettingIntent.Set ||
+                    page == ControlPageId.Fan && pair.Key == "strategy" && pair.Value.Value!.Value.GetString() == "Auto"),
                     $"{page}: missing hardware verification must not manufacture required writes");
             switch (page)
             {
@@ -272,7 +281,7 @@ public sealed class DefaultControlPresetTests
             await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new Dictionary<string, PagePresetEnvelope> { [$"{key.Mode}:{key.Slot}"] = entry }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
             var before = await File.ReadAllTextAsync(path);
             var loaded = (await store.LoadAsync(ControlPageId.Gpu, key, CancellationToken.None))!;
-            Assert.AreEqual(schema == 99 ? 99 : 2, loaded.SchemaVersion);
+            Assert.AreEqual(schema == 99 ? 99 : PagePresetEnvelope.CurrentSchemaVersion, loaded.SchemaVersion);
             Assert.AreEqual("保留名称", loaded.DisplayName);
             if (schema != 99) Assert.AreEqual(0, loaded.Payload.GetProperty("CoreOffsetKhz").GetInt32());
             Assert.AreEqual(before, await File.ReadAllTextAsync(path));

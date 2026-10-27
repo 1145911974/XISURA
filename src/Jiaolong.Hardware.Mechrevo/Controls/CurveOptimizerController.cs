@@ -23,12 +23,12 @@ public sealed class CurveOptimizerController(ICurveOptimizerTransport? transport
 {
     public static ValidationResult Validate(int value, int minimum, int maximum)
     {
-        if (minimum > maximum || maximum > 0 || minimum < -30)
+        if (minimum > maximum || maximum > 0 || minimum < -50)
         {
             return ValidationResult.Reject("curveRangeInvalid");
         }
 
-        return value is >= -30 and <= 0 && value >= minimum && value <= maximum
+        return value is >= -50 and <= 0 && value >= minimum && value <= maximum
             ? ValidationResult.Allow()
             : ValidationResult.Reject("curveValueInvalid");
     }
@@ -37,7 +37,7 @@ public sealed class CurveOptimizerController(ICurveOptimizerTransport? transport
         int value,
         CancellationToken cancellationToken)
     {
-        var validation = Validate(value, -30, 0);
+        var validation = Validate(value, -50, 0);
         if (!validation.IsValid || transport is null)
         {
             return new CurveOptimizerResult(false, null,

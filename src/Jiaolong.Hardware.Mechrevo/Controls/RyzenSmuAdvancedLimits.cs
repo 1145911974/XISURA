@@ -3,7 +3,7 @@ using Jiaolong.Contracts.Commands;
 namespace Jiaolong.Hardware.Mechrevo.Controls;
 
 public sealed record RyzenSmuLimitWrite(bool Mp1, uint Command, uint Argument, uint? FallbackRsmu = null);
-public sealed record CpuSmuLimitSnapshot(AdvancedCpuTuningPlan Limits, int OemSplWatts);
+public sealed record CpuSmuLimitSnapshot(AdvancedCpuTuningPlan Limits, double? OemSplWatts, uint PmTableVersion = 0);
 
 public interface ISmuCpuLimitTransport
 {
@@ -14,12 +14,19 @@ public interface ISmuCpuLimitTransport
 public static class RyzenSmuAdvancedLimits
 {
     public static CpuSmuLimitSnapshot DecodeSnapshot(uint version, ReadOnlySpan<float> table) =>
-        new(DecodePmTable(version, table), Integral(table[6], 1, 250));
-    // Only this Dragon Range table layout has a verified setter/readback/restore receipt.
+        new(DecodePmTable(version, table), version == 0x540108 ? Quantize(table[6], 1, 250) : null, version);
+    // This verified read layout does not establish independent setter or recovery support.
     public static AdvancedCpuTuningPlan DecodePmTable(uint version, ReadOnlySpan<float> table)
     {
-        if (version != 0x540108 || table.Length < 64)
+        if (version is not (0x540105 or 0x540108) || table.Length < 64)
             throw new InvalidOperationException("advancedCpuPmTableUnsupported");
+        // CPUDoc 60eb3c9, SystemInfo.cs:683-699 explicitly maps 540105. No OEM SPL/FPPT aliases are established.
+        if (version == 0x540105)
+            return new AdvancedCpuTuningPlan(
+                PptWatts: RestorablePower(table[2]),
+                TdcCurrentMilliamps: RestorableCurrent(table[8]),
+                EdcCurrentMilliamps: RestorableCurrent(table[61]),
+                Mp1TemperatureC: Integral(table[10], 40, 100));
         var limits = new AdvancedCpuTuningPlan(
             StapmWatts: Quantize(table[0], 1, 250),
             FastPptWatts: Quantize(table[2], 1, 250),
@@ -47,8 +54,21 @@ public static class RyzenSmuAdvancedLimits
         _ => throw new ArgumentOutOfRangeException(nameof(field))
     };
 
-    internal static RyzenSmuLimitWrite BuildField(CpuTuningField field, object? value, bool restoring)
+    internal static RyzenSmuLimitWrite BuildField(CpuTuningField field, object? value, bool restoring, uint pmTableVersion = 0)
     {
+        bool directPpt = field == CpuTuningField.PptWatts && pmTableVersion == 0x540105;
+        if (directPpt && value is double power && (!double.IsFinite(power) || Math.Abs(power * 1000 - Math.Round(power * 1000)) > 0.000001))
+            throw new ArgumentException("advancedCpuLimitPrecisionInvalid", nameof(value));
+        // 120W is the observed V35 native Turbo PPT, not a hardware safety rating.
+        if (directPpt && !restoring)
+            return value is double target && target is >= 45 and <= 120
+                ? new(true, 0x3E, checked((uint)Math.Round(target * 1000)))
+                : throw new ArgumentOutOfRangeException(nameof(value));
+        RyzenSmuLimitWrite Route(RyzenSmuLimitWrite write) => directPpt ? write with { Mp1 = true, Command = 0x3E, FallbackRsmu = null }
+            : field == CpuTuningField.TdcCurrentMilliamps && pmTableVersion == 0x540105
+                ? write with { Mp1 = true, Command = 0x3C, FallbackRsmu = null }
+            : field == CpuTuningField.EdcCurrentMilliamps && pmTableVersion == 0x540105
+                ? write with { Mp1 = true, Command = 0x3D, FallbackRsmu = null } : write;
         var plan = field switch
         {
             CpuTuningField.StapmWatts when value is double watts => new AdvancedCpuTuningPlan(StapmWatts: watts),
@@ -73,9 +93,25 @@ public static class RyzenSmuAdvancedLimits
                 CpuTuningField.PptWatts => new(PptWatts: 45),
                 _ => throw new ArgumentOutOfRangeException(nameof(field))
             })!;
-            return template with { Argument = checked((uint)Math.Round(original * 1000)) };
+            return Route(template with { Argument = checked((uint)Math.Round(original * 1000)) });
         }
-        return BuildSingle(plan) ?? throw new ArgumentOutOfRangeException(nameof(value));
+        return Route(BuildSingle(plan) ?? throw new ArgumentOutOfRangeException(nameof(value)));
+    }
+
+    private static int RestorableCurrent(float value)
+    {
+        double rounded = Quantize(value, 1, 200);
+        double tolerance = 2d * Math.Abs((double)MathF.BitIncrement(value) - value);
+        if (Math.Abs(value - rounded) > tolerance) throw new InvalidOperationException("advancedCpuLimitPrecisionInvalid");
+        return checked((int)Math.Round(rounded * 1000));
+    }
+
+    private static double RestorablePower(float value)
+    {
+        double rounded = Quantize(value, 1, 250);
+        // PM floats can differ by two ULPs from the integer-mW command. Do not erase real sub-mW values.
+        double tolerance = 2d * Math.Abs((double)MathF.BitIncrement(value) - value);
+        return Math.Abs(value - rounded) <= tolerance ? rounded : throw new InvalidOperationException("advancedCpuLimitPrecisionInvalid");
     }
 
     private static double Quantize(float value, double minimum, double maximum)

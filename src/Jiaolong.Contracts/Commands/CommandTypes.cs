@@ -30,7 +30,10 @@ namespace Jiaolong.Contracts.Commands;
 [JsonDerivedType(typeof(ApplyControlRequestCommand), "applyControlRequest")]
 [JsonDerivedType(typeof(ApplyTurboBranchCommand), "applyTurboBranch")]
 [JsonDerivedType(typeof(ReleaseTurboBranchCommand), "releaseTurboBranch")]
-public abstract record HardwareCommand(Guid OperationId);
+public abstract record HardwareCommand(Guid OperationId)
+{
+    public Guid? ClientSessionId { get; init; }
+}
 
 public sealed record SetPerformanceModeCommand(Guid OperationId, PerformanceMode Mode) : HardwareCommand(OperationId);
 
@@ -93,6 +96,7 @@ public sealed record CpuTuningPlan(
 {
     public int? AcMaxFrequencyMhz { get; init; }
     public int? DcMaxFrequencyMhz { get; init; }
+    public CpuBoostPolicy? BoostPolicy { get; init; }
     public int? AcMinActiveCoresPercent { get; init; }
     public int? DcMinActiveCoresPercent { get; init; }
     public AdvancedCpuTuningPlan? Advanced { get; init; }

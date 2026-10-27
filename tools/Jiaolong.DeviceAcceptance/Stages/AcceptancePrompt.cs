@@ -21,6 +21,7 @@ public static class AcceptancePrompt
         }
 
         Console.WriteLine("Confirmation accepted. Live device action remains disabled in this build; no write was issued.");
-        return 0;
+        Console.Error.WriteLine("NOT_IMPLEMENTED: no device checks ran; no acceptance result was produced.");
+        return 4;
     }
 }

@@ -42,7 +42,7 @@ public sealed partial class GpuWorkspaceV2 : UserControl
 
     public GpuWorkspaceV2()
     {
-        presetStore = new(capabilities: () => session?.State?.Capabilities);
+        presetStore = new(capabilities: () => session?.State?.Capabilities, baseline: () => session?.SchedulingBaseline);
         InitializeComponent();
         PresetToolbar.PresetRenamed += async (_, key) =>
         {
@@ -73,9 +73,10 @@ public sealed partial class GpuWorkspaceV2 : UserControl
             rail.AddHandler(PointerCaptureLostEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => gpuRailPointerHeld = false), true);
         }
         PresetToolbar.SelectedKey = PresetKey.Create(ControlModeId.Turbo, 2);
-        CoreRail.SetValue(2280);
+        CoreRail.SetValue(null);
+        CoreRail.Visibility = CoreValueBox.Visibility = Visibility.Collapsed;
         MemoryRail.SetValue(0);
-        ApplyCoreOffsetProfile(-500, 500, 0);
+        ApplyCoreOffsetProfile(-1000, 1000, 0);
         CoreRail.ValueChanged += (_, value) => UpdateClockDraft(value, fromRail: true);
         CoreValueBox.ValueChanged += (_, value) => UpdateClockDraft(value, fromRail: false);
         MemoryRail.ValueChanged += (_, value) =>
@@ -280,14 +281,10 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         if (PresetToolbar.IsEditingPreset || gpuEditorLoading || gpuRailPointerHeld || CoreValueBox.IsInputPending || MemoryValueBox.IsInputPending || CoreOffsetValueBox.IsInputPending) return;
         // Each group sets its own availability; a blanket reset restarts disabled-state motion on every poll.
         ApplyClockLimitState(snapshot.Controls.GpuClockLimit, tuningAvailable);
-        CoreValueBox.Visibility = Visibility.Visible;
-        CoreLiveUnknown.Text = snapshot.Controls.GpuClockLimit?.SubmittedMhz is int submittedMhz
-            ? $"此前提交 {submittedMhz} MHz · 未读回，暂停写入"
-            : snapshot.Controls.GpuClockLimit?.HasSubmission == true
-                ? "曾请求恢复默认 · 未读回，暂停写入"
-                : "当前锁频未读回 · 暂停写入";
-        CoreLiveUnknown.Visibility = snapshot.Controls.GpuClockLimit is { Error: null, MaximumMhz: > 0 } && !clockDirty
-            ? Visibility.Visible : Visibility.Collapsed;
+        CoreLiveUnknown.Text = snapshot.Controls.GpuClockLimit is { Error: null, MinimumMhz: > 0 } clock && clock.MaximumMhz >= clock.MinimumMhz
+            ? $"支持 {clock.MinimumMhz}–{clock.MaximumMhz} MHz · 当前上限未知"
+            : "支持范围未知 · 当前上限未知";
+        CoreLiveUnknown.Visibility = tuningAvailable && clockDirty ? Visibility.Collapsed : Visibility.Visible;
         PresetToolbar.SetActionAvailability(!GpuWritePending, gpuVfDirty && !GpuWritePending);
         TuningStateText.Text = tuningAvailable ? "可调节" : "只读";
         var unavailable = new List<string>(2);
@@ -396,19 +393,26 @@ public sealed partial class GpuWorkspaceV2 : UserControl
         CoreValueBox.IsEnabled = available;
     }
 
+    private static bool HasOffsetReadback(GpuVfState? hardware, bool memory)
+        => hardware?.PstateOffsetRange(memory) is not null;
+
     private void ApplyMemoryOffsetState(GpuVfState? hardware, bool capabilityAvailable)
     {
-        memoryReady = capabilityAvailable && hardware is
-        {
-            MemoryOffsetKhz: not null, MemoryMinimumOffsetKhz: not null, MemoryMaximumOffsetKhz: not null
-        } && hardware.Error is null;
+        memoryReady = capabilityAvailable && HasOffsetReadback(hardware, memory: true);
         if (!memoryReady)
         {
-            MemoryRail.IsEnabled = MemoryValueBox.IsEnabled = capabilityAvailable && !memoryPending;
+            MemoryRail.IsEnabled = MemoryValueBox.IsEnabled = false;
             SetGpuHelpState(MemoryOffsetHelp, "硬件偏移不可用");
             return;
         }
         int offset = hardware!.MemoryOffsetKhz!.Value;
+        var range = hardware.PstateOffsetRange(memory: true)!.Value;
+        memorySynchronizing = true;
+        MemoryValueBox.Minimum = MemoryRail.Minimum = range.MinimumKhz / 1000d;
+        MemoryValueBox.Maximum = MemoryRail.Maximum = range.MaximumKhz / 1000d;
+        MemoryRail.LimitValue = MemoryRail.Maximum;
+        MemoryRail.Configure();
+        memorySynchronizing = false;
         if (memoryAppliedKhz != offset && !memoryDraftDirty && !memoryPending)
         {
             memorySynchronizing = true;
@@ -437,28 +441,18 @@ public sealed partial class GpuWorkspaceV2 : UserControl
 
     private void ApplyCoreOffsetState(GpuVfState? hardware, bool capabilityAvailable)
     {
-        coreOffsetReady = capabilityAvailable && hardware is
-        {
-            CoreOffsetKhz: not null, CoreMinimumOffsetKhz: not null, CoreMaximumOffsetKhz: not null,
-            Error: null
-        } && hardware.CoreMinimumOffsetKhz <= hardware.CoreMaximumOffsetKhz;
+        coreOffsetReady = capabilityAvailable && HasOffsetReadback(hardware, memory: false);
         if (!coreOffsetReady)
         {
-            CoreOffsetRail.IsEnabled = CoreOffsetValueBox.IsEnabled = capabilityAvailable && !coreOffsetPending;
+            CoreOffsetRail.IsEnabled = CoreOffsetValueBox.IsEnabled = false;
             SetGpuHelpState(CoreOffsetHelp, "硬件偏移不可用");
             return;
         }
         int offset = hardware!.CoreOffsetKhz!.Value;
-        CoreOffsetValueBox.Minimum = Math.Max(-200, hardware.CoreMinimumOffsetKhz!.Value / 1000d);
-        CoreOffsetValueBox.Maximum = Math.Min(200, hardware.CoreMaximumOffsetKhz!.Value / 1000d);
-        if (CoreOffsetValueBox.Minimum > CoreOffsetValueBox.Maximum)
-        {
-            coreOffsetReady = false;
-            CoreOffsetRail.IsEnabled = CoreOffsetValueBox.IsEnabled = false;
-            SetGpuHelpState(CoreOffsetHelp, "驱动偏移范围不可用");
-            return;
-        }
+        var range = hardware.PstateOffsetRange(memory: false)!.Value;
         coreOffsetSynchronizing = true;
+        CoreOffsetValueBox.Minimum = range.MinimumKhz / 1000d;
+        CoreOffsetValueBox.Maximum = range.MaximumKhz / 1000d;
         CoreOffsetRail.Minimum = CoreOffsetValueBox.Minimum;
         CoreOffsetRail.Maximum = CoreOffsetValueBox.Maximum;
         CoreOffsetRail.LimitValue = CoreOffsetValueBox.Maximum;

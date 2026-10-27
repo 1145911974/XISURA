@@ -34,7 +34,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     public bool PresetMatchesReadback(PerformanceDraft draft)
     {
         var plan = PerformanceCommandFactory.CreatePresetCommands(draft, currentState,
-            cpuTuningCapabilityAvailable, advancedCapabilityAvailable, pboCapabilityAvailable, curveOptimizerCapabilityAvailable);
+            cpuTuningCapabilityAvailable, advancedCapabilityAvailable, pboCapabilityAvailable, curveOptimizerCapabilityAvailable,
+            capabilities: currentCapabilities, hardwareEpoch: currentHardwareEpoch);
         return plan.Error is null && plan.Skipped.Count == 0 && plan.Steps.All(step =>
             step.ReadbackPlan is not null && PerformanceCommandFactory.MatchesReadBack(currentState, step.ReadbackPlan));
     }
@@ -56,6 +57,12 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private PresetKey selectedPreset = PresetKey.Create(ControlModeId.Office, 1);
     private HomeControlSession? session;
     private CpuTuningState? currentState;
+    private CapabilitySnapshot? currentCapabilities;
+    private long? currentHardwareEpoch;
+    private bool pptFieldWritable;
+    private bool mp1FieldWritable;
+    private bool tdcFieldWritable;
+    private bool edcFieldWritable;
     private PerformanceDraft? selectedSavedDraft;
     private bool useOfficialCpuPolicy;
     private int? acFrequencyMhz;
@@ -66,8 +73,10 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private bool dirty;
     private bool applyInProgress;
     private readonly Dictionary<PresetKey, PerformanceDraft> editorDrafts = [];
+    private readonly HashSet<string> editorEditedFields = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer liveEditTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private bool liveEditPending;
+    private readonly HashSet<string> liveEditedFields = new(StringComparer.OrdinalIgnoreCase);
     private bool liveEditApplying;
     private CpuCurveOptimizerMode? liveCurveMode;
     private bool liveCurveReadbackKnown;
@@ -78,6 +87,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private bool pboCapabilityAvailable;
     private bool curveOptimizerCapabilityAvailable;
     private bool cpuTuningCapabilityAvailable;
+    private bool temperatureLimitFieldWritable;
+    private bool splFieldWritable;
+    private bool spptFieldWritable;
     private bool? acPowerConnected;
     private IReadOnlyList<(Guid Id, string Name)> powerSchemes = [];
     private Guid? activePowerSchemeId;
@@ -86,7 +98,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     public PerformanceWorkspaceV2()
     {
-        presetStore = new(capabilities: () => session?.State?.Capabilities);
+        presetStore = new(capabilities: () => session?.State?.Capabilities, baseline: () => session?.SchedulingBaseline);
         InitializeComponent();
         PresetToolbar.PresetRenamed += async (_, key) =>
         {
@@ -95,7 +107,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         };
         IsFollowingPreset = followPreferences.Load().PerformanceFollowPreset;
         BoostHelpButton.Help = new ParameterHelpContent(
-            "允许处理器在功耗、温度与电流限制内自动提高频率；开启后短时响应更快，也可能更热、更吵。",
+            "开关同步控制交流电和电池下的睿频；使用均衡恢复保存的独立设置。开启后处理器可在保护限制内自动提高频率，也可能更热、更吵。",
             "开关状态由硬件回读。",
             "办公、续航优先可关闭；游戏或持续负载可开启，并保留厂商保护限制。",
             "关闭可限制睿频、减少峰值功耗；已有稳定配置可保持当前开关。",
@@ -151,7 +163,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
 
         ApplyFollowPresetState(enabled);
-        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(enabled);
+        if (Catalog is not null) await Catalog.FollowPreferenceChangedAsync(ControlPageId.Performance, enabled);
         FollowPresetChanged?.Invoke(this, enabled);
     }
 
@@ -174,6 +186,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             if (dirty && TryCreateDraft() is { } retained) editorDrafts[selectedPreset] = retained;
             await (Catalog?.FlushAsync() ?? Task.CompletedTask);
             dirty = false;
+            editorEditedFields.Clear();
             presetEditorLoading = false;
             ApplyHardwareState(currentState, useRecommendations: false, preservePresetState: true);
             _ = PresetToolbar.SetDirtyStatusAsync(false);
@@ -202,8 +215,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (applyInProgress || liveEditApplying)
             return;
         liveEditPending = false;
-        if (currentState?.TemperatureLimitC is null || currentState.SplWatts is null || currentState.SpptWatts is null ||
-            TryCreateDraft() is not { } draft)
+        var draft = TryCreateDraft(partialLive: true);
+        liveEditedFields.Clear();
+        if (draft is null)
         {
             _ = ShowOperationFailureAsync("当前 CPU 参数读回不完整，未应用编辑。");
             return;
@@ -215,14 +229,43 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     {
         liveEditApplying = true;
         SetInteractionAvailability(false);
+        bool adaptiveWasEnabled = false;
+        bool manualPrepared = false;
+        bool wasFollowing = IsFollowingPreset;
+        bool manualCommitted = false;
+        bool confirmedRestored = false;
         try
         {
-            if (PrepareManualControlAsync is { } prepare && !await prepare()) return;
-            Catalog?.RecordManualLive(ControlPageId.Performance);
-            ApplyFollowPresetState(false);
-            PresetToolbar.SetFollowPreset(false);
-            await ApplySavedDraftAsync(draft, XamlRoot, requireComplete: false, presetKey: null);
-            if (Catalog is not null) await Catalog.PublishManualLiveAsync();
+            adaptiveWasEnabled = followPreferences.Load().AdaptiveModeEnabled;
+            if (PrepareManualControlAsync is { } prepare)
+            {
+                if (!await prepare()) return;
+                manualPrepared = true;
+            }
+            await ApplySavedDraftAsync(draft, XamlRoot, requireComplete: false, presetKey: null,
+                beforeSubmit: () =>
+                {
+                    Catalog?.RecordManualLive(ControlPageId.Performance);
+                    manualCommitted = true;
+                    ApplyFollowPresetState(false);
+                    PresetToolbar.SetFollowPreset(false);
+                },
+                afterResult: result => confirmedRestored = IsConfirmedNoLiveMutation(result));
+            if (manualCommitted)
+            {
+                if (confirmedRestored && wasFollowing)
+                {
+                    followPreferences.Update(saved => saved with { PerformanceFollowPreset = true });
+                    ApplyFollowPresetState(true);
+                    PresetToolbar.SetFollowPreset(true);
+                }
+                if (Catalog is not null) await Catalog.PublishManualLiveAsync();
+            }
+            else if (manualPrepared && adaptiveWasEnabled && !followPreferences.Load().AdaptiveModeEnabled)
+            {
+                string detail = PresetToolbar.StatusDetail;
+                await PresetToolbar.ShowStatusAsync($"{(string.IsNullOrWhiteSpace(detail) ? "CPU 未提交" : detail)}；自适应已暂停，可在主页重新开启");
+            }
         }
         catch (Exception ex)
         {
@@ -242,13 +285,18 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
     }
 
+    internal static bool IsConfirmedNoLiveMutation(CommandResult result) =>
+        result.State != CommandState.RecoveryRequired &&
+        (result.Mutation == HardwareMutation.NoMutation || result.State == CommandState.RolledBack);
+
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int key);
 
-    private void OnUserDraftEdited()
+    private void OnUserDraftEdited(params string[] fields)
     {
         if (PresetToolbar.IsEditingPreset)
         {
+            editorEditedFields.UnionWith(fields);
             SetDirty(true);
             if (TryCreateDraft() is { } retained)
             {
@@ -258,12 +306,20 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                     JsonSerializer.SerializeToElement(retained, PresetJson), () =>
                     {
                         if (selectedPreset == key && editorDrafts.GetValueOrDefault(key) == retained)
-                        { selectedSavedDraft = retained; editorDrafts.Remove(key); SetDirty(false); _ = PresetToolbar.ShowSavedStatusAsync(); }
-                    });
+                        { selectedSavedDraft = retained; editorDrafts.Remove(key); editorEditedFields.Clear(); SetDirty(false); _ = PresetToolbar.ShowSavedStatusAsync(); }
+                    }, performanceDraft: retained);
             }
         }
         else
         {
+            liveEditedFields.UnionWith(fields);
+            if (AdvancedWorkspace.ReadLiveDraft() is null) liveEditedFields.Remove("advancedCpuTuning");
+            if (liveEditedFields.Count == 0)
+            {
+                liveEditPending = false;
+                liveEditTimer.Stop();
+                return;
+            }
             PresetToolbar.SetCurrentSettingsModified();
             liveEditPending = true;
             liveEditTimer.Stop();
@@ -290,6 +346,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         };
         currentState = previewState;
         advancedCapabilityAvailable = true;
+        pptFieldWritable = mp1FieldWritable = tdcFieldWritable = edcFieldWritable = true;
         curveOptimizerCapabilityAvailable = true;
         selectedPreset = PresetKey.Create(ControlModeId.Turbo, 2);
         PresetToolbar.SelectedKey = selectedPreset;
@@ -332,13 +389,27 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     public void ApplyState(HomeStateSnapshot snapshot)
     {
         acPowerConnected = snapshot.Telemetry?.AcPowerConnected;
-        bool available = IsCapabilityAvailable(snapshot, "cpuTuning");
+        currentCapabilities = snapshot.Capabilities;
+        currentHardwareEpoch = snapshot.Controls.ExecutionState?.HardwareEpoch;
+        var presentation = CpuReadbackPresentation.From(snapshot);
+        bool available = presentation.CanWrite;
         cpuTuningCapabilityAvailable = available;
+        temperatureLimitFieldWritable = CanEditField(snapshot.Capabilities, "temperatureLimitC", oemLimit: true);
+        splFieldWritable = CanEditField(snapshot.Capabilities, "splWatts", oemLimit: true);
+        spptFieldWritable = CanEditField(snapshot.Capabilities, "spptWatts", oemLimit: true);
         advancedCapabilityAvailable =
-            IsCapabilityAvailable(snapshot, "cpuTuning:smu");
+            IsCapabilityAvailable(snapshot, "cpuTuning:smu") && CanEditField(snapshot.Capabilities, "advancedCpuTuning", oemLimit: false);
+        pptFieldWritable = PerformanceCommandFactory.CanWriteField(currentCapabilities, "pptWatts", currentHardwareEpoch) &&
+            snapshot.Controls.CpuTuning?.AdvancedLimits?.PptWatts is not null;
+        mp1FieldWritable = PerformanceCommandFactory.CanWriteField(currentCapabilities, "mp1TemperatureC", currentHardwareEpoch) &&
+            snapshot.Controls.CpuTuning?.AdvancedLimits?.Mp1TemperatureC is not null;
+        tdcFieldWritable = PerformanceCommandFactory.CanWriteField(currentCapabilities, "tdcCurrentMilliamps", currentHardwareEpoch) &&
+            snapshot.Controls.CpuTuning?.AdvancedLimits?.TdcCurrentMilliamps is not null;
+        edcFieldWritable = PerformanceCommandFactory.CanWriteField(currentCapabilities, "edcCurrentMilliamps", currentHardwareEpoch) &&
+            snapshot.Controls.CpuTuning?.AdvancedLimits?.EdcCurrentMilliamps is not null;
         pboCapabilityAvailable = IsCapabilityAvailable(snapshot, "cpuTuning:pbo");
         curveOptimizerCapabilityAvailable = IsCapabilityAvailable(snapshot, "cpuTuning:curveOptimizer");
-        currentState = available ? snapshot.Controls.CpuTuning : null;
+        currentState = presentation.HardwareState;
         AdvancedWorkspace.SetSmuHardware(currentState?.AdvancedLimits);
         AdvancedWorkspace.SetPboHardware(currentState?.PboScalar);
         AdvancedWorkspace.SetCurveHardware(currentState?.PerCoreCurveOptimizer);
@@ -353,7 +424,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
         if (!PresetToolbar.IsEditingPreset && !applyInProgress && !liveEditApplying && !liveEditPending &&
             !TemperatureRow.IsInputPending && !SustainedPowerRow.IsInputPending && !BurstPowerRow.IsInputPending && !FrequencyRow.IsInputPending && !CurveOptimizerRow.IsInputPending)
-            ApplyHardwareState(available ? currentState : null, useRecommendations: false, preservePresetState: true);
+            ApplyHardwareState(currentState, useRecommendations: false, preservePresetState: true);
 
         RefreshBoundaryFromEditor();
         SetInteractionAvailability(available && currentState is not null);
@@ -381,15 +452,18 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private void ApplyHardwareState(CpuTuningState? state, bool useRecommendations = true, bool preservePresetState = false)
     {
         synchronizing = true;
+        if (!liveEditPending && !liveEditApplying) liveEditedFields.Clear();
         if (!PresetToolbar.IsEditingPreset) windowsPowerSchemeDraftId = state?.WindowsPowerSchemeId;
         TemperatureRow.SetValue((double?)state?.TemperatureLimitC ??
             (useRecommendations && cpuTuningCapabilityAvailable ? TemperatureRow.RecommendedValue : null));
-        SustainedPowerRow.SetValue((double?)state?.SplWatts ??
+        double? observedSpl = state?.SplWatts ?? state?.ObservedSplWatts;
+        double? observedSppt = state?.SpptWatts ?? state?.AdvancedLimits?.FastPptWatts;
+        SustainedPowerRow.SetValue(observedSpl ??
             (useRecommendations && cpuTuningCapabilityAvailable ? SustainedPowerRow.RecommendedValue : null));
-        BurstPowerRow.SetValue((double?)state?.SpptWatts ??
+        BurstPowerRow.SetValue(observedSppt ??
             (useRecommendations && cpuTuningCapabilityAvailable ? BurstPowerRow.RecommendedValue : null));
-        acFrequencyMhz = state?.AcFrequency() is int ac && ac is >= 1500 and <= 5400 ? ac : null;
-        dcFrequencyMhz = state?.DcFrequency() is int dc && dc is >= 1500 and <= 5400 ? dc : null;
+        acFrequencyMhz = state?.AcFrequency() is int ac && (ac == 0 || ac is >= 1500 and <= 5400) ? ac : null;
+        dcFrequencyMhz = state?.DcFrequency() is int dc && (dc == 0 || dc is >= 1500 and <= 5400) ? dc : null;
         FrequencyRow.SetValue(editingAc ? acFrequencyMhz : dcFrequencyMhz);
         var curveReadback = AdvancedCpuTuningDraft.FromCurveReadback(state, liveCurveMode);
         liveCurveReadbackKnown = curveReadback.PerCoreCurveOptimizer is not null;
@@ -399,24 +473,24 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         UpdateCoreTopology(state?.EnabledCoreCount);
         UpdatePowerSchemeSelection();
         ControlSourceText.Text = state is null ? "未连接" : "硬件回读";
-        TemperatureRow.SetDescription("CPU 最高温度限制");
-        SustainedPowerRow.SetDescription(state?.SplWatts is int actualSpl
-            ? $"当前硬件 {actualSpl} W" : "长时间稳定运行功耗");
-        BurstPowerRow.SetDescription(state?.SpptWatts is int actualSppt
-            ? $"当前硬件 {actualSppt} W" : "短时加速最大功耗");
+        TemperatureRow.SetDescription(temperatureLimitFieldWritable ? "CPU 最高温度限制" : "当前只读 · 本机温限写入尚未验证");
+        SustainedPowerRow.SetDescription(!splFieldWritable ? "当前只读 · 本机持续功率写入尚未验证" : observedSpl is double actualSpl
+            ? $"当前硬件 {actualSpl:0.###} W" : "长时间稳定运行功耗");
+        BurstPowerRow.SetDescription(!spptFieldWritable ? "当前只读 · 本机短时功率写入尚未验证" : observedSppt is double actualSppt
+            ? $"当前硬件 {actualSppt:0.###} W" : "短时加速最大功耗");
         TemperatureRow.SetHelpCurrentValue(state?.TemperatureLimitC is int temperature
             ? $"硬件温限 {temperature} °C" : "硬件未提供当前温限；编辑值是预设配置，参考值不代表当前设置。");
-        SustainedPowerRow.SetHelpCurrentValue(state?.SplWatts is int spl
-            ? $"硬件 SPL {spl} W" : "硬件未提供当前 SPL；编辑值是预设配置，55 W 参考值不代表当前设置。");
-        BurstPowerRow.SetHelpCurrentValue(state?.SpptWatts is int sppt
-            ? $"硬件 SPPT {sppt} W" : "硬件未提供当前 SPPT；编辑值是预设配置，55 W 参考值不代表当前设置。");
+        SustainedPowerRow.SetHelpCurrentValue(observedSpl is double spl
+            ? $"硬件 SPL {spl:0.###} W" : "硬件未提供当前 SPL；编辑值是预设配置，55 W 参考值不代表当前设置。");
+        BurstPowerRow.SetHelpCurrentValue(observedSppt is double sppt
+            ? $"硬件 SPPT {sppt:0.###} W" : "硬件未提供当前 SPPT；编辑值是预设配置，55 W 参考值不代表当前设置。");
         BoundarySourceText.Text = state is null
             ? "等待读回"
-            : state.TemperatureLimitC is null || state.SplWatts is null || state.SpptWatts is null
+            : state.TemperatureLimitC is null || observedSpl is null || observedSppt is null
                 ? "部分为规格参考"
                 : "限值已硬件读回";
         if (state is not null &&
-            (state.TemperatureLimitC is null || state.SpptWatts is null || state.SplWatts is null))
+            (state.TemperatureLimitC is null || observedSppt is null || observedSpl is null))
             ControlSourceText.Text = "硬件回读 · 部分上限缺失";
         synchronizing = false;
         RefreshBoundaryFromEditor();
@@ -479,7 +553,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             if (!ReferenceEquals(PowerPlanSelector.SelectedItem, selected))
                 PowerPlanSelector.SelectedItem = selected;
             PowerPlanSelector.PlaceholderText = powerSchemes.Count == 0 ? "计划不可用" : "选择计划";
-            PowerPlanSelector.IsEnabled = powerSchemes.Count > 0 && !applyInProgress;
+            PowerPlanSelector.IsEnabled = (PresetToolbar.IsEditingPreset || cpuTuningCapabilityAvailable && currentState is not null) &&
+                powerSchemes.Count > 0 && !applyInProgress && !liveEditApplying && !presetEditorLoading;
         }
         finally
         {
@@ -494,30 +569,39 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             return;
 
         windowsPowerSchemeDraftId = selectedScheme;
-        OnUserDraftEdited();
+        OnUserDraftEdited("windowsPowerSchemeId");
+    }
+
+    private static bool CanEditField(CapabilitySnapshot capabilities, string key, bool oemLimit)
+    {
+        var field = capabilities.Fields.FirstOrDefault(item => item.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+        if (!PerformanceCommandFactory.CanWriteField(capabilities, key) || field is null) return false;
+        return !oemLimit || capabilities.IsOnAcPower is true &&
+            field.NativeModeSideEffect == "PreservesSelectedMode" && field.Minimum is not null && field.Maximum is not null;
     }
 
     private void SetInteractionAvailability(bool available)
     {
+        available &= cpuTuningCapabilityAvailable;
         PresetToolbar.IsEnabled = !applyInProgress && !liveEditApplying && !presetEditorLoading;
         CurveModeSelector.IsEnabled = curveOptimizerCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading;
         CurveOptimizerRow.SetEditorEnabled(curveOptimizerCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading &&
             AdvancedWorkspace.CurveMode == CpuCurveOptimizerMode.AllCore);
-        bool temperatureWritable = cpuTuningCapabilityAvailable && acPowerConnected is true &&
+        bool temperatureWritable = cpuTuningCapabilityAvailable && temperatureLimitFieldWritable && acPowerConnected is true &&
             !applyInProgress && !liveEditApplying && !presetEditorLoading && session?.Status == HomeSessionStatus.Connected;
         TemperatureRow.SetEditorEnabled(temperatureWritable);
         bool powerWritable = cpuTuningCapabilityAvailable && acPowerConnected is true &&
             !applyInProgress && !liveEditApplying && !presetEditorLoading && session?.Status == HomeSessionStatus.Connected;
-        SustainedPowerRow.SetEditorEnabled(powerWritable);
-        BurstPowerRow.SetEditorEnabled(powerWritable);
+        SustainedPowerRow.SetEditorEnabled(powerWritable && splFieldWritable);
+        BurstPowerRow.SetEditorEnabled(powerWritable && spptFieldWritable);
         bool frequencyAvailable = available && acFrequencyMhz is not null && dcFrequencyMhz is not null;
         FrequencyRow.SetEditorEnabled(frequencyAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading);
         FrequencyAcButton.IsEnabled = frequencyAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading;
         FrequencyDcButton.IsEnabled = frequencyAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading;
         BoostToggle.IsEnabled = available && !applyInProgress && !liveEditApplying && !presetEditorLoading && currentState?.BoostEnabled is not null;
-        PowerPlanSelector.IsEnabled = powerSchemes.Count > 0 && !applyInProgress && !liveEditApplying && !presetEditorLoading;
+        PowerPlanSelector.IsEnabled = (PresetToolbar.IsEditingPreset || available) && powerSchemes.Count > 0 && !applyInProgress && !liveEditApplying && !presetEditorLoading;
         AdvancedWorkspace.SetAvailability(available && currentState is not null && !applyInProgress && !liveEditApplying && !presetEditorLoading,
-            advancedCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading, pboCapabilityAvailable && !applyInProgress && !liveEditApplying && !presetEditorLoading);
+            advancedCapabilityAvailable, pboCapabilityAvailable, pptFieldWritable, mp1FieldWritable, tdcFieldWritable, edcFieldWritable);
         PresetToolbar.SetActionAvailability(
             saveEnabled: !applyInProgress && !liveEditApplying && !presetEditorLoading && !liveEditPending && (!PresetToolbar.IsEditingPreset || TryCreateDraft() is not null),
             useEnabled: PresetToolbar.IsEditingPreset && available && TryCreateDraft() is not null && !applyInProgress && !liveEditApplying && !presetEditorLoading);
@@ -525,7 +609,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private void SetConnectionState(bool capabilityAvailable, bool hasState)
     {
-        ConnectionText.Text = hasState && capabilityAvailable ? "连接正常" : capabilityAvailable ? "等待回读" : "不可用";
+        ConnectionText.Text = hasState ? capabilityAvailable ? "连接正常" : "只读" : capabilityAvailable ? "等待回读" : "不可用";
         ConnectionDot.Fill = Brush(hasState && capabilityAvailable ? "ModeAccentBrush" : "PrototypeSecondaryTextBrush");
     }
 
@@ -534,11 +618,10 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (!synchronizing)
         {
             useOfficialCpuPolicy = false;
-            AdvancedWorkspace.SynchronizeBasicAliases(
-                ReferenceEquals(sender, TemperatureRow) ? value : null,
-                ReferenceEquals(sender, BurstPowerRow) ? value : null);
             RefreshBoundaryFromEditor();
-            OnUserDraftEdited();
+            string field = ReferenceEquals(sender, TemperatureRow) ? "temperatureLimitC" :
+                ReferenceEquals(sender, SustainedPowerRow) ? "splWatts" : "spptWatts";
+            OnUserDraftEdited(PresetToolbar.IsEditingPreset ? [field, "useOfficialCpuPolicy"] : [field, "advancedCpuTuning"]);
         }
     }
 
@@ -550,7 +633,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (editingAc) acFrequencyMhz = (int)Math.Round(value);
         else dcFrequencyMhz = (int)Math.Round(value);
         RefreshBoundaryFromEditor();
-        OnUserDraftEdited();
+        OnUserDraftEdited(editingAc ? "acMaxFrequencyMhz" : "dcMaxFrequencyMhz");
     }
 
     private async void OnFrequencyAcClick(object sender, RoutedEventArgs e) => await SetFrequencyModeAsync(editAc: true);
@@ -562,7 +645,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             return;
 
         editingAc = editAc;
-        synchronizing = true;
+        // The row suppresses its own animation events; user edits must remain active while awaiting it.
         if (animate)
             await FrequencyRow.SetValueAnimatedAsync(editAc ? acFrequencyMhz : dcFrequencyMhz);
         else
@@ -573,14 +656,13 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         FrequencyDcButton.BorderBrush = Brush(editAc ? "PrototypeStrokeBrush" : "ModeAccentBrush");
         FrequencyAcButton.Foreground = editAc ? Brush("PrototypeTextBrush") : Brush("PrototypeSecondaryTextBrush");
         FrequencyDcButton.Foreground = editAc ? Brush("PrototypeSecondaryTextBrush") : Brush("PrototypeTextBrush");
-        synchronizing = false;
         RefreshBoundaryFromEditor();
     }
 
     private void OnBoostToggled(object sender, RoutedEventArgs e)
     {
         if (!synchronizing)
-            OnUserDraftEdited();
+            OnUserDraftEdited("isBoostEnabled");
     }
 
     private async void OnResetPreset(object? sender, PresetKey key)
@@ -623,10 +705,15 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             var envelope = await presetStore.LoadAsync(ControlPageId.Performance, key, CancellationToken.None);
             if (selectedPreset.Mode != mode) return;
             var draft = envelope is null ? null : SavedPerformancePreset.ReadDraft(envelope, key);
-            string Frequency(string field, string power) => envelope?.Settings.GetValueOrDefault(field) is
-                { Intent: SettingIntent.Set, Value: { } value } ? $"{power} {value.GetInt32() / 1000d:0.0}GHz" : $"{power} 沿用";
+            string Frequency(string field, string power) => draft is null || !PerformancePresetProjection.IsKnown(draft, field)
+                ? $"{power} 未知"
+                : envelope?.Settings.GetValueOrDefault(field) is
+                    { Intent: SettingIntent.Set, Value: { } value } ? $"{power} {value.GetInt32() / 1000d:0.0}GHz" : $"{power} 沿用";
+            string Number(string field, int value, string suffix) =>
+                PerformancePresetProjection.NumericValue(draft!, field, value) is double known
+                    ? $"{known:0}{suffix}" : "未知";
             PresetToolbar.SetSlotSummary(slot, draft is null ? "未配置" :
-                $"{(draft.UseOfficialCpuPolicy ? "厂商功耗" : $"{draft.TemperatureLimitC}°C · {draft.SplWatts}W")} · {Frequency("acMaxFrequencyMhz", "AC")} / {Frequency("dcMaxFrequencyMhz", "DC")}");
+                $"{(draft.UseOfficialCpuPolicy ? "厂商功耗" : $"{Number("temperatureLimitC", draft.TemperatureLimitC, "°C")} · {Number("splWatts", draft.SplWatts, "W")}")} · {Frequency("acMaxFrequencyMhz", "AC")} / {Frequency("dcMaxFrequencyMhz", "DC")}");
         }
     }
 
@@ -639,9 +726,11 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private async Task<bool> SavePresetToAsync(PresetKey key)
     {
         if (applyInProgress || liveEditApplying || liveEditPending || presetEditorLoading) return false;
+        bool managing = PresetToolbar.IsEditingPreset;
         PerformanceDraft? draft = TryCreateDraft();
         if (draft is null) { await ShowOperationFailureAsync("当前设置尚未读回完整，未保存。请重试或进入预设编辑。"); return false; }
-        if (!PresetToolbar.IsEditingPreset) draft = draft.CaptureCurrentPbo(currentState?.PboScalar);
+        if (!PresetToolbar.IsEditingPreset) draft = draft.CaptureCurrentPbo(currentState?.PboScalar)
+            .WithBoostPolicy(CpuBoostPolicy.FromState(currentState));
         applyInProgress = true;
         SetInteractionAvailability(false);
         try
@@ -649,7 +738,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             if (Catalog is null) return false;
             await Catalog.FlushAsync();
             await Catalog.SavePayloadAsync(ControlPageId.Performance, key, PresetToolbar.DisplayNameFor(key),
-                JsonSerializer.SerializeToElement(draft, PresetJson), CancellationToken.None, copyCurrent: !PresetToolbar.IsEditingPreset);
+                JsonSerializer.SerializeToElement(draft, PresetJson), CancellationToken.None, copyCurrent: !managing,
+                performanceDraft: managing ? draft : null);
             editorDrafts.Remove(key);
             if (key == selectedPreset)
             {
@@ -709,7 +799,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         bool requireComplete = false,
         PresetKey? presetKey = null,
         Func<bool>? isCurrentRequest = null,
-        CancellationToken queueCancellationToken = default)
+        CancellationToken queueCancellationToken = default,
+        Action? beforeSubmit = null,
+        Action<CommandResult>? afterResult = null)
     {
         if (applyInProgress || session is null || currentState is null ||
             !PerformanceCommandFactory.HasPresetTargets(draft))
@@ -728,18 +820,19 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         }
 
         bool forcePreset = presetKey is not null;
-        PerformanceMode? nativeMode = presetKey is null ? session.State?.Controls.PerformanceMode : presetKey.Value.Mode switch
+        PerformanceMode? nativeMode = presetKey is null ? null : presetKey.Value.Mode switch
         {
             ControlModeId.Office => PerformanceMode.Quiet,
             ControlModeId.Gaming => PerformanceMode.Balanced,
             ControlModeId.Turbo => PerformanceMode.Turbo,
-            _ => session.State?.Controls.PerformanceMode
+            _ => null
         };
         PerformancePresetCommandPlan commandPlan = presetKey is null
             ? CreateLiveEditCommandPlan(draft, currentState)
             : PerformanceCommandFactory.CreatePresetCommands(
                 draft, currentState, cpuTuningCapabilityAvailable, advancedCapabilityAvailable,
-                pboCapabilityAvailable, curveOptimizerCapabilityAvailable, forceApply: forcePreset);
+                pboCapabilityAvailable, curveOptimizerCapabilityAvailable, forceApply: forcePreset,
+                capabilities: currentCapabilities, hardwareEpoch: currentHardwareEpoch);
         if (commandPlan.Error is not null)
         {
             await ShowOperationFailureAsync(commandPlan.Error);
@@ -788,7 +881,8 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
                 }
                 commandPlan = PerformanceCommandFactory.CreatePresetCommands(
                     draft, postModeState, cpuTuningCapabilityAvailable, advancedCapabilityAvailable,
-                    pboCapabilityAvailable, curveOptimizerCapabilityAvailable, forceApply: forcePreset);
+                    pboCapabilityAvailable, curveOptimizerCapabilityAvailable, forceApply: forcePreset,
+                    capabilities: currentCapabilities, hardwareEpoch: currentHardwareEpoch);
                 if (commandPlan.Error is not null || requireComplete && commandPlan.Skipped.Count > 0)
                 {
                 await ShowOperationFailureAsync(commandPlan.Error ??
@@ -820,7 +914,9 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             var batch = new SetCpuTuningBatchCommand(Guid.NewGuid(), commandPlan.Steps
                 .Select(step => ((SetCpuTuningCommand)step.Command).Plan).ToArray(), true)
             { NativeMode = nativeMode };
+            beforeSubmit?.Invoke();
             CommandResult result = await session.ExecuteAsync(batch, CancellationToken.None, queueCancellationToken);
+            afterResult?.Invoke(result);
             if (result.State != CommandState.Applied || result.Error is not null)
             {
                 AppRuntimeLog.Write($"[{DateTimeOffset.Now:O}] Performance preset batch: {JsonSerializer.Serialize(result)}\n");
@@ -872,43 +968,16 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     private bool ConfirmAppliedCurveMode(PerformanceDraft draft, int skipped)
     {
         if (skipped != 0) return false;
-        liveCurveMode = draft.AdvancedCpuTuning?.ResolveCurveOptimizerMode(draft.NegativeCurveOptimizer)
-            ?? (draft.NegativeCurveOptimizer.HasValue ? CpuCurveOptimizerMode.AllCore : CpuCurveOptimizerMode.Bios);
+        liveCurveMode = PerformanceLiveEdit.ResolveCurveMode(draft, liveCurveMode);
         return true;
     }
 
-    private PerformancePresetCommandPlan CreateLiveEditCommandPlan(PerformanceDraft draft, CpuTuningState state)
-    {
-        bool unchangedTemperature = state.TemperatureLimitC == draft.TemperatureLimitC;
-        bool unchangedSpl = state.SplWatts == draft.SplWatts;
-        bool unchangedSppt = state.SpptWatts == draft.SpptWatts;
-        var validationDraft = NormalizeUnchangedLiveValues(draft, state);
-        var plan = PerformanceCommandFactory.CreatePresetCommands(
-            validationDraft, state, cpuTuningCapabilityAvailable, advancedCapabilityAvailable,
-            pboCapabilityAvailable, curveOptimizerCapabilityAvailable);
-        if (plan.Error is not null) return plan;
-        return plan with
-        {
-            Steps = plan.Steps.Where(step => step.Label switch
-            {
-                "温度墙" => !unchangedTemperature,
-                "持续功耗 SPL" => !unchangedSpl,
-                "短时功耗 SPPT" => !unchangedSppt,
-                _ => true
-            }).ToArray()
-        };
-    }
+    private PerformancePresetCommandPlan CreateLiveEditCommandPlan(PerformanceDraft draft, CpuTuningState state) =>
+        PerformanceLiveEdit.CreatePlan(draft, state, cpuTuningCapabilityAvailable, advancedCapabilityAvailable,
+            pboCapabilityAvailable, curveOptimizerCapabilityAvailable, currentCapabilities, currentHardwareEpoch);
 
-    private static PerformanceDraft NormalizeUnchangedLiveValues(PerformanceDraft draft, CpuTuningState state) => draft with
-    {
-        TemperatureLimitC = state.TemperatureLimitC == draft.TemperatureLimitC && (draft.TemperatureLimitC is < 45 or > 100)
-            ? 70 : draft.TemperatureLimitC,
-        SplWatts = state.SplWatts == draft.SplWatts && (draft.SplWatts is < 45 or > 75)
-            ? 55 : draft.SplWatts,
-        SpptWatts = state.SpptWatts == draft.SpptWatts && (draft.SpptWatts is < 45 or > 75)
-            ? 55 : draft.SpptWatts,
-        AdvancedCpuTuning = draft.AdvancedCpuTuning?.WithoutUnchangedHardwareFields(state.AdvancedLimits)
-    };
+    private static PerformanceDraft NormalizeUnchangedLiveValues(PerformanceDraft draft, CpuTuningState state) =>
+        PerformanceLiveEdit.Normalize(draft, state);
 
     private Task ShowOperationFailureAsync(string message)
     {
@@ -932,9 +1001,20 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             if (envelope is null || revision != presetLoadRevision || selectedPreset != key || applyToEditor && !PresetToolbar.IsEditingPreset)
                 return null;
 
+            if (key.Slot == 2 && !envelope.UserModified && session?.SchedulingBaseline is null)
+            {
+                if (applyToEditor)
+                {
+                    ApplyHardwareState(currentState, useRecommendations: false, preservePresetState: true);
+                    await PresetToolbar.ShowTransientStatusAsync("本机均衡基准尚未读回，当前值仅供查看");
+                }
+                return envelope;
+            }
+
             if (SavedPerformancePreset.ReadDraft(envelope, key) is { } draft)
             {
                 selectedSavedDraft = draft;
+                editorEditedFields.Clear();
                 if (applyToEditor) ApplyDraft(draft, animate);
             }
             return envelope;
@@ -958,6 +1038,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         if (PresetToolbar.IsEditingPreset && dirty && TryCreateDraft() is { } retained) editorDrafts[selectedPreset] = retained;
         await (Catalog?.FlushAsync() ?? Task.CompletedTask);
         selectedPreset = key;
+        editorEditedFields.Clear();
         selectedSavedDraft = null;
         long revision = presetLoadRevision + 1;
         PagePresetEnvelope? envelope = await LoadSelectedPresetAsync(applyToEditor: PresetToolbar.IsEditingPreset, animate: true);
@@ -973,24 +1054,43 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private Task ApplyPresetRecommendationsAsync(PresetKey key, bool animate)
     {
-        var profile = DefaultPerformancePresets.CreateDraft(key);
-        TemperatureRow.RecommendedValue = profile.TemperatureLimitC;
-        SustainedPowerRow.RecommendedValue = profile.SplWatts;
-        BurstPowerRow.RecommendedValue = profile.SpptWatts;
-        FrequencyRow.RecommendedValue = profile.AcMaxFrequencyMhz;
+        var profile = SavedPerformancePreset.ReadDraft(
+            DefaultPerformancePresets.Create(key, session?.State?.Capabilities, session?.SchedulingBaseline), key);
+        double? temperature = PerformancePresetProjection.NumericValue(profile, "temperatureLimitC", profile.TemperatureLimitC);
+        double? spl = PerformancePresetProjection.NumericValue(profile, "splWatts", profile.SplWatts);
+        double? sppt = PerformancePresetProjection.NumericValue(profile, "spptWatts", profile.SpptWatts);
+        double? frequency = PerformancePresetProjection.NumericValue(profile, "acMaxFrequencyMhz", profile.AcMaxFrequencyMhz);
         if (!animate)
         {
-            TemperatureRow.SetRecommendedValue(profile.TemperatureLimitC);
-            SustainedPowerRow.SetRecommendedValue(profile.SplWatts);
-            BurstPowerRow.SetRecommendedValue(profile.SpptWatts);
-            FrequencyRow.SetRecommendedValue(profile.AcMaxFrequencyMhz);
+            TemperatureRow.RecommendedValue = temperature ?? double.NaN;
+            SustainedPowerRow.RecommendedValue = spl ?? double.NaN;
+            BurstPowerRow.RecommendedValue = sppt ?? double.NaN;
+            FrequencyRow.RecommendedValue = frequency ?? double.NaN;
+            TemperatureRow.SetRecommendedValue(temperature ?? double.NaN);
+            SustainedPowerRow.SetRecommendedValue(spl ?? double.NaN);
+            BurstPowerRow.SetRecommendedValue(sppt ?? double.NaN);
+            FrequencyRow.SetRecommendedValue(frequency ?? double.NaN);
             return Task.CompletedTask;
         }
         return Task.WhenAll(
-            TemperatureRow.SetRecommendedValueAnimatedAsync(profile.TemperatureLimitC),
-            SustainedPowerRow.SetRecommendedValueAnimatedAsync(profile.SplWatts),
-            BurstPowerRow.SetRecommendedValueAnimatedAsync(profile.SpptWatts),
-            FrequencyRow.SetRecommendedValueAnimatedAsync(profile.AcMaxFrequencyMhz));
+            SetRecommendedAsync(TemperatureRow, temperature),
+            SetRecommendedAsync(SustainedPowerRow, spl),
+            SetRecommendedAsync(BurstPowerRow, sppt),
+            SetRecommendedAsync(FrequencyRow, frequency));
+
+        static Task SetRecommendedAsync(PerformanceParameterRowV2 row, double? value)
+        {
+            bool canAnimate = double.IsFinite(row.RecommendedValue) && value is not null;
+            row.RecommendedValue = value ?? double.NaN;
+            if (value is double known)
+            {
+                if (canAnimate) return row.SetRecommendedValueAnimatedAsync(known);
+                row.SetRecommendedValue(known);
+                return Task.CompletedTask;
+            }
+            row.SetRecommendedValue(double.NaN);
+            return Task.CompletedTask;
+        }
     }
 
     private void ApplyDraft(PerformanceDraft draft, bool animate = false)
@@ -1000,51 +1100,63 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         _ = ApplyPresetRecommendationsAsync(selectedPreset, animate);
         if (animate)
         {
-            _ = TemperatureRow.SetValueAnimatedAsync(draft.TemperatureLimitC);
-            _ = SustainedPowerRow.SetValueAnimatedAsync(draft.SplWatts);
-            _ = BurstPowerRow.SetValueAnimatedAsync(draft.SpptWatts);
+            _ = TemperatureRow.SetValueAnimatedAsync(PerformancePresetProjection.NumericValue(draft, "temperatureLimitC", draft.TemperatureLimitC));
+            _ = SustainedPowerRow.SetValueAnimatedAsync(PerformancePresetProjection.NumericValue(draft, "splWatts", draft.SplWatts));
+            _ = BurstPowerRow.SetValueAnimatedAsync(PerformancePresetProjection.NumericValue(draft, "spptWatts", draft.SpptWatts));
         }
         else
         {
-            TemperatureRow.SetValue(draft.TemperatureLimitC);
-            SustainedPowerRow.SetValue(draft.SplWatts);
-            BurstPowerRow.SetValue(draft.SpptWatts);
+            TemperatureRow.SetValue(PerformancePresetProjection.NumericValue(draft, "temperatureLimitC", draft.TemperatureLimitC));
+            SustainedPowerRow.SetValue(PerformancePresetProjection.NumericValue(draft, "splWatts", draft.SplWatts));
+            BurstPowerRow.SetValue(PerformancePresetProjection.NumericValue(draft, "spptWatts", draft.SpptWatts));
         }
-        acFrequencyMhz = draft.AcMaxFrequencyMhz;
-        dcFrequencyMhz = draft.DcMaxFrequencyMhz;
-        windowsPowerSchemeDraftId = draft.WindowsPowerSchemeId;
+        acFrequencyMhz = (int?)PerformancePresetProjection.NumericValue(draft, "acMaxFrequencyMhz", draft.AcMaxFrequencyMhz);
+        dcFrequencyMhz = (int?)PerformancePresetProjection.NumericValue(draft, "dcMaxFrequencyMhz", draft.DcMaxFrequencyMhz);
+        windowsPowerSchemeDraftId = PerformancePresetProjection.IsKnown(draft, "windowsPowerSchemeId") ? draft.WindowsPowerSchemeId : null;
         UpdatePowerSchemeSelection();
         if (animate) _ = FrequencyRow.SetValueAnimatedAsync(editingAc ? acFrequencyMhz : dcFrequencyMhz);
         else FrequencyRow.SetValue(editingAc ? acFrequencyMhz : dcFrequencyMhz);
-        AdvancedWorkspace.ApplyDraft(draft.AdvancedCpuTuning, draft.NegativeCurveOptimizer,
-            draft.AcMinActiveCoresPercent, draft.DcMinActiveCoresPercent);
-        AdvancedWorkspace.SetAllCoreCurveOffset(Math.Clamp(AdvancedWorkspace.AllCoreCurveValue, -30, 0), userEdited: false);
+        AdvancedWorkspace.ApplyDraft(
+            PerformancePresetProjection.IsKnown(draft, "advancedCpuTuning") ? draft.AdvancedCpuTuning : null,
+            PerformancePresetProjection.IsKnown(draft, "negativeCurveOptimizer") ? draft.NegativeCurveOptimizer : null,
+            (int?)PerformancePresetProjection.NumericValue(draft, "acMinActiveCoresPercent", draft.AcMinActiveCoresPercent),
+            (int?)PerformancePresetProjection.NumericValue(draft, "dcMinActiveCoresPercent", draft.DcMinActiveCoresPercent),
+            useHardwareFallback: false);
+        AdvancedWorkspace.SetAllCoreCurveOffset(Math.Clamp(AdvancedWorkspace.AllCoreCurveValue, -50, 0), userEdited: false);
         BoostToggle.IsOn = draft.IsBoostEnabled;
         synchronizing = false;
         RefreshBoundaryFromEditor();
+        editorEditedFields.Clear();
         SetDirty(true);
     }
 
-    private PerformanceDraft? TryCreateDraft()
+    private PerformanceDraft? TryCreateDraft(bool partialLive = false)
     {
         if (currentState is null)
             return null;
 
-        if (!PresetToolbar.IsEditingPreset &&
+        bool managing = PresetToolbar.IsEditingPreset;
+        PerformanceDraft? source = managing
+            ? editorDrafts.GetValueOrDefault(selectedPreset) ?? selectedSavedDraft ?? SavedPerformancePreset.ReadDraft(
+                DefaultPerformancePresets.Create(selectedPreset, session?.State?.Capabilities, session?.SchedulingBaseline), selectedPreset)
+            : null;
+
+        if (!partialLive && !managing &&
             (currentState.TemperatureLimitC is null || currentState.SplWatts is null || currentState.SpptWatts is null ||
              currentState.AcFrequency() is null || currentState.DcFrequency() is null || currentState.BoostEnabled is null ||
              TemperatureRow.Value is null || SustainedPowerRow.Value is null || BurstPowerRow.Value is null))
             return null;
 
-        int temperature = (int)Math.Round(TemperatureRow.Value ?? TemperatureRow.RecommendedValue);
-        int sustained = (int)Math.Round(SustainedPowerRow.Value ?? SustainedPowerRow.RecommendedValue);
-        int burst = (int)Math.Round(BurstPowerRow.Value ?? BurstPowerRow.RecommendedValue);
-        int ac = acFrequencyMhz ?? currentState.AcFrequency() ?? (int)Math.Round(FrequencyRow.RecommendedValue);
-        int dc = dcFrequencyMhz ?? currentState.DcFrequency() ?? (int)Math.Round(FrequencyRow.RecommendedValue);
-        bool managing = PresetToolbar.IsEditingPreset;
+        int Numeric(double? value, int? saved, double recommendation) =>
+            (int)Math.Round(value ?? (managing ? saved ?? 0 : partialLive ? 0 : double.IsFinite(recommendation) ? recommendation : 0));
+        int temperature = Numeric(TemperatureRow.Value, source is not null && PerformancePresetProjection.IsKnown(source, "temperatureLimitC") ? source.TemperatureLimitC : null, TemperatureRow.RecommendedValue);
+        int sustained = Numeric(SustainedPowerRow.Value, source is not null && PerformancePresetProjection.IsKnown(source, "splWatts") ? source.SplWatts : null, SustainedPowerRow.RecommendedValue);
+        int burst = Numeric(BurstPowerRow.Value, source is not null && PerformancePresetProjection.IsKnown(source, "spptWatts") ? source.SpptWatts : null, BurstPowerRow.RecommendedValue);
+        int ac = acFrequencyMhz ?? (source is not null && PerformancePresetProjection.IsKnown(source, "acMaxFrequencyMhz") ? (int?)source.AcMaxFrequencyMhz : null) ?? currentState.AcFrequency() ?? Numeric(null, null, FrequencyRow.RecommendedValue);
+        int dc = dcFrequencyMhz ?? (source is not null && PerformancePresetProjection.IsKnown(source, "dcMaxFrequencyMhz") ? (int?)source.DcMaxFrequencyMhz : null) ?? currentState.DcFrequency() ?? Numeric(null, null, FrequencyRow.RecommendedValue);
         var parking = AdvancedWorkspace.ReadCoreParking(preserveLoaded: managing);
 
-        return new PerformanceDraft
+        var draft = new PerformanceDraft
         {
             Mode = PresetToolbar.IsEditingPreset
                 ? Catalog?.NativeModeFor(selectedPreset) ?? selectedSavedDraft?.Mode ?? PerformanceMode.Balanced
@@ -1060,14 +1172,21 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
             AcMinActiveCoresPercent = parking?.Ac,
             DcMinActiveCoresPercent = parking?.Dc,
             NegativeCurveOptimizer = managing ? AdvancedWorkspace.LegacyCurveOptimizer : null,
-            AdvancedCpuTuning = AdvancedWorkspace.ReadDraft(preserveLoaded: managing)
-        };
+            AdvancedCpuTuning = partialLive ? AdvancedWorkspace.ReadLiveDraft() : AdvancedWorkspace.ReadDraft(preserveLoaded: managing)
+        }.WithBoostPolicy(managing ? source?.BoostPolicy : null);
+        if (managing && source is not null)
+        {
+            var advancedTarget = AdvancedWorkspace.ReadPresetEditDraft();
+            draft = PerformancePresetProjection.ApplyEdits(source, draft,
+                editorEditedFields.Where(field => field != "advancedCpuTuning" || advancedTarget is not null), advancedTarget);
+        }
+        return partialLive ? PerformanceLiveEdit.Prepare(draft, currentState, liveEditedFields) : draft;
     }
 
     private void SetDirty(bool value, bool updateStatus = true)
     {
         if (value && selectedSavedDraft is not null && TryCreateDraft() is { } currentDraft &&
-            JsonSerializer.Serialize(currentDraft, PresetJson) == JsonSerializer.Serialize(selectedSavedDraft, PresetJson))
+            PerformancePresetProjection.Equivalent(currentDraft, selectedSavedDraft))
             value = false;
         dirty = value;
         PresetToolbar.SetEditingState(selectedPreset, dirty: value, saved: selectedSavedDraft is not null && !value);
@@ -1081,7 +1200,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private void OnCurveOffsetChanged(object? sender, double value)
     {
-        if (!synchronizing) AdvancedWorkspace.SetAllCoreCurveOffset(Math.Clamp(value, -30, 0));
+        if (!synchronizing) AdvancedWorkspace.SetAllCoreCurveOffset(Math.Clamp(value, -50, 0));
     }
 
     private void OnCurveModeSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1098,14 +1217,24 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
     {
         if (!synchronizing)
         {
-            if (AdvancedWorkspace.BasicAliasesEdited) useOfficialCpuPolicy = false;
-            synchronizing = true;
-            var advanced = AdvancedWorkspace.ReadDraft();
-            if (advanced?.FastPptWatts is double fast) BurstPowerRow.SetValue(fast);
-            if (advanced?.Mp1TemperatureC is int temperature) TemperatureRow.SetValue(temperature);
-            synchronizing = false;
+            var advanced = PresetToolbar.IsEditingPreset ? AdvancedWorkspace.ReadDraft() : AdvancedWorkspace.ReadLiveDraft();
             RefreshBoundaryFromEditor();
-            OnUserDraftEdited();
+            if (PresetToolbar.IsEditingPreset)
+            {
+                var fields = new List<string>();
+                if (AdvancedWorkspace.ReadPresetEditDraft() is not null)
+                    fields.Add("advancedCpuTuning");
+                if (AdvancedWorkspace.HasLiveCoreParkingEdit && AdvancedWorkspace.ReadCoreParking(preserveLoaded: true) is not null)
+                    fields.AddRange(["acMinActiveCoresPercent", "dcMinActiveCoresPercent"]);
+                OnUserDraftEdited(fields.ToArray());
+            }
+            else
+            {
+                var fields = new List<string>();
+                if (advanced is not null) fields.Add("advancedCpuTuning");
+                if (AdvancedWorkspace.HasLiveCoreParkingEdit) fields.AddRange(["acMinActiveCoresPercent", "dcMinActiveCoresPercent"]);
+                OnUserDraftEdited(fields.ToArray());
+            }
         }
     }
 
@@ -1119,9 +1248,7 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             AdvancedButton,
             show ? "收起高级 CPU 调校" : "展开高级 CPU 调校");
-        if (show)
-            AdvancedWorkspace.SetAvailability(currentState is not null && !applyInProgress,
-                advancedCapabilityAvailable && !applyInProgress, pboCapabilityAvailable && !applyInProgress);
+        if (show) SetInteractionAvailability(currentState is not null);
     }
 
     private async Task ShowAdvancedAnimatedAsync(bool show)
@@ -1253,4 +1380,13 @@ public sealed partial class PerformanceWorkspaceV2 : UserControl
 
     private static Brush Brush(string key) =>
         (Brush)Application.Current.Resources[key];
+}
+
+internal readonly record struct CpuReadbackPresentation(CpuTuningState? HardwareState, bool CanWrite)
+{
+    internal static CpuReadbackPresentation From(HomeStateSnapshot snapshot)
+    {
+        bool canWrite = snapshot.Capabilities.IsAvailable("cpuTuning");
+        return new(snapshot.Controls.CpuTuning, canWrite);
+    }
 }

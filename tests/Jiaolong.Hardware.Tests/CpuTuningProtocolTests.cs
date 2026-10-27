@@ -11,33 +11,95 @@ namespace Jiaolong.Hardware.Tests;
 public sealed class CpuTuningProtocolTests
 {
     [TestMethod]
-    public async Task Oem_gate_is_enabled_before_native_mode_selection_and_not_reenabled_by_fields()
+    public async Task Oem_limits_remain_blocked_without_exact_firmware_session_recovery()
     {
         foreach (bool initiallyEnabled in new[] { false, true })
         {
             var bus = new ModePreservingPowerBus { Enabled = initiallyEnabled };
             var binding = new VerifiedWmiBinding("root\\WMI", "MICommonInterface", "MI", 250, 251, 23, "verified");
             var transport = new WindowsCpuTuningTransport(new MiCommonInterfaceClient(bus, bus), binding, null!);
-            await transport.PrepareOemLimitsAsync([new CpuTuningPlan(75, 55, 60, null, null, null, null, null)], CancellationToken.None);
-            Assert.IsTrue(bus.Enabled);
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                transport.PrepareOemLimitsAsync([new CpuTuningPlan(75, 55, 60, null, null, null, null, null)], CancellationToken.None));
+            Assert.AreEqual(initiallyEnabled, bus.Enabled);
             bus.Mode = 0;
-            await transport.WriteFieldAsync(CpuTuningField.TemperatureLimitC, 75, CancellationToken.None);
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                transport.WriteFieldAsync(CpuTuningField.TemperatureLimitC, 75, CancellationToken.None));
             Assert.AreEqual(0, bus.Mode);
-            Assert.AreEqual(initiallyEnabled ? 0 : 1, bus.EnableWrites);
-            Assert.AreEqual(1, bus.LimitWrites);
+            Assert.AreEqual(0, bus.EnableWrites);
+            Assert.AreEqual(0, bus.LimitWrites);
         }
         var noOem = new WindowsCpuTuningTransport(null!, null!, null!);
         await noOem.PrepareOemLimitsAsync([new CpuTuningPlan(null, null, null, 4000, null, null, null, null)], CancellationToken.None);
+
+        foreach (bool batch in new[] { false, true })
+        {
+            var bus = new ModePreservingPowerBus();
+            var power = new PreflightPower();
+            var smu = new PreflightSmu();
+            var transport = new WindowsCpuTuningTransport(new MiCommonInterfaceClient(bus, bus),
+                new VerifiedWmiBinding("root\\WMI", "MICommonInterface", "MI", 250, 251, 23, "verified"), power, smuLimits: smu);
+            var controller = new PerformanceController(cpuTransport: transport);
+            int nativeCalls = 0;
+            var result = batch
+                ? await controller.ApplyCpuTuningBatchAsync([new(75, 55, 60, null, null, null, null, null)], true, CancellationToken.None,
+                    prepareNativeMode: async token => { await transport.PrepareOemLimitsAsync([new(75, 55, 60, null, null, null, null, null)], token); nativeCalls++; },
+                    restoreNativeMode: _ => { nativeCalls++; return Task.CompletedTask; },
+                    verifyNativeMode: _ => { nativeCalls++; return Task.FromResult(true); })
+                : await controller.ApplyCpuOemLimitAsync(Guid.NewGuid(), CpuTuningField.TemperatureLimitC, 75, CancellationToken.None);
+            Assert.AreEqual(CommandState.Rejected, result.State, $"batch={batch}; {result.Error?.Code}");
+            Assert.AreEqual("Capture", result.Error?.Details.GetValueOrDefault("stage"));
+            Assert.AreEqual("cpuPowerModeIndependentProtocolUnverified", result.Error?.Details.GetValueOrDefault("cause"));
+            Assert.AreEqual(0, bus.Reads);
+            Assert.AreEqual(0, bus.EnableWrites + bus.LimitWrites);
+            Assert.AreEqual(0, smu.Calls);
+            Assert.AreEqual(0, power.Calls);
+            Assert.AreEqual(0, nativeCalls);
+        }
+
+    }
+
+    private sealed class PreflightSmu : ISmuCpuLimitTransport
+    {
+        public int Calls { get; private set; }
+        public CpuSmuLimitSnapshot ReadLimitSnapshot(CancellationToken token)
+        {
+            Calls++;
+            return new(new(StapmWatts: 45, FastPptWatts: 60, SlowPptWatts: 45,
+                VrmCurrentMilliamps: 200000, EdcCurrentMilliamps: 180000, Mp1TemperatureC: 85), 45);
+        }
+        public void WriteAdvancedLimit(RyzenSmuLimitWrite write, CancellationToken token) => Calls++;
+    }
+
+    private sealed class PreflightPower : IWindowsPowerSettingsTransport
+    {
+        private readonly Guid scheme = Guid.NewGuid();
+        public int Calls { get; private set; }
+        public Task<WindowsPowerSettingsSnapshot> ReadAsync(CancellationToken token)
+        {
+            Calls++;
+            return Task.FromResult(new WindowsPowerSettingsSnapshot(scheme, 3800, 3000, 2, 0)
+                { AcMinActiveCoresPercent = 17, DcMinActiveCoresPercent = 10 });
+        }
+        private Task Record() { Calls++; return Task.CompletedTask; }
+        public Task RestoreAsync(CpuTuningField field, WindowsPowerSettingsSnapshot original, CancellationToken token) => Record();
+        public Task SetSchemeAsync(Guid value, CancellationToken token) => Record();
+        public Task SetMaxFrequencyAsync(int ac, int dc, CancellationToken token) => Record();
+        public Task SetBoostAsync(bool value, CancellationToken token) => Record();
+        public Task SetCoreParkingAsync(int ac, int dc, CancellationToken token) => Record();
     }
 
     private sealed class ModePreservingPowerBus : IMiReadTransport, IMiWriteTransport
     {
         public bool Enabled { get; set; }
         public int Mode { get; set; }
+        public int Reads { get; private set; }
         public int EnableWrites { get; private set; }
         public int LimitWrites { get; private set; }
-        public Task<byte[]?> ReadAsync(MiReadBinding binding, CancellationToken token) =>
-            Task.FromResult<byte[]?>([0, 0, 0, 0, Enabled ? (byte)1 : (byte)0]);
+        public Task<byte[]?> ReadAsync(MiReadBinding binding, CancellationToken token)
+        {
+            Reads++;
+            return Task.FromResult<byte[]?>([0, 0, 0, 0, Enabled ? (byte)1 : (byte)0]);
+        }
         public Task<byte[]?> WriteAsync(VerifiedWmiBinding binding, ReadOnlyMemory<byte> request, CancellationToken token)
         {
             if (request.Span[4] == 1) { Enabled = true; Mode = 1; EnableWrites++; }

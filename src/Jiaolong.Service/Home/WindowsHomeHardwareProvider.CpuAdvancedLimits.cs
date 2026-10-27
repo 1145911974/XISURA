@@ -1,4 +1,4 @@
-﻿using Jiaolong.Contracts.Commands;
+using Jiaolong.Contracts.Commands;
 using Jiaolong.Contracts.Errors;
 using Jiaolong.Contracts.Models;
 using Jiaolong.Hardware.Abstractions.Compatibility;
@@ -8,6 +8,62 @@ namespace Jiaolong.Service.Home;
 
 public sealed partial class WindowsHomeHardwareProvider
 {
+    private bool CanWriteDirectSmuProfile(CpuSmuLimitSnapshot? snapshot)
+    {
+        // Independent fields share a verified transport profile, never aggregate authority.
+        double age = (DateTimeOffset.UtcNow - smuLimitCacheAt).TotalSeconds;
+        return !disposed && !BackgroundWorkPaused && CpuHardwareReadAllowed && !smuPmTableUnsupported &&
+            smuLimitCacheAccess == CaptureSensorAccess() && age is >= 0 and <= 1 &&
+            identity.BoardProduct.Equals("MRID6-23", StringComparison.OrdinalIgnoreCase) &&
+            identity.BiosVersion.Equals("MRID6_23_P_V35", StringComparison.OrdinalIgnoreCase) &&
+            identity.CpuModel.Equals("AMD Ryzen 7 7745HX with Radeon Graphics", StringComparison.OrdinalIgnoreCase) &&
+            snapshot is { PmTableVersion: 0x540105 } &&
+            compatibilityDecision?.Mode == CompatibilityMode.Writable &&
+            compatibilityDecision.Capabilities.Items.Any(item => item.Key == "cpuTuning:smu" && item.State == CapabilityState.Available);
+    }
+
+    private bool CanWriteDirectMp1Limit(CpuSmuLimitSnapshot? snapshot) =>
+        CanWriteDirectSmuProfile(snapshot) && snapshot!.Limits.Mp1TemperatureC is >= 40 and <= 100;
+
+    private bool CanWriteDirectPptLimit(CpuSmuLimitSnapshot? snapshot) =>
+        CanWriteDirectSmuProfile(snapshot) && snapshot!.Limits.PptWatts is >= 1 and <= 250 &&
+        IsExactMilliwatts(snapshot.Limits.PptWatts.Value);
+
+    private bool CanWriteDirectTdcLimit(CpuSmuLimitSnapshot? snapshot) =>
+        CanWriteDirectSmuProfile(snapshot) && snapshot!.Limits.TdcCurrentMilliamps is >= 1000 and <= 200000;
+
+    private bool CanWriteDirectEdcLimit(CpuSmuLimitSnapshot? snapshot) =>
+        CanWriteDirectSmuProfile(snapshot) && snapshot!.Limits.EdcCurrentMilliamps is >= 1000 and <= 200000;
+
+    private static bool IsExactMilliwatts(double watts) =>
+        double.IsFinite(watts) && Math.Abs(watts * 1000 - Math.Round(watts * 1000)) <= 0.000001;
+
+    private bool VerifyFreshDirectSmuLimit(AdvancedCpuTuningPlan plan, CancellationToken token)
+    {
+        bool mp1 = plan.Mp1TemperatureC is >= 40 and <= 100 &&
+            (plan with { Mp1TemperatureC = null }) == new AdvancedCpuTuningPlan();
+        bool ppt = plan.PptWatts is >= 45 and <= 120 && IsExactMilliwatts(plan.PptWatts.Value) &&
+            (plan with { PptWatts = null }) == new AdvancedCpuTuningPlan();
+        bool tdc = plan.TdcCurrentMilliamps is >= 1000 and <= 200000 &&
+            (plan with { TdcCurrentMilliamps = null }) == new AdvancedCpuTuningPlan();
+        bool edc = plan.EdcCurrentMilliamps is >= 1000 and <= 200000 &&
+            (plan with { EdcCurrentMilliamps = null }) == new AdvancedCpuTuningPlan();
+        if (!mp1 && !ppt && !tdc && !edc) return false;
+        smuLimitCacheAt = default;
+        var snapshot = ReadSmuLimits(token);
+        return mp1 ? CanWriteDirectMp1Limit(snapshot) : tdc ? CanWriteDirectTdcLimit(snapshot) : edc ? CanWriteDirectEdcLimit(snapshot) : CanWriteDirectPptLimit(snapshot);
+    }
+
+    private bool RequiresDirectSmuHeadroom(AdvancedCpuTuningPlan plan, AdvancedCpuTuningPlan? previous = null) =>
+        (plan.Mp1TemperatureC is int temperature &&
+            ((previous?.Mp1TemperatureC ?? smuLimitCache?.Limits.Mp1TemperatureC) is not int currentTemperature || temperature > currentTemperature)) ||
+        (plan.PptWatts is double watts &&
+            ((previous?.PptWatts ?? smuLimitCache?.Limits.PptWatts) is not double currentWatts || watts > currentWatts)) ||
+        (plan.TdcCurrentMilliamps is int milliamps &&
+            ((previous?.TdcCurrentMilliamps ?? smuLimitCache?.Limits.TdcCurrentMilliamps) is not int currentMilliamps || milliamps > currentMilliamps)) ||
+        (plan.EdcCurrentMilliamps is int edcMilliamps &&
+            ((previous?.EdcCurrentMilliamps ?? smuLimitCache?.Limits.EdcCurrentMilliamps) is not int currentEdcMilliamps || edcMilliamps > currentEdcMilliamps));
+
     private CommandResult ExecuteCpuTuningBatchLocked(SetCpuTuningBatchCommand command, CancellationToken token)
     {
         void EnsureCpuHardwareAccess()
@@ -40,6 +96,7 @@ public sealed partial class WindowsHomeHardwareProvider
             return RejectBeforeWrite(ErrorCode.ValidationFailed);
         if (!Available("cpuTuning")) return RejectBeforeWrite(ErrorCode.CapabilityUnavailable);
         bool thermalGuard = false;
+        var previousDirectTargets = new AdvancedCpuTuningPlan();
         foreach (var plan in command.Plans)
         {
             if (plan.TemperatureLimitC is < 40 or > 100 || plan.SplWatts is < 45 or > 75 || plan.SpptWatts is < 45 or > 75)
@@ -52,9 +109,16 @@ public sealed partial class WindowsHomeHardwareProvider
                 var smuOnly = advanced with { PboScalar = null, CurveOptimizerAll = null, PerCoreCurveOptimizer = null };
                 if (smuOnly != new AdvancedCpuTuningPlan())
                 {
-                    if (!Available("cpuTuning:smu") || RyzenSmuAdvancedLimits.BuildSingle(smuOnly) is null)
+                    if (!Available("cpuTuning:smu") || !VerifyFreshDirectSmuLimit(smuOnly, token))
                         return RejectBeforeWrite(ErrorCode.ValidationFailed);
-                    thermalGuard = true;
+                    thermalGuard |= RequiresDirectSmuHeadroom(smuOnly, previousDirectTargets);
+                    previousDirectTargets = previousDirectTargets with
+                    {
+                        PptWatts = smuOnly.PptWatts ?? previousDirectTargets.PptWatts,
+                        Mp1TemperatureC = smuOnly.Mp1TemperatureC ?? previousDirectTargets.Mp1TemperatureC,
+                        TdcCurrentMilliamps = smuOnly.TdcCurrentMilliamps ?? previousDirectTargets.TdcCurrentMilliamps,
+                        EdcCurrentMilliamps = smuOnly.EdcCurrentMilliamps ?? previousDirectTargets.EdcCurrentMilliamps
+                    };
                 }
                 if (advanced.PboScalar.HasValue)
                 {
@@ -63,8 +127,8 @@ public sealed partial class WindowsHomeHardwareProvider
                         return RejectBeforeWrite(ErrorCode.HardwareReadFailed);
                     thermalGuard |= advanced.PboScalar.Value > previous;
                 }
-                if (advanced.CurveOptimizerAll is < -30 or > 0 ||
-                    advanced.PerCoreCurveOptimizer?.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -30 or > 0) == true)
+                if (advanced.CurveOptimizerAll is < -50 or > 0 ||
+                    advanced.PerCoreCurveOptimizer?.Any(pair => pair.Key is < 0 or > 15 || pair.Value is < -50 or > 0) == true)
                     return RejectBeforeWrite(ErrorCode.ValidationFailed);
             }
             if ((plan.NegativeCurveOptimizer.HasValue || plan.Advanced?.CurveOptimizerAll.HasValue == true || plan.Advanced?.PerCoreCurveOptimizer is { Count: > 0 }) &&
@@ -154,17 +218,22 @@ public sealed partial class WindowsHomeHardwareProvider
 
     private CommandResult ExecuteAdvancedCpuLimitLocked(SetCpuTuningCommand command, CancellationToken cancellationToken)
     {
+        CommandResult RejectBeforeWrite(ErrorCode code) => Rejected(command.OperationId, code)
+            with { Mutation = HardwareMutation.NoMutation };
         var plan = command.Plan;
-        var single = plan.Advanced is null ? null : RyzenSmuAdvancedLimits.BuildSingle(plan.Advanced);
         if ((plan with { Advanced = null }) != new CpuTuningPlan(null, null, null, null, null, null, null, null) ||
-            plan.Advanced is null || single is null)
-            return Rejected(command.OperationId, ErrorCode.ValidationFailed);
+            plan.Advanced is null)
+            return RejectBeforeWrite(ErrorCode.ValidationFailed);
+        if (!VerifyFreshDirectSmuLimit(plan.Advanced, cancellationToken))
+            return RejectBeforeWrite(ErrorCode.CapabilityUnavailable);
         if (!command.RiskConfirmed || compatibilityDecision?.Mode != CompatibilityMode.Writable ||
             compatibilityDecision.Capabilities.Items.Any(item => item.Key == "cpuTuning:smu" && item.State == CapabilityState.Available) != true ||
-            curveOptimizer is null || SystemPowerStatusReader.Read().AcPowerConnected is not true ||
-            ReadTelemetryLocked(cancellationToken).CpuTemperatureC is not double temperature || temperature >= 80)
-            return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
-        if (performanceController is null) return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
+            curveOptimizer is null || SystemPowerStatusReader.Read().AcPowerConnected is not true)
+            return RejectBeforeWrite(ErrorCode.CapabilityUnavailable);
+        if (RequiresDirectSmuHeadroom(plan.Advanced) &&
+            (ReadTelemetryLocked(cancellationToken).CpuTemperatureC is not double temperature || temperature >= 80))
+            return RejectBeforeWrite(ErrorCode.CapabilityUnavailable);
+        if (performanceController is null) return RejectBeforeWrite(ErrorCode.CapabilityUnavailable);
         var result = performanceController.ApplyCpuTuningAsync(plan, true, cancellationToken).GetAwaiter().GetResult();
         smuLimitCacheAt = default;
         var error = result.Error is null ? null : result.Error with { CorrelationId = command.OperationId };

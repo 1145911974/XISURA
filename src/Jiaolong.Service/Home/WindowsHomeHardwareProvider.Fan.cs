@@ -16,10 +16,35 @@ public sealed partial class WindowsHomeHardwareProvider
     private bool fanTouched;
     private byte? fanPreviousStrongCooling;
     private FanEcControlState? fanLastEcState;
+    private FanEcMappingState? fanLastEcMapping;
     private readonly AutomaticFanCeiling automaticFanCeiling = new();
+    private readonly Func<Func<bool>, Func<bool>, Action<FanEcRecoveryCheckpoint>?, BldingFanEcTransport> fanTransportFactory =
+        (allowed, readAllowed, writer) => new(new PawnIoLpcEcPorts(allowed), allowed, readAllowed, writer);
 
-    private BldingFanEcTransport CreateFanTransport() => new(
-        hardwareAccessAllowed: () => !BackgroundWorkPaused, hardwareReadAllowed: () => CpuHardwareReadAllowed);
+    internal WindowsHomeHardwareProvider(ControlExecutionJournal journal,
+        Func<Func<bool>, Func<bool>, Action<FanEcRecoveryCheckpoint>?, BldingFanEcTransport> fanTransportFactory,
+        Func<bool>? thirdPartyFanWriterProbe = null) : this(controlJournal: journal)
+    { this.fanTransportFactory = fanTransportFactory; this.thirdPartyFanWriterProbe = thirdPartyFanWriterProbe; }
+
+    private BldingFanEcTransport CreateFanTransport()
+    {
+        var writer = controlJournal?.CreateFanEcCheckpointWriterAsync(identity, CancellationToken.None).GetAwaiter().GetResult();
+        long work = Volatile.Read(ref backgroundWorkPaused);
+        var lifecycle = Volatile.Read(ref powerLifecycle);
+        long? version = lifecycle?.Version;
+        bool Current() => !BackgroundWorkPaused && (writer is null ||
+            Volatile.Read(ref backgroundWorkPaused) == work && ReferenceEquals(Volatile.Read(ref powerLifecycle), lifecycle) && lifecycle?.Version == version);
+        return fanTransportFactory(Current, () => CpuHardwareReadAllowed, writer is null ? null : checkpoint =>
+            {
+                if (!Current()) throw new IOException("fanHardwareLifecycleChanged");
+                writer(checkpoint);
+                if (!Current()) throw new IOException("fanHardwareLifecycleChanged");
+            });
+    }
+
+    private bool HasFanEcProtocol() =>
+        string.Equals(identity.BoardProduct, "MRID6-23", StringComparison.OrdinalIgnoreCase) &&
+        compatibilityDecision?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) == true;
 
     private FanEcControlState? ReadFanEcControlLocked()
     {
@@ -28,14 +53,46 @@ public sealed partial class WindowsHomeHardwareProvider
         catch (Exception error) { logger?.LogDebug(error, "Fan EC status read unavailable"); return null; }
     }
 
+    private FanEcMappingState? ReadFanEcMappingLocked()
+    {
+        if (fanTransport is null) return fanLastEcMapping;
+        try { return fanLastEcMapping = fanTransport.ReadMappingState(); }
+        catch (Exception error) { logger?.LogDebug(error, "Fan EC mapping read unavailable"); return null; }
+    }
+
+    private BldingFanEcTransport RetainOrCreateFanTransport()
+    {
+        DiscardCompletedFanTransport();
+        return fanTransport ?? CreateFanTransport();
+    }
+
+    private void DiscardCompletedFanTransport()
+    {
+        if (fanTransport?.LeaseCompleted != true) return;
+        fanTransport.Dispose();
+        fanTransport = null;
+        fanLastEcMapping = null;
+    }
+
     private CommandResult ExecuteFanLocked(HardwareCommand command, CancellationToken cancellationToken)
     {
-        if (command is ReleaseFanControlCommand)
+        if (command is ReleaseFanControlCommand release)
         {
+            var transport = fanTransport;
+            long ecBefore = transport?.ValueWriteAttempts ?? 0, firmwareBefore = fanFirmwareWriteAttempts;
+            bool Idle() => fanTransport is null && !fanTouched && activeFanPlan is null &&
+                !strongCoolingActive && fanPreviousStrongCooling is null;
+            bool idleBefore = Idle();
             try
             {
-                ReleaseFanLocked();
-                return FanSubmitted(command.OperationId);
+                if (release.Reason is ReleaseReason.SessionEnded or ReleaseReason.ServiceStopping or ReleaseReason.SystemSuspend)
+                    FinishFanLocked();
+                else ReleaseFanLocked();
+                bool written = (transport?.ValueWriteAttempts ?? 0) != ecBefore || fanFirmwareWriteAttempts != firmwareBefore ||
+                    fanTransport != transport && (fanTransport?.ValueWriteAttempts ?? 0) > 0;
+                // A retained or completed lease still requires release evidence even if this call made no write.
+                return FanSubmitted(command.OperationId) with
+                { Mutation = written ? HardwareMutation.Changed : idleBefore && Idle() ? HardwareMutation.NoMutation : HardwareMutation.Unknown };
             }
             catch (Exception ex)
             {
@@ -51,8 +108,7 @@ public sealed partial class WindowsHomeHardwareProvider
             return Rejected(command.OperationId, ErrorCode.ValidationFailed) with { Mutation = HardwareMutation.NoMutation };
         var plan = requested.Plan;
 
-        if (compatibilityDecision?.Capabilities.Items.Any(item => item.Key == "fanControl" && item.State == CapabilityState.Available) != true ||
-            !BldingFanEcTransport.HasVerifiedFiles())
+        if (!HasFanEcProtocol() || !PawnIoLpcEcPorts.HasTrustedDependency())
             return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
 
         if (ThirdPartyFanWriterRunning())
@@ -76,7 +132,7 @@ public sealed partial class WindowsHomeHardwareProvider
         try
         {
             PrepareFanStrongCoolingLocked(cancellationToken);
-            fanTransport ??= CreateFanTransport();
+            fanTransport = RetainOrCreateFanTransport();
             fanTransport.Open();
             if (plan.Strategy == "Auto") ApplyAutomaticCeilingLocked(plan, telemetry, cpu, gpu);
             else fanTransport.SetTargets(cpu, gpu);
@@ -163,7 +219,9 @@ public sealed partial class WindowsHomeHardwareProvider
         }
     }
 
-    private void ReleaseFanLocked()
+    private void ReleaseFanLocked() => ReleaseFanCoreLocked(finalize: false);
+
+    private void ReleaseFanCoreLocked(bool finalize)
     {
         if (BackgroundWorkPaused) throw new IOException("hardwareAccessPaused");
         fanTouched |= fanTransport?.HasWritten == true;
@@ -178,10 +236,12 @@ public sealed partial class WindowsHomeHardwareProvider
                 fanTransport = CreateFanTransport();
                 fanTransport.Open();
             }
-            if (fanTouched)
+            if (fanTouched || fanTransport?.HasMappingLease == true)
             {
-                fanTransport!.Clear();
-                fanLastEcState = fanTransport.ReadControlState();
+                if (finalize) fanTransport!.FinishLease();
+                else fanTransport!.Clear();
+                fanLastEcState = fanTransport.HasMappingLease && (finalize || fanTransport.LeaseCompleted)
+                    ? null : fanTransport.ReadControlState();
             }
             fanTouched = false;
         }
@@ -189,7 +249,7 @@ public sealed partial class WindowsHomeHardwareProvider
         {
             try
             {
-                if (!fanTouched)
+                if (!fanTouched && fanTransport?.HasMappingLease != true)
                 {
                     fanTransport?.Dispose();
                     fanTransport = null;
@@ -208,6 +268,23 @@ public sealed partial class WindowsHomeHardwareProvider
                     fanTimer.Change(1000, 1000);
                 }
             }
+        }
+    }
+
+    private void FinishFanLocked()
+    {
+        if (BackgroundWorkPaused) throw new IOException("hardwareAccessPaused");
+        if (fanTransport?.LeaseCompleted != true)
+        {
+            ReleaseFanCoreLocked(finalize: true);
+        }
+        else RestoreStrongCoolingLocked();
+        fanLastEcMapping = ReadFanEcMappingLocked();
+        // Unmapped target RAM is unavailable; only the independent mapping observation proves final restoration.
+        if (fanTransport?.HasMappingLease == true)
+        {
+            if (fanLastEcMapping?.Restored != true) throw new IOException("bldingFanMappingNotConfirmed");
+            fanLastEcState = null;
         }
     }
 

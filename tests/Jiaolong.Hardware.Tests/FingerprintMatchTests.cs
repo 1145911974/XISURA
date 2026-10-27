@@ -39,6 +39,8 @@ public sealed class FingerprintMatchTests
         Assert.AreEqual(CapabilityState.Unavailable, decision.Capabilities.Items.Single(item => item.Key == "cpuTuning:smu").State);
         foreach (var compatible in new[]
         {
+            fingerprint with { BiosVersion = "MRID6_23_P_V35" },
+            fingerprint with { BiosVersion = "MRID6_23_P_V39" },
             fingerprint with { BiosVersion = "MRID6_23_P_V41", GpuName = "NVIDIA GeForce RTX 4060 Laptop GPU", GpuPnpDeviceIdsExact = [@"PCI\VEN_10DE&DEV_0000\OTHER_INSTANCE"] },
             fingerprint with { CpuModel = "AMD Ryzen 9 7945HX", BiosVersion = "another BIOS" },
             fingerprint with { BoardProduct = "another OEM board", CpuVendor = "GenuineIntel", CpuModel = "Intel Core i7", Dependencies = [] }
@@ -48,6 +50,8 @@ public sealed class FingerprintMatchTests
             Assert.AreEqual(CompatibilityMode.Writable, result.Mode);
             Assert.AreEqual(CapabilityState.Available, result.Capabilities.Items.Single(item => item.Key == "performanceMode").State);
             Assert.AreEqual(CapabilityState.Available, result.Capabilities.Items.Single(item => item.Key == "cpuTuning").State);
+            Assert.AreEqual(compatible.BoardProduct == fingerprint.BoardProduct ? CapabilityState.Available : CapabilityState.Unavailable,
+                result.Capabilities.Items.Single(item => item.Key == "fanControl").State);
         }
         var missingProvider = await new ManifestResolver().ResolveAsync(fingerprint with { OemProvider = null }, CancellationToken.None);
         Assert.AreEqual(CapabilityState.Available, missingProvider.Capabilities.Items.Single(item => item.Key == "cpuTuning").State);

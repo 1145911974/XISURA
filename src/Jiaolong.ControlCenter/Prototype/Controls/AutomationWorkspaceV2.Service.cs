@@ -14,6 +14,7 @@ public sealed partial class AutomationWorkspaceV2
     private readonly DispatcherTimer serviceContextTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly CancellationTokenSource serviceClientLifetime = new();
     private bool servicePublishPending = true;
+    private bool followConfigurationPending;
     private bool servicePublishBusy;
     private readonly SemaphoreSlim serviceConfigurationGate = new(1, 1);
     private bool contextBusy;
@@ -37,7 +38,11 @@ public sealed partial class AutomationWorkspaceV2
         servicePresetReader = reader;
         RequestServiceConfiguration();
     }
-    public void RefreshFollowConfiguration() => RequestServiceConfiguration();
+    public void RefreshFollowConfiguration()
+    {
+        followConfigurationPending = true;
+        RequestServiceConfiguration();
+    }
 
     private void RequestServiceConfiguration()
     {
@@ -56,10 +61,14 @@ public sealed partial class AutomationWorkspaceV2
             serviceAutomationStatus = automationService?.State?.Controls.AdaptiveAutomation;
             autoEnabled = serviceAutomationStatus?.Enabled == true;
             // Reconnection observes the persisted service switch; it never reenables stale UI preferences.
-            servicePublishPending = false;
+            servicePublishPending = followConfigurationPending;
         }
         wasServiceConnected = connected;
-        if (!connected || serviceClientLifetime.IsCancellationRequested) return;
+        if (!connected || serviceClientLifetime.IsCancellationRequested)
+        {
+            RefreshServiceStatus();
+            return;
+        }
         if (automationService!.ConfigurationRestorationSettled && servicePublishPending && !servicePublishBusy && DateTimeOffset.UtcNow >= serviceRetryAfter && servicePresetReader is not null)
             _ = PublishServiceConfigurationAsync();
         if (autoEnabled && !contextBusy && DateTimeOffset.UtcNow - lastContextSubmitted >= TimeSpan.FromSeconds(2))
@@ -82,6 +91,7 @@ public sealed partial class AutomationWorkspaceV2
             await ConfirmServiceConfigurationAsync(configuration, serviceClientLifetime.Token);
             if (revision != configurationRevision) return false;
             servicePublishPending = false;
+            followConfigurationPending = false;
             serviceSubmissionError = null;
             return true;
         }
@@ -108,8 +118,9 @@ public sealed partial class AutomationWorkspaceV2
     {
         policy.Validate();
         var advanced = policy.Advanced;
-        var presets = enabled ? await servicePresetReader!(
-            new[] { map.AcOffice, map.AcGame, map.AcTurbo, map.DcOffice, map.DcGame }, cancellationToken) : [];
+        var presets = (enabled || preferences.Load().LightingFollowPreset) && servicePresetReader is { } reader
+            ? await reader(enabled ? new[] { map.AcOffice, map.AcGame, map.AcTurbo, map.DcOffice, map.DcGame } : [], cancellationToken)
+            : [];
         return new AdaptiveAutomationConfiguration(enabled, (AdaptiveAutomationStrategyId)strategy,
             new(policy.GameCpuPercent, policy.GameGpuPercent, policy.GameSeconds, policy.TurboEnabled,
                 policy.TurboCpuPercent, policy.TurboGpuPercent, policy.TurboSeconds,
@@ -162,19 +173,28 @@ public sealed partial class AutomationWorkspaceV2
     private void RefreshServiceStatus()
     {
         if (serviceClientLifetime.IsCancellationRequested) return;
-        var reason = serviceSubmissionError ?? (servicePublishPending ? "正在同步已保存策略到系统服务。"
+        bool connected = automationService?.Status == HomeSessionStatus.Connected;
+        var unavailable = automationService?.Status switch
+        {
+            HomeSessionStatus.ReadOnly => (Status: "只读，未运行", Reason: "服务只读，自动调度未运行。"),
+            HomeSessionStatus.RepairRequired => (Status: "服务需修复", Reason: "服务需修复，自动调度未运行。"),
+            HomeSessionStatus.Connecting => (Status: "正在连接", Reason: "正在连接，自动调度尚未运行。"),
+            _ => (Status: "未连接", Reason: "服务未连接，自动调度未运行。")
+        };
+        var reason = !connected ? unavailable.Reason : serviceSubmissionError ?? (servicePublishPending ? "正在同步已保存策略到系统服务。"
             : serviceAutomationStatus?.Reason ?? "正在等待系统服务的调度状态。");
-        DecisionReasonText.Text = !autoEnabled && !servicePublishPending ? "自动调度已关闭" : reason;
-        ServiceControlStatusText.Text = servicePublishPending ? "正在同步策略"
+        DecisionReasonText.Text = connected && !autoEnabled && !servicePublishPending ? "自动调度已关闭" : reason;
+        ServiceControlStatusText.Text = !connected ? unavailable.Status : servicePublishPending ? "正在同步策略"
             : !autoEnabled ? "自动调度已关闭"
             : serviceSubmissionError is not null ? "策略同步失败"
             : serviceAutomationStatus?.Running == true ? "系统服务正在调度" : "系统服务已暂停";
-        var candidate = autoEnabled && !servicePublishPending ? serviceAutomationStatus?.CandidateTarget : null;
+        var candidate = connected && autoEnabled && !servicePublishPending ? serviceAutomationStatus?.CandidateTarget : null;
         CandidateModeText.Text = candidate is { } key ? AdaptiveTargetMap.PerformanceModeFor(key) switch
         {
             PerformanceMode.Quiet => "办公", PerformanceMode.Balanced => "游戏", PerformanceMode.Turbo => "狂飙", _ => "自定义"
-        } : !autoEnabled ? "未开启" : serviceAutomationStatus?.Running == false ? "已暂停" : "保持当前";
-        CandidateDetailText.Text = candidate is { } candidateKey ? TargetName(candidateKey, preferences.Load().PresetNames) : "等待有效判定";
+        } : !connected ? "未运行" : !autoEnabled ? "未开启" : serviceAutomationStatus?.Running == false ? "已暂停" : "保持当前";
+        CandidateDetailText.Text = candidate is { } candidateKey ? TargetName(candidateKey, preferences.Load().PresetNames)
+            : !connected ? "仅编辑方案" : "等待有效判定";
         if (lastTelemetry is { CpuTemperatureC: { } cpu, GpuTemperatureC: { } gpu } telemetry
             && double.IsFinite(cpu) && double.IsFinite(gpu) && DateTimeOffset.UtcNow - telemetry.CapturedAtUtc <= TimeSpan.FromSeconds(3))
         {
@@ -183,8 +203,8 @@ public sealed partial class AutomationWorkspaceV2
             ToolTipService.SetToolTip(ThermalMarginText, $"策略温度门槛：CPU {activePolicy.Advanced.CpuTemperatureCeiling}°C / GPU {activePolicy.Advanced.GpuTemperatureCeiling}°C");
         }
         else ThermalMarginText.Text = "温度待确认";
-        DecisionDetailsText.Text = reason + (serviceAutomationStatus?.LastError is { } error ? $"\n{error}" : "")
-            + "\n系统服务持续执行模式与可读回的 CPU 系统参数；前台应用和空闲规则需要客户端在线。";
+        DecisionDetailsText.Text = reason + (connected && serviceAutomationStatus?.LastError is { } error ? $"\n{error}" : "")
+            + "\n仅在客户端运行且控制会话有效时调度；完全退出后停止并恢复本次会话约定的设置。";
     }
 
     public void StopServiceClient()

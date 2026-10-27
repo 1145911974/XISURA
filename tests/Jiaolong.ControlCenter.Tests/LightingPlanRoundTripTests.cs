@@ -13,7 +13,7 @@ public sealed class LightingPlanRoundTripTests
     [TestMethod]
     public void Preview_and_service_share_color_rules_and_protocol_preserves_user_settings()
     {
-        foreach (var effect in new[] { "Static", "Gradient", "Cycle" })
+        foreach (var effect in new[] { "Static", "Gradient" })
         {
             var draft = new LightingDraft(effect, 2, "#AD3F8C", false) { Speed = 1.5 };
             HardwareCommand command = new SetKeyboardLightingCommand(Guid.NewGuid(), draft.ToPlan()) { Preview = true };

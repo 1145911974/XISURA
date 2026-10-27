@@ -8,44 +8,22 @@ namespace Jiaolong.Hardware.Tests;
 public sealed class CpuTransportLifecycleTests
 {
     [TestMethod]
-    public async Task Cpu_transport_stops_internal_capture_enable_and_recovery_calls_at_pause()
+    public async Task Cpu_transport_stops_internal_capture_and_windows_recovery_calls_at_pause()
     {
-        foreach (string stage in new[] { "windows-restore", "windows-restore-error", "oem-capture", "oem-enable", "oem-restore" })
+        foreach (string stage in new[] { "windows-read", "windows-read-error" })
         {
             var trace = new Trace();
             var power = new FakePower(trace);
-            var bus = new FakeBus(trace) { Enabled = stage != "oem-enable" };
+            var bus = new FakeBus(trace) { Enabled = true };
             var smu = new FakeSmu(trace);
             var binding = new VerifiedWmiBinding("root\\WMI", "MICommonInterface", "MI", 250, 251, 23, "verified");
             var transport = new WindowsCpuTuningTransport(new MiCommonInterfaceClient(bus, bus), binding, power,
                 smuLimits: smu, hardwareAccessAllowed: () => trace.Allowed);
             var windows = new CpuTuningPlan(null, null, null, 3800, null, null, null, null);
-            var oem = new CpuTuningPlan(75, 45, 60, null, null, null, null, null);
-            Func<Task> operation;
-            if (stage.StartsWith("windows-restore", StringComparison.Ordinal))
-            {
-                await transport.CaptureTransactionAsync([windows], true, CancellationToken.None);
-                trace.PauseOn = "power.restore";
-                power.FailRestore = stage == "windows-restore-error";
-                operation = () => transport.RestoreTransactionAsync(_ => Task.CompletedTask, CancellationToken.None);
-            }
-            else if (stage == "oem-capture")
-            {
-                trace.PauseOn = "smu.read";
-                operation = () => transport.CaptureTransactionAsync([oem], true, CancellationToken.None);
-            }
-            else if (stage == "oem-enable")
-            {
-                trace.PauseOn = "mi.enable";
-                operation = () => transport.WriteFieldAsync(CpuTuningField.TemperatureLimitC, 75, CancellationToken.None);
-            }
-            else
-            {
-                await transport.CaptureTransactionAsync([oem], true, CancellationToken.None);
-                trace.PauseOn = "mi.limit";
-                operation = () => transport.RestoreTransactionAsync(_ =>
-                { trace.Record("native.restore"); return Task.CompletedTask; }, CancellationToken.None);
-            }
+            await transport.CaptureTransactionAsync([windows], true, CancellationToken.None);
+            trace.PauseOn = "power.read";
+            power.FailRead = stage == "windows-read-error";
+            Func<Task> operation = () => transport.RestoreTransactionAsync(_ => Task.CompletedTask, CancellationToken.None);
             trace.Calls.Clear();
             Exception? failure = null;
             try { await operation(); }
@@ -53,17 +31,21 @@ public sealed class CpuTransportLifecycleTests
             Assert.IsNotNull(failure, stage);
             Assert.AreEqual("hardwareAccessPaused", failure.Message, stage);
             Assert.AreEqual("paused", trace.Calls.Last(), "No internal hardware call after pause: " + stage);
-            if (stage.StartsWith("windows-restore", StringComparison.Ordinal))
-            {
-                Assert.AreEqual(1, power.Restores);
-                trace.Allowed = true;
-                trace.PauseOn = null;
-                power.FailRestore = false;
-                await transport.RestoreTransactionAsync(_ => Task.CompletedTask, CancellationToken.None);
-                Assert.AreEqual(5, power.Restores, "Interrupted recovery must retain its original snapshot.");
-                await transport.RestoreTransactionAsync(CancellationToken.None);
-                Assert.AreEqual(5, power.Restores, "Only successful recovery releases the snapshot.");
-            }
+            Assert.AreEqual(0, power.Restores);
+            trace.Allowed = true;
+            trace.PauseOn = null;
+            power.FailRead = false;
+            var original = power.Snapshot;
+            power.Snapshot = original with { DcMaxFrequencyMhz = 4123 };
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => transport.RestoreTransactionAsync(CancellationToken.None));
+            Assert.AreEqual(4123, power.Snapshot.DcMaxFrequencyMhz, "Interrupted recovery retains its original capture without owning drift.");
+            power.Snapshot = original;
+            await transport.RestoreTransactionAsync(CancellationToken.None);
+            int calls = trace.Calls.Count;
+            await transport.RestoreTransactionAsync(CancellationToken.None);
+            Assert.AreEqual(calls, trace.Calls.Count, "Only successful recovery releases the snapshot.");
+            Assert.AreEqual(0, power.Restores);
         }
     }
 
@@ -81,17 +63,20 @@ public sealed class CpuTransportLifecycleTests
 
     private sealed class FakePower(Trace trace) : IWindowsPowerSettingsTransport
     {
-        private readonly WindowsPowerSettingsSnapshot snapshot = new(Guid.NewGuid(), 3800, 3000, 2, 0)
+        public WindowsPowerSettingsSnapshot Snapshot { get; set; } = new(Guid.NewGuid(), 3800, 3000, 2, 0)
         { AcMinActiveCoresPercent = 17, DcMinActiveCoresPercent = 10 };
-        public bool FailRestore { get; set; }
+        public bool FailRead { get; set; }
         public int Restores { get; private set; }
         public Task<WindowsPowerSettingsSnapshot> ReadAsync(CancellationToken token)
-        { trace.Record("power.read"); return Task.FromResult(snapshot); }
+        {
+            trace.Record("power.read");
+            if (FailRead) throw new InvalidOperationException("simulatedReadFailure");
+            return Task.FromResult(Snapshot);
+        }
         public Task RestoreAsync(CpuTuningField field, WindowsPowerSettingsSnapshot original, CancellationToken token)
         {
             Restores++;
             trace.Record("power.restore");
-            if (FailRestore) throw new InvalidOperationException("simulatedRestoreFailure");
             return Task.CompletedTask;
         }
         public Task SetSchemeAsync(Guid value, CancellationToken token) => throw new AssertFailedException();

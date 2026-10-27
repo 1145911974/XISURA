@@ -138,7 +138,8 @@ public sealed partial class PerformanceWorkspace : UserControl
         var advancedPbo = snapshot.Capabilities.Items.FirstOrDefault(item => item.Key == "cpuTuning:pbo");
         cpuTuningAvailable = cpuTuning?.State == CapabilityState.Available;
         curveOptimizerAvailable = curveOptimizer?.State == CapabilityState.Available;
-        advancedSmuAvailable = advancedSmu?.State == CapabilityState.Available;
+        advancedSmuAvailable = advancedSmu?.State == CapabilityState.Available &&
+            PerformanceCommandFactory.CanWriteField(snapshot.Capabilities, "advancedCpuTuning", snapshot.Controls.ExecutionState?.HardwareEpoch);
         advancedPboAvailable = advancedPbo?.State == CapabilityState.Available;
         PerformanceControlsPanel.IsEnabled = cpuTuningAvailable;
         BoostToggle.IsEnabled = cpuTuningAvailable;

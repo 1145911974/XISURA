@@ -16,9 +16,11 @@ public sealed class ControlPresetStore : IControlPresetStore
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> PathLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly IUserPreferencesPathProvider paths;
     private readonly Func<CapabilitySnapshot?>? capabilities;
+    private readonly Func<DeviceSchedulingBaseline?>? baseline;
 
-    public ControlPresetStore(IUserPreferencesPathProvider? paths = null, Func<CapabilitySnapshot?>? capabilities = null)
-    { this.paths = paths ?? new DefaultUserPreferencesPathProvider(); this.capabilities = capabilities; }
+    public ControlPresetStore(IUserPreferencesPathProvider? paths = null, Func<CapabilitySnapshot?>? capabilities = null,
+        Func<DeviceSchedulingBaseline?>? baseline = null)
+    { this.paths = paths ?? new DefaultUserPreferencesPathProvider(); this.capabilities = capabilities; this.baseline = baseline; }
 
     public async Task<PagePresetEnvelope?> LoadAsync(ControlPageId page, PresetKey key, CancellationToken cancellationToken)
     {
@@ -47,7 +49,7 @@ public sealed class ControlPresetStore : IControlPresetStore
             EnsureWritableVersion(stored);
             ArchiveInvalidEntries(stored, page, path);
             var current = ReadEntry(stored, page, key, path);
-            var preset = DefaultControlPresets.Create(page, key, capabilities?.Invoke()) with
+            var preset = DefaultControlPresets.Create(page, key, capabilities?.Invoke(), baseline?.Invoke()) with
             { DisplayName = current.DisplayName, SavedAtUtc = DateTimeOffset.UtcNow, Revision = NextRevision(current.Revision) };
             stored[StorageKey(key)] = JsonSerializer.SerializeToElement(preset, JsonOptions);
             await WriteAsync(path, stored, cancellationToken);
@@ -64,8 +66,8 @@ public sealed class ControlPresetStore : IControlPresetStore
         var initial = PresetValidation.Validate(preset);
         if (!initial.IsValid) throw new InvalidOperationException(initial.Errors[0]);
         var snapshot = capabilities?.Invoke();
-        var completed = DefaultControlPresets.Complete(preset, snapshot);
-        var factory = DefaultControlPresets.Create(preset.Page, preset.Key, snapshot);
+        var completed = DefaultControlPresets.Complete(preset, snapshot, baseline: baseline?.Invoke());
+        var factory = DefaultControlPresets.Create(preset.Page, preset.Key, snapshot, baseline?.Invoke());
         bool factoryPayload = !preset.UserModified && preset.FactoryRevision == DefaultPerformancePresets.FactoryRevision
             && JsonElement.DeepEquals(completed.Payload, factory.Payload)
             && JsonElement.DeepEquals(JsonSerializer.SerializeToElement(completed.Settings, JsonOptions),
@@ -126,7 +128,7 @@ public sealed class ControlPresetStore : IControlPresetStore
 
     private PagePresetEnvelope ReadEntry(Dictionary<string, JsonElement> stored, ControlPageId page, PresetKey key, string path)
     {
-        if (!stored.TryGetValue(StorageKey(key), out var raw)) return DefaultControlPresets.Create(page, key, capabilities?.Invoke());
+        if (!stored.TryGetValue(StorageKey(key), out var raw)) return DefaultControlPresets.Create(page, key, capabilities?.Invoke(), baseline?.Invoke());
         string? name = raw.ValueKind == JsonValueKind.Object && raw.TryGetProperty("displayName", out var displayName) && displayName.ValueKind == JsonValueKind.String
             ? displayName.GetString() : null;
         if (raw.ValueKind == JsonValueKind.Object && raw.TryGetProperty("schemaVersion", out var schema) &&
@@ -137,12 +139,12 @@ public sealed class ControlPresetStore : IControlPresetStore
             var preset = raw.Deserialize<PagePresetEnvelope>(JsonOptions) ?? throw new JsonException("Missing preset.");
             if (preset.SchemaVersion > PagePresetEnvelope.CurrentSchemaVersion) return preset;
             if (preset.Page != page || preset.Key != key || !PresetValidation.Validate(preset).IsValid) throw new JsonException("Invalid preset entry.");
-            return DefaultControlPresets.Complete(preset, capabilities?.Invoke(), resolveFactory: true);
+            return DefaultControlPresets.Complete(preset, capabilities?.Invoke(), resolveFactory: true, baseline: baseline?.Invoke());
         }
         catch (Exception error) when (error is JsonException or ArgumentException or InvalidOperationException or FormatException)
         {
             BackupCorrupt(path, move: false);
-            return DefaultControlPresets.Create(page, key, capabilities?.Invoke()) with
+            return DefaultControlPresets.Create(page, key, capabilities?.Invoke(), baseline?.Invoke()) with
             { DisplayName = string.IsNullOrWhiteSpace(name) ? PresetNameCatalog.GetName(new Dictionary<string, string>(), key) : name };
         }
     }

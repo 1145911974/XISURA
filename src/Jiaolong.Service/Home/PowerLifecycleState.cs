@@ -52,6 +52,13 @@ public sealed class PowerLifecycleState
         return after & ~1L;
     }
 
+    internal long? TryPauseForShutdown(long expectedState)
+    {
+        if ((expectedState & 1) != 0) return null;
+        long after = (expectedState + 2) | 1;
+        return Interlocked.CompareExchange(ref state, after, expectedState) == expectedState ? after & ~1L : null;
+    }
+
     internal bool Hold(long version)
     {
         long before = Volatile.Read(ref state);

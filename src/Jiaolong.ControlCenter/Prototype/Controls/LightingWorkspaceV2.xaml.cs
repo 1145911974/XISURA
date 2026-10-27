@@ -36,7 +36,6 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     private double previewTimeOffset;
     private HomeControlSession? session;
     private bool lightingAvailable, applying;
-    private bool nativeCycleAvailable;
     private bool? hardwareLogoEnabled;
     private bool logoAvailable = true;
     private string? lastEffectError;
@@ -68,8 +67,6 @@ public sealed partial class LightingWorkspaceV2 : UserControl
             if (!PresetToolbar.IsEditingPreset && pendingHardwarePreview is null && !colorDragging && !lightingSliderDragging && !colorFocused && !followSettingPending && !applying && draft != actual)
             { draft = actual; Render(); }
         }
-        nativeCycleAvailable = snapshot.Controls.KeyboardLightingNativeCycleAvailable;
-        CycleButton.IsEnabled = nativeCycleAvailable;
         if (snapshot.Controls.PerformanceMode != PerformanceMode.Custom) confirmedCustomLighting = null;
         appliedLightingSeconds = snapshot.Controls.KeyboardLightingElapsedSeconds;
         appliedLightingClock.Restart();
@@ -94,14 +91,14 @@ public sealed partial class LightingWorkspaceV2 : UserControl
     internal static string DescribeHardwareStatus(KeyboardLightingPlan? plan, double? elapsedSeconds)
     {
         if (plan is null) return "设备状态：暂无法读取";
-        string effect = plan.Effect switch { "Gradient" => "渐变", "Cycle" => "循环", _ => "常亮" };
+        string effect = plan.Effect == "Gradient" ? "渐变" : "常亮";
         string color = plan.Red is byte red && plan.Green is byte green && plan.Blue is byte blue
             ? $"#{red:X2}{green:X2}{blue:X2}" : "颜色未返回";
         string level = plan.BrightnessLevel is int brightness ? $"{brightness} 档" : "档位未返回";
         string logo = plan.LogoEnabled is bool enabled ? (enabled ? "开" : "关") : "未返回";
         string source = elapsedSeconds is null ? "硬件读回" : "软件灯效执行状态";
         return plan.Effect == "Cycle"
-            ? $"{source}：循环 · 设备自动变色 · 亮度 {level} · A 面标志 {logo}"
+            ? $"{source}：旧版设备灯效（只读） · 亮度 {level} · A 面标志 {logo}"
             : $"{source}：{effect} · {color} · 亮度 {level} · A 面标志 {logo}";
     }
     private double PreviewSeconds() => appliedLightingSeconds is double seconds && LightingPresetPolicy.SameEffect(draft.ToPlan(), appliedLightingPlan)
@@ -137,9 +134,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
                 return;
             }
             var plan = snapshot.ToPlan() with { LogoEnabled = null };
-            var result = Catalog is null ? null : await Catalog.ApplyAsync(key.Mode, Catalog.NativeModeFor(key),
-                ControlOrigin.PresetUse, ControlPageId.Lighting, key);
-            if (result is null) return;
+            var result = await session.ExecuteAsync(new SetKeyboardLightingCommand(Guid.NewGuid(), plan), CancellationToken.None);
             if (result.State == CommandState.Applied && result.Error is null)
             {
                 lastFollowedTarget = key; lastFollowedPlan = plan;
@@ -147,14 +142,13 @@ public sealed partial class LightingWorkspaceV2 : UserControl
                 independentDraft = LightingDraft.FromPlan(plan);
                 lightingSlots[key.Mode.ToString()] = key.Slot;
                 preferences.Update(current => current with { LightingPresetSlots = new(lightingSlots), IndependentLighting = plan });
+                if (Catalog is not null) await Catalog.PublishAsync(Catalog.CurrentLogicalMode(), CancellationToken.None);
                 lastAutomaticTarget = session?.State is { } currentState
                     ? LightingPresetPolicy.ResolveTarget(currentState.Controls, lightingSlots, confirmedCustomLighting, confirmedPerformanceLighting) : null;
-                if (result.ExecutionState?.Pages.FirstOrDefault(p => p.Page == ControlPageId.Lighting)?.State == Jiaolong.Contracts.Models.ApplyState.Confirmed)
+                if (LightingPresetPolicy.SameEffect(plan, session?.State?.Controls.KeyboardLighting))
                     PresetToolbar.SetCurrentPreset(key);
                 else PresetToolbar.SetSubmittedPreset(key);
                 if (!PresetToolbar.IsEditingPreset) { draft = independentDraft!; Render(); }
-                await PresetToolbar.ShowTransientStatusAsync(result.ExecutionState?.Pages.FirstOrDefault(p => p.Page == ControlPageId.Lighting)?.State == Jiaolong.Contracts.Models.ApplyState.Confirmed
-                    ? "灯光已应用" : "已提交，实际生效未确认");
             }
             else if (result.Error is null) session.ReportOperationFailure("灯光设置未确认生效，请重试或导出日志反馈。");
         }
@@ -205,7 +199,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
 
     public LightingWorkspaceV2()
     {
-        presets = new(capabilities: () => session?.State?.Capabilities);
+        presets = new(capabilities: () => session?.State?.Capabilities, baseline: () => session?.SchedulingBaseline);
         InitializeComponent();
         PresetToolbar.PresetRenamed += async (_, key) =>
         {
@@ -230,11 +224,11 @@ public sealed partial class LightingWorkspaceV2 : UserControl
             slider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(OnBrightnessPointerReleased), true);
         }
         EffectHelp.Help = new ParameterHelpContent(
-            "常亮保持所选颜色；渐变连续换色，标准速度约六秒一轮；循环使用设备自动变色，色序与节拍由设备控制。",
-            "循环模式的颜色和速度由设备控制，不提供独立调节。",
+            "常亮保持所选颜色；渐变连续换色，标准速度约六秒一轮。",
+            "常亮可调颜色；渐变可调 0.5 至 2 倍速度。",
             "开启随模式应用，切换整机模式时使用对应灯光预设；日常页面直接调节当前电脑。",
             "关闭随模式应用可保持手动灯效；预设管理中编辑不改变设备。",
-            "灯效没有数值极限；循环色序与节拍不可调；管理中的机身图仅用于预览。",
+            "灯效没有数值极限；管理中的机身图仅用于预览。",
             "A 面标志独立同步；缺少有效预设保持当前灯效，其他控制台运行时不写入。");
         previewTimer.Tick += (_, _) =>
         {
@@ -310,10 +304,9 @@ public sealed partial class LightingWorkspaceV2 : UserControl
         bool previous = syncing; syncing = true;
         StaticButton.IsChecked = draft.Effect == "Static";
         GradientButton.IsChecked = draft.Effect == "Gradient";
-        CycleButton.IsChecked = draft.Effect == "Cycle";
         BrightnessSlider.Value = draft.Brightness; LogoToggle.IsOn = hardwareLogoEnabled ?? draft.Logo; LogoToggle.IsEnabled = logoAvailable;
         SpeedSlider.Value = draft.Speed; SpeedSlider.IsEnabled = draft.Effect == "Gradient";
-        SpeedValueText.Text = draft.Effect == "Cycle" ? "自动" : $"{draft.Speed:0.##}×";
+        SpeedValueText.Text = $"{draft.Speed:0.##}×";
         LightingColor.TryParse(draft.Hex, out var color);
         bool colorEditable = draft.Effect == "Static";
         ColorEditorHost.IsEnabled = colorEditable; ColorEditorHost.Opacity = colorEditable ? 1 : .42;
@@ -368,6 +361,39 @@ public sealed partial class LightingWorkspaceV2 : UserControl
         bool changed = draft.Effect != effect;
         draft = draft with { Effect = effect }; Render(); if (changed) Changed();
     }
+    private void OnBrightnessAxisLoaded(object sender, RoutedEventArgs e)
+    {
+        BrightnessSlider.ApplyTemplate();
+        DispatcherQueue.TryEnqueue(UpdateBrightnessTickLabels);
+    }
+
+    private void OnBrightnessAxisSizeChanged(object sender, SizeChangedEventArgs e) => UpdateBrightnessTickLabels();
+
+    private void UpdateBrightnessTickLabels()
+    {
+        if (BrightnessTickLabels is null || BrightnessSlider is null) return;
+        var track = FindBrightnessPart(BrightnessSlider, "HorizontalTemplate");
+        var thumb = FindBrightnessPart(BrightnessSlider, "HorizontalThumb");
+        if (track is null || thumb is null || thumb.ActualWidth <= 0 || track.ActualWidth < thumb.ActualWidth) return;
+        // Match native thumb travel, including the theme's endpoint inset and current DPI/layout.
+        double left = track.TransformToVisual(BrightnessTickLabels).TransformPoint(new Windows.Foundation.Point(thumb.ActualWidth / 2, 0)).X;
+        double travel = track.ActualWidth - thumb.ActualWidth;
+        TextBlock[] labels = [BrightnessOffLabel, BrightnessLowLabel, BrightnessMediumLabel, BrightnessHighLabel];
+        for (int i = 0; i < labels.Length; i++)
+            Canvas.SetLeft(labels[i], left + travel * i / (labels.Length - 1) - labels[i].ActualWidth / 2);
+    }
+
+    private static FrameworkElement? FindBrightnessPart(DependencyObject root, string name)
+    {
+        for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement element && element.Name == name) return element;
+            if (FindBrightnessPart(child, name) is { } found) return found;
+        }
+        return null;
+    }
+
     private void OnBrightnessChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (syncing || loading) return;
@@ -395,7 +421,7 @@ public sealed partial class LightingWorkspaceV2 : UserControl
         // Preserve the current color phase while changing its rate.
         previewTimeOffset = (elapsed + previewTimeOffset) * draft.Speed / e.NewValue - elapsed;
         draft = draft with { Speed = e.NewValue };
-        SpeedValueText.Text = draft.Effect == "Cycle" ? "自动" : $"{draft.Speed:0.##}×";
+        SpeedValueText.Text = $"{draft.Speed:0.##}×";
         Changed();
     }
     private void OnLogoChanged(object sender, RoutedEventArgs e)

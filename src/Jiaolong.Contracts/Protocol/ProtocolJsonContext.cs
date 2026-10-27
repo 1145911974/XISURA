@@ -55,6 +55,7 @@ namespace Jiaolong.Contracts.Protocol;
 [JsonSerializable(typeof(AdaptiveAutomationStrategyId))]
 [JsonSerializable(typeof(AdaptiveAutomationStageId))]
 [JsonSerializable(typeof(CommandResult))]
+[JsonSerializable(typeof(ClientSessionExitConfiguration))]
 [JsonSerializable(typeof(CpuTuningPlan))]
 [JsonSerializable(typeof(GpuLimitPlan))]
 [JsonSerializable(typeof(FanControlPlan))]

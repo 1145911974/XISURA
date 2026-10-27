@@ -52,7 +52,7 @@ public sealed record PagePresetEnvelope(
     JsonElement Payload,
     DateTimeOffset SavedAtUtc)
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     public string FactoryRevision { get; init; } = "";
     // Unversioned input has unknown provenance and must never be treated as factory data.
     public bool UserModified { get; init; } = true;

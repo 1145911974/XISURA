@@ -90,7 +90,7 @@ public sealed class AppliedConfigurationRestore
             (plan.SplWatts is null ? 0 : 1) +
             (plan.SpptWatts is null ? 0 : 1);
         return count == 1 &&
-            plan.MaxFrequencyMhz is null && plan.BoostEnabled is null &&
+            plan.MaxFrequencyMhz is null && plan.BoostEnabled is null && plan.BoostPolicy is null &&
             plan.AcMaxFrequencyMhz is null && plan.DcMaxFrequencyMhz is null &&
             plan.AcMinActiveCoresPercent is null && plan.DcMinActiveCoresPercent is null &&
             plan.EnabledCoreCount is null && plan.NegativeCurveOptimizer is null &&

@@ -18,6 +18,7 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
     private readonly string pipeName;
     private readonly IRequestDispatcher dispatcher;
     private readonly HomeServiceRuntime? homeRuntime;
+    private readonly Guid serviceInstanceId = Guid.NewGuid();
     private readonly TelemetryRingBuffer? telemetryRingBuffer;
     private readonly IClientIdentityVerifier identityVerifier;
     private readonly IFrameCodec codec;
@@ -45,6 +46,9 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        var retention = homeRuntime is not null && telemetryRingBuffer is not null
+            ? RetainTelemetryAsync(cancellationToken)
+            : Task.CompletedTask;
         while (!cancellationToken.IsCancellationRequested)
         {
             NamedPipeServerStream? candidate = null;
@@ -74,6 +78,28 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
                 {
                     if (candidate is not null && ReferenceEquals(server, candidate)) server = null;
                 }
+            }
+        }
+        try { await retention; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private async Task RetainTelemetryAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        while (await timer.WaitForNextTickAsync(cancellationToken))
+        {
+            try
+            {
+                telemetryRingBuffer!.Add(await homeRuntime!.ReadTelemetryAsync(cancellationToken));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger?.LogDebug(exception, "Diagnostic telemetry retention sample failed.");
             }
         }
     }
@@ -136,7 +162,8 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
                 throw new FrameCodecException(Jiaolong.Contracts.Errors.ErrorCode.UnsupportedProtocol);
 
             await WriteAsync(client, new HelloAckEnvelope(
-                new ProtocolVersion(1, 1), Guid.NewGuid(), DateTimeOffset.UtcNow, requestHello.MessageId, "1.0.0"), writeGate, clientCancellation.Token);
+                new ProtocolVersion(1, 1), Guid.NewGuid(), DateTimeOffset.UtcNow, requestHello.MessageId, "1.0.0")
+                { ServiceInstanceId = homeRuntime?.SessionId ?? serviceInstanceId }, writeGate, clientCancellation.Token);
             if (!keepClientConnected) return;
 
             while (!clientCancellation.IsCancellationRequested && client.IsConnected)
@@ -243,8 +270,6 @@ public sealed class NamedPipeServiceHost : IAsyncDisposable
             {
                 continue;
             }
-
-            telemetryRingBuffer?.Add(snapshot);
 
             var message = new EventEnvelope(
                 new ProtocolVersion(1, 0),

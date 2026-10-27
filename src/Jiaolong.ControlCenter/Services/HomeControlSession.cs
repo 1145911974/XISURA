@@ -20,16 +20,20 @@ public enum HomeSessionStatus
 
 public sealed class HomeControlSession : IAsyncDisposable
 {
-    public static readonly TimeSpan ControlStateRefreshInterval = TimeSpan.FromSeconds(1);
+    public static readonly TimeSpan ControlStateRefreshInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly ControlCenterClient client;
     private readonly ControlCenterClient modeClient;
+    private readonly ClientControlSessionLifecycle? controlSession;
     private readonly SemaphoreSlim modeCommandGate = new(1, 1);
     private long modeReadbackVersion;
     private long refreshSequence;
     private long appliedRefreshSequence;
     private readonly IInteractiveRadioController radioController;
     private readonly AppliedConfigurationRestore automaticRestore;
+    private readonly DeviceSchedulingBaselineStore schedulingBaselineStore;
+    private DeviceSchedulingBaseline? schedulingBaseline;
+    private bool baselineReadFailed;
     private readonly UserPreferencesStore preferences = new();
     private readonly CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim controlStateGate = new(1, 1);
@@ -45,19 +49,33 @@ public sealed class HomeControlSession : IAsyncDisposable
     private HomeSessionStatus status = HomeSessionStatus.Disconnected;
     private HomeSessionStatus? lastNotifiedUnavailableStatus;
     private bool started;
+    private bool keepChangesOnExit;
+    private DateTimeOffset nextControlSessionAttempt;
 
     public HomeControlSession(
         ControlCenterClient? client = null,
         IInteractiveRadioController? radioController = null,
-        AppliedConfigurationRestore? automaticRestore = null)
+        AppliedConfigurationRestore? automaticRestore = null,
+        DeviceSchedulingBaselineStore? schedulingBaselineStore = null,
+        bool manageClientSession = false)
     {
         this.client = client ?? new ControlCenterClient();
         modeClient = this.client.CreatePeer();
+        if (manageClientSession)
+        {
+            this.client.RequireControlServiceIdentity();
+            var defaults = new ExitDeviceDefaultsStore();
+            controlSession = new(this.client.BeginClientSessionAsync, this.client.ConfigureClientSessionAsync,
+                (id, token) => this.client.EndClientSessionAsync(id, token, keepChangesOnExit), defaults.Load);
+        }
         this.radioController = radioController ?? new WindowsInteractiveRadioController();
         this.automaticRestore = automaticRestore ?? new AppliedConfigurationRestore();
+        this.schedulingBaselineStore = schedulingBaselineStore ?? new DeviceSchedulingBaselineStore();
     }
 
     public event Action<HomeStateSnapshot>? StateChanged;
+    internal event Action<HomeStateSnapshot, long>? ModeReadbackObserved;
+    internal long ConnectionGeneration => client.ConnectionGeneration;
     public event Action<HardwareSnapshot>? TelemetryUpdated;
     public event Action<string>? NotificationRequested;
     public event Action<string>? RestoreWarning;
@@ -76,6 +94,7 @@ public sealed class HomeControlSession : IAsyncDisposable
     }
 
     public bool ConfigurationRestorationSettled => restoreScheduled && Volatile.Read(ref restoreTask)?.IsCompleted == true;
+    public DeviceSchedulingBaseline? SchedulingBaseline => schedulingBaseline?.Identity == State?.Capabilities.Identity ? schedulingBaseline : null;
     public bool IsServiceConnected => client.IsConnected;
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -94,7 +113,7 @@ public sealed class HomeControlSession : IAsyncDisposable
         await controlStateGate.WaitAsync(cancellationToken);
         try
         {
-            return await client.SendCommandAsync(new UpdateAdaptiveAutomationContextCommand(Guid.NewGuid(), context), cancellationToken);
+            return await SendBoundCommandAsync(client, new UpdateAdaptiveAutomationContextCommand(Guid.NewGuid(), context), cancellationToken);
         }
         finally { controlStateGate.Release(); }
     }
@@ -110,7 +129,7 @@ public sealed class HomeControlSession : IAsyncDisposable
         if (client.NegotiatedProtocol.Minor < 1)
             return new(operationId, CommandState.Rejected, null, RequiredUserAction.None,
                 ServiceError.Create(ErrorCode.CapabilityUnavailable, operationId, false), false) { Mutation = HardwareMutation.NoMutation };
-        return await client.SendCommandAsync(new PublishPresetCatalogCommand(operationId, expectedRevision, items)
+        return await SendBoundCommandAsync(client, new PublishPresetCatalogCommand(operationId, expectedRevision, items)
             { Selections = selections }, token);
     }
 
@@ -126,7 +145,7 @@ public sealed class HomeControlSession : IAsyncDisposable
             return new(operationId, CommandState.Rejected, null, RequiredUserAction.None,
                 ServiceError.Create(ErrorCode.CapabilityUnavailable, operationId, false), false) { Mutation = HardwareMutation.NoMutation };
         var command = new ApplyControlRequestCommand(operationId, new(operationId, 0, origin, logicalMode, nativeMode, pages));
-        var result = await modeClient.SendCommandAsync(command, token);
+        var result = await SendBoundCommandAsync(modeClient, command, token);
         if (version != Interlocked.Read(ref manualCommandVersion)) return result;
         HomeStateSnapshot? submitted;
         lock (gate)
@@ -149,7 +168,14 @@ public sealed class HomeControlSession : IAsyncDisposable
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
             { if (version == Interlocked.Read(ref manualCommandVersion)) Notify("模式已确认，但本地恢复记录保存失败；请检查配置目录。"); }
         }
-        if (result.Error is null || result.Mutation != HardwareMutation.NoMutation) await RefreshStateAsync(token);
+        if (result.Error is null || result.Mutation != HardwareMutation.NoMutation)
+        {
+            try { await RefreshStateAsync(token); }
+            // Cancelling a readback cannot revoke the service's acknowledged result.
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch (Exception error) when (error is IOException or TimeoutException or ControlCenterServiceException)
+            { AppRuntimeLog.Write($"Control request {operationId} acknowledged; state refresh failed: {error}\n"); }
+        }
         if (version == Interlocked.Read(ref manualCommandVersion) && result.Error is not null && result.Error.Code != ErrorCode.CancelledBeforeApply)
             Notify(ErrorText(result.Error));
         return result;
@@ -182,7 +208,15 @@ public sealed class HomeControlSession : IAsyncDisposable
             try
             {
                 queueCancellationToken.ThrowIfCancellationRequested();
-                var result = await client.SendCommandAsync(command, cancellationToken);
+                if (command is SetAdaptiveAutomationConfigurationCommand
+                    { Intent: AutomationConfigurationIntent.Update, Configuration.Enabled: false } followConfiguration)
+                {
+                    // A preceding manual lighting write may advance the revision while this metadata waits in the queue.
+                    await RefreshStateAsync(cancellationToken);
+                    if (State?.Controls.AdaptiveAutomation is not { Enabled: true })
+                        command = followConfiguration with { ExpectedRevision = State?.Controls.AdaptiveAutomation?.Revision ?? 0 };
+                }
+                var result = await SendBoundCommandAsync(client, command, cancellationToken);
                 long replyMs = commandClock.ElapsedMilliseconds;
                 try
                 {
@@ -240,7 +274,7 @@ public sealed class HomeControlSession : IAsyncDisposable
             // A separate connection keeps a slow monitoring response out of the mode request's path.
             await modeClient.ConnectAsync(token);
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            var result = await modeClient.SendCommandAsync(command, token);
+            var result = await SendBoundCommandAsync(modeClient, command, token);
             long replyMs = clock.ElapsedMilliseconds;
             if (result is { State: CommandState.Applied, Error: null } &&
                 (result.VerifiedPerformanceMode == command.Mode ||
@@ -278,6 +312,24 @@ public sealed class HomeControlSession : IAsyncDisposable
                 ServiceError.Create(ErrorCode.ServiceUnavailable, command.OperationId, true), false);
         }
         finally { modeCommandGate.Release(); }
+    }
+
+    private Task<CommandResult> SendBoundCommandAsync(ControlCenterClient connection, HardwareCommand command, CancellationToken token) =>
+        controlSession is null ? connection.SendCommandAsync(command, token) : controlSession.SendAsync(command, connection.SendCommandAsync, token);
+
+    public async Task<CommandResult?> EndControlSessionAsync(CancellationToken token, bool keepChanges = false)
+    {
+        if (controlSession is null) return null;
+        keepChangesOnExit = keepChanges;
+        SupersedeAutomaticRestore();
+        lifetime.Cancel();
+        foreach (var task in new[] { restoreTask, telemetryTask, controlStateTask })
+            if (task is not null)
+            {
+                try { await task; }
+                catch (Exception error) { AppRuntimeLog.Write($"Session exit background drain: {error.Message}\n"); }
+            }
+        return await controlSession.EndAsync(token);
     }
 
     public async ValueTask DisposeAsync()
@@ -355,6 +407,8 @@ public sealed class HomeControlSession : IAsyncDisposable
         {
             if (previous is not null) { try { await previous; } catch { } }
             previousCancellation?.Dispose();
+            // A managed console captures this startup's hardware; it must not replay an older session's settings.
+            if (controlSession is not null) return;
             if (!automaticRestore.HasSavedState) return;
             await Task.Delay(1000, cancellationToken);
             for (int attempt = 0; attempt < 3; attempt++)
@@ -375,7 +429,7 @@ public sealed class HomeControlSession : IAsyncDisposable
             {
                 await RefreshStateAsync(cancellationToken);
                 if (Status != HomeSessionStatus.Connected) return;
-                var report = await automaticRestore.RestoreAsync(client.SendCommandAsync,
+                var report = await automaticRestore.RestoreAsync((command, token) => SendBoundCommandAsync(client, command, token),
                     () => version == Interlocked.Read(ref manualCommandVersion),
                     State?.Controls.AdaptiveAutomation?.Enabled == true, cancellationToken,
                     command => State?.Controls.AdaptiveAutomation?.Enabled != true && command is SetPerformanceModeCommand && IsRestoreAllowed(command));
@@ -395,6 +449,8 @@ public sealed class HomeControlSession : IAsyncDisposable
 
     private bool IsRestoreAllowed(HardwareCommand command)
     {
+        // Manual operation must retain the mode observed on this device at startup.
+        if (command is SetPerformanceModeCommand && !preferences.Load().PerformanceFollowPreset) return false;
         var snapshot = State;
         if (snapshot?.Capabilities.SupportState != DeviceSupportState.Ready) return false;
         if (snapshot.Telemetry?.AcPowerConnected != true &&
@@ -445,6 +501,35 @@ public sealed class HomeControlSession : IAsyncDisposable
         long sequence = Interlocked.Increment(ref refreshSequence);
         long readbackVersion = Interlocked.Read(ref modeReadbackVersion);
         var updated = await client.GetHomeStateAsync(cancellationToken);
+        if (controlSession is { IsReady: false } && client.IsControlServiceCurrent &&
+            updated.Capabilities.SupportState == DeviceSupportState.Ready && DateTimeOffset.UtcNow >= nextControlSessionAttempt)
+        {
+            nextControlSessionAttempt = DateTimeOffset.UtcNow.AddSeconds(2);
+            try { await controlSession.StartAsync(cancellationToken); }
+            catch (Exception error) when (error is InvalidOperationException or InvalidDataException)
+            { AppRuntimeLog.Write($"Control session not ready; retaining read-only state: {error.Message}\n"); }
+        }
+        bool sessionRecoveryReadOnly = controlSession is not null && (!client.IsControlServiceCurrent || !controlSession.IsReady) &&
+            updated.Capabilities.SupportState == DeviceSupportState.Ready;
+        if (sessionRecoveryReadOnly)
+        {
+            const string reason = "clientSessionRecoveryRequired";
+            updated = updated with
+            {
+                Capabilities = updated.Capabilities with
+                {
+                    SupportState = DeviceSupportState.ReadOnly,
+                    Reason = reason,
+                    Items = updated.Capabilities.Items.Select(item =>
+                        item.State == CapabilityState.Available &&
+                        item.Key is not ("monitoring" or "quickSetting:wifi" or "quickSetting:bluetooth")
+                            ? item with { State = CapabilityState.ReadOnly, Reason = reason } : item).ToArray(),
+                    Fields = updated.Capabilities.Fields.Select(field => field.Writable
+                        ? field with { Writable = false, Availability = field.Availability == CapabilityState.Available
+                            ? CapabilityState.ReadOnly : field.Availability } : field).ToArray()
+                }
+            };
+        }
         HomeStateSnapshot? previous;
         lock (gate)
         {
@@ -452,6 +537,16 @@ public sealed class HomeControlSession : IAsyncDisposable
             appliedRefreshSequence = sequence;
             previous = homeState;
             homeState = updated;
+        }
+        if (SchedulingBaseline is null && !baselineReadFailed && Interlocked.Read(ref manualCommandVersion) == 0)
+        {
+            try { schedulingBaseline = await schedulingBaselineStore.LoadOrCaptureAsync(updated, cancellationToken, allowPartial: true); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                baselineReadFailed = true;
+                RestoreWarning?.Invoke("本机均衡基准无法读取或保存；原文件已保留，未应用配置。");
+                AppRuntimeLog.Write($"Device scheduling baseline: {error.Message}");
+            }
         }
         if (ConfigurationRestorationSettled && updated.Capabilities.SupportState == DeviceSupportState.Ready &&
             updated.Controls.ExecutionState is { NativeModeApplyState: ApplyState.Confirmed } confirmed &&
@@ -476,6 +571,7 @@ public sealed class HomeControlSession : IAsyncDisposable
             };
             if (previous is null || previousStatus != Status || !HomeStateEquivalence.HaveSameControls(previous, updated))
                 StateChanged?.Invoke(updated);
+            ModeReadbackObserved?.Invoke(updated, ConnectionGeneration);
             bool shouldNotify = false;
             if (Status is HomeSessionStatus.ReadOnly or HomeSessionStatus.RepairRequired)
             {
@@ -486,17 +582,19 @@ public sealed class HomeControlSession : IAsyncDisposable
             {
                 lastNotifiedUnavailableStatus = null;
             }
-            if (shouldNotify) Notify(HomeSessionMessages.ReadOnlyMode);
+            if (shouldNotify && Status == HomeSessionStatus.RepairRequired && !sessionRecoveryReadOnly)
+                Notify(HomeSessionMessages.ReadOnlyMode);
         }
     }
 
     private async Task ConsumeControlStateAsync(CancellationToken cancellationToken)
     {
+        using var refreshTimer = new PeriodicTimer(ControlStateRefreshInterval);
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(ControlStateRefreshInterval, cancellationToken);
+                if (!await refreshTimer.WaitForNextTickAsync(cancellationToken)) return;
                 if (Status == HomeSessionStatus.Disconnected)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
@@ -536,7 +634,6 @@ public sealed class HomeControlSession : IAsyncDisposable
             catch
             {
                 Status = HomeSessionStatus.Disconnected;
-                Notify("硬件遥测连接中断，正在重新连接");
                 try { await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken); } catch (OperationCanceledException) { return; }
                 await ConnectAndRefreshAsync(cancellationToken, notifyFailure: false);
             }

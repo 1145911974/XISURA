@@ -70,6 +70,27 @@ public sealed class QuickMenuEditorTests
     }
 
     [TestMethod]
+    public void Reordering_visible_shortcuts_keeps_hidden_shortcut_position()
+    {
+        var layout = QuickMenuLayout.FromPersisted(
+            ["Touchpad", "LidLogo"],
+            ["Touchpad", "FnLock", "LidLogo"],
+            maxItems: 6);
+
+        var reordered = layout.Reorder(QuickSettingKind.LidLogo, 0);
+
+        CollectionAssert.AreEqual(
+            new[] { QuickSettingKind.LidLogo, QuickSettingKind.FnLock, QuickSettingKind.Touchpad },
+            reordered.Order.ToArray());
+        CollectionAssert.AreEqual(
+            new[] { QuickSettingKind.LidLogo, QuickSettingKind.FnLock, QuickSettingKind.Touchpad },
+            reordered.Toggle(QuickSettingKind.FnLock, true, 6).EnabledOrder.ToArray());
+
+        var dragged = layout.WithReorderedEnabled([QuickSettingKind.LidLogo, QuickSettingKind.Touchpad]);
+        CollectionAssert.AreEqual(reordered.Order.ToArray(), dragged.Order.ToArray());
+    }
+
+    [TestMethod]
     public void Layout_adds_a_new_shortcut_when_fewer_than_nine_are_selected()
     {
         var layout = new QuickMenuLayout(QuickMenuLayout.Default.EnabledOrder.Take(6).ToArray());
@@ -114,6 +135,18 @@ public sealed class QuickMenuEditorTests
         CollectionAssert.AreEqual(
             new[] { QuickSettingKind.LidLogo, QuickSettingKind.Wifi },
             layout.EnabledOrder.ToArray());
+    }
+
+    [TestMethod]
+    public void Hidden_quick_item_recovers_its_prior_position_after_reopen()
+    {
+        var original = QuickMenuLayout.FromPersisted(
+            ["Touchpad", "FnLock", "LidLogo"], ["Touchpad", "FnLock", "LidLogo"], maxItems: 6);
+        var hidden = original.Toggle(QuickSettingKind.Touchpad, false, maxItems: 6);
+        CollectionAssert.AreEqual(new[] { "Touchpad", "FnLock", "LidLogo" }, hidden.ToPersistedOrder());
+        var reopened = QuickMenuLayout.FromPersisted(hidden.ToPersistedEnabled(), hidden.ToPersistedOrder(), maxItems: 6);
+        var restored = reopened.Toggle(QuickSettingKind.Touchpad, true, maxItems: 6);
+        CollectionAssert.AreEqual(original.EnabledOrder.ToArray(), restored.EnabledOrder.ToArray());
     }
 
     [TestMethod]

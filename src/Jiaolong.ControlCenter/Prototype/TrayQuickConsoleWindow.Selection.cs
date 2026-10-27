@@ -24,8 +24,6 @@ public sealed partial class TrayQuickConsoleWindow
     private ControlModeId? previewMode;
     private ControlModeId? observedMode;
     private HomeControlState? observedControls;
-    private DateTimeOffset observedModeAt;
-    private bool observedModeUnverified;
     private ControlModeId? displayedMode;
     private PresetKey? confirmedPreset;
     private AdaptiveStrategyId? confirmedStrategy;
@@ -71,18 +69,11 @@ public sealed partial class TrayQuickConsoleWindow
 
     private void RefreshModeReadbackText()
     {
-        var age = DateTimeOffset.UtcNow - observedModeAt;
-        bool fresh = serviceConnected && observedMode is not null && age >= TimeSpan.FromSeconds(-1) && age <= TimeSpan.FromSeconds(3);
-        var readback = fresh ? observedMode : null;
-        var current = !serviceConnected ? null : previewMode ?? readback;
-        SelectedModeText.Text = current is { } mode ? ModeLabel(mode) : "模式未读取";
-        ModeReadbackHeaderText.Text = !serviceConnected ? "服务未连接" : previewMode is not null ? "请求模式 · 待完成" :
-            observedModeUnverified && fresh ? "接口读回 · 实际效果待验证" : "当前性能模式";
-        if (observedModeUnverified && fresh)
-            ToolTipService.SetToolTip(ModeSelectorButton, "此档位来自接口读回；实际功耗与性能尚未独立确认。展开选择模式与预设。");
-        if (displayedMode != readback)
+        var current = previewMode ?? observedMode ?? confirmedMode;
+        SelectedModeText.Text = current is { } mode ? ModeLabel(mode) : "选择模式";
+        if (displayedMode != current)
         {
-            displayedMode = readback;
+            displayedMode = current;
             RefreshVisualState(isVisible);
         }
     }

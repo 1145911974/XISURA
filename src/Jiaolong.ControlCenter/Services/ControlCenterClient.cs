@@ -24,14 +24,27 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<MessageEnvelope>> pending = new();
     private readonly object stateGate = new();
     private NamedPipeClientStream? pipe;
+    private Guid? connectedServiceInstance;
+    private long connectionGeneration;
+    private ControlServiceBinding controlServiceBinding = new();
     private CancellationTokenSource? readLoopCancellation;
     private Task? readLoop;
     private Channel<HardwareSnapshot> telemetryChannel = CreateTelemetryChannel();
 
     public ControlCenterClient(string? pipeName = null) => this.pipeName = string.IsNullOrWhiteSpace(pipeName) ? PipeName : pipeName;
-    internal ControlCenterClient CreatePeer() => new(pipeName);
+    internal ControlCenterClient CreatePeer() => new(pipeName) { controlServiceBinding = this.controlServiceBinding };
     public bool IsConnected { get { lock (stateGate) return pipe is { IsConnected: true }; } }
+    internal long ConnectionGeneration { get { lock (stateGate) return connectionGeneration; } }
+    internal bool IsControlServiceCurrent { get { lock (stateGate) return controlServiceBinding.IsCurrent(connectedServiceInstance); } }
     public ProtocolVersion NegotiatedProtocol { get; private set; }
+    internal void RequireControlServiceIdentity()
+    {
+        lock (stateGate)
+        {
+            controlServiceBinding.Require();
+            controlServiceBinding.Observe(connectedServiceInstance);
+        }
+    }
 
     public async Task ConnectAsync(CancellationToken cancellationToken)
     {
@@ -42,23 +55,33 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
             await DisconnectAsync();
 
             var candidate = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            using var connectionDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            connectionDeadline.CancelAfter(TimeSpan.FromSeconds(10));
             try
             {
-                await candidate.ConnectAsync(10_000, cancellationToken);
+                await candidate.ConnectAsync(10_000, connectionDeadline.Token);
                 var hello = new HelloEnvelope(new ProtocolVersion(1, 1), Guid.NewGuid(), DateTimeOffset.UtcNow, "1.0.0");
-                await WriteDirectAsync(candidate, hello, cancellationToken);
-                var response = await ReadDirectAsync(candidate, cancellationToken);
+                await WriteDirectAsync(candidate, hello, connectionDeadline.Token);
+                var response = await ReadDirectAsync(candidate, connectionDeadline.Token);
                 if (response is not HelloAckEnvelope { ProtocolVersion.Major: 1 } acknowledgement)
                     throw new InvalidDataException("Control service protocol negotiation failed.");
                 NegotiatedProtocol = new(1, Math.Min((ushort)1, acknowledgement.ProtocolVersion.Minor));
 
                 lock (stateGate)
                 {
+                    connectedServiceInstance = acknowledgement.ServiceInstanceId;
+                    connectionGeneration++;
+                    controlServiceBinding.Observe(connectedServiceInstance);
                     pipe = candidate;
                     readLoopCancellation = new CancellationTokenSource();
                     telemetryChannel = CreateTelemetryChannel();
                     readLoop = ReadLoopAsync(candidate, readLoopCancellation.Token);
                 }
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && connectionDeadline.IsCancellationRequested)
+            {
+                await candidate.DisposeAsync();
+                throw new TimeoutException("Control service connection handshake timed out.", error);
             }
             catch
             {
@@ -94,6 +117,20 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
         ArgumentNullException.ThrowIfNull(command);
         return SendAsync<HardwareCommand, CommandResult>(command, cancellationToken);
     }
+
+    public Task<CommandResult> BeginClientSessionAsync(CancellationToken token) =>
+        SendRequestAsync<CommandResult>(Guid.NewGuid(), "beginClientSession", EmptyPayload(), TimeSpan.FromSeconds(15), token);
+
+    public Task<CommandResult> ConfigureClientSessionAsync(ClientSessionExitConfiguration configuration, CancellationToken token) =>
+        SendRequestAsync<CommandResult>(Guid.NewGuid(), "configureClientSession",
+            JsonSerializer.SerializeToElement(configuration, ProtocolJsonContext.Default.ClientSessionExitConfiguration), TimeSpan.FromSeconds(15), token);
+
+    public Task<CommandResult> EndClientSessionAsync(Guid sessionId, CancellationToken token) => EndClientSessionAsync(sessionId, token, false);
+
+    public Task<CommandResult> EndClientSessionAsync(Guid sessionId, CancellationToken token, bool keepChanges) =>
+        SendRequestAsync<CommandResult>(Guid.NewGuid(), "endClientSession",
+            keepChanges ? JsonSerializer.SerializeToElement(new { sessionId, keepChanges = true }) :
+                JsonSerializer.SerializeToElement(new { sessionId }), TimeSpan.FromSeconds(60), token);
 
     public Task<DiagnosticExport> StageDiagnosticsAsync(
         ControlCenterDiagnosticExportRequest request,
@@ -218,11 +255,12 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
         }
         finally
         {
+            await activePipe.DisposeAsync();
             foreach (var completion in pending.Values) completion.TrySetException(failure ?? new EndOfStreamException("Control service connection ended."));
             telemetryChannel.Writer.TryComplete(failure);
             lock (stateGate)
             {
-                if (ReferenceEquals(pipe, activePipe)) pipe = null;
+                if (ReferenceEquals(pipe, activePipe)) { pipe = null; connectedServiceInstance = null; }
             }
         }
     }
@@ -232,9 +270,15 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
         await writeGate.WaitAsync(cancellationToken);
         try
         {
-            var activePipe = pipe is { IsConnected: true } candidate
-                ? candidate
-                : throw new InvalidOperationException("Control service is not connected.");
+            NamedPipeClientStream activePipe;
+            lock (stateGate)
+            {
+                activePipe = pipe is { IsConnected: true } candidate ? candidate
+                    : throw new InvalidOperationException("Control service is not connected.");
+                // The original process may ask a restarted service to close its capture; only the service can authorize that recovery.
+                if (message is RequestEnvelope { Operation: "executeCommand" or "beginClientSession" or "configureClientSession" })
+                    controlServiceBinding.EnsureCurrent(connectedServiceInstance);
+            }
             await WriteDirectAsync(activePipe, message, cancellationToken);
         }
         finally
@@ -254,6 +298,7 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
             activeCancellation = readLoopCancellation;
             activeReadLoop = readLoop;
             pipe = null;
+            connectedServiceInstance = null;
             readLoopCancellation = null;
             readLoop = null;
         }
@@ -303,6 +348,29 @@ public sealed class ControlCenterClient : IAsyncDisposable, IDiagnosticExportCli
             var read = await stream.ReadAsync(buffer[offset..], cancellationToken);
             if (read == 0) throw new EndOfStreamException();
             offset += read;
+        }
+    }
+
+    private sealed class ControlServiceBinding
+    {
+        private readonly object sync = new();
+        private bool required;
+        private Guid? expected;
+        public void Require() { lock (sync) required = true; }
+        public void Observe(Guid? instance)
+        {
+            lock (sync)
+                if (required && expected is null && instance is Guid value && value != Guid.Empty) expected = value;
+        }
+        public bool IsCurrent(Guid? instance)
+        {
+            lock (sync)
+                return !required || (expected is not null && instance == expected);
+        }
+        public void EnsureCurrent(Guid? instance)
+        {
+            if (!IsCurrent(instance))
+                throw new InvalidOperationException("服务已重新启动或身份未确认，旧控制会话需要恢复；当前设置未提交。");
         }
     }
 

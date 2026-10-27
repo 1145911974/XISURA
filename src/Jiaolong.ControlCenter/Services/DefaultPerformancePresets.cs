@@ -6,10 +6,11 @@ namespace Jiaolong_ControlCenter.Services;
 
 public static class DefaultPerformancePresets
 {
-    public const string FactoryRevision = "2026-10-11.control-v4";
+    public const string FactoryRevision = "2026-10-24.control-v7";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public static PagePresetEnvelope Create(PresetKey key, CapabilitySnapshot? capabilities = null)
+    public static PagePresetEnvelope Create(PresetKey key, CapabilitySnapshot? capabilities = null,
+        DeviceSchedulingBaseline? baseline = null)
     {
         var draft = CreateDraft(key);
         var settings = new[] { "temperatureLimitC", "splWatts", "spptWatts", "acMaxFrequencyMhz", "dcMaxFrequencyMhz",
@@ -43,11 +44,11 @@ public static class DefaultPerformancePresets
             settings[field] = SettingRequest.Set(value);
         }
         Resolve("isBoostEnabled", !(family == 0 && key.Slot != 3));
-        settings["negativeCurveOptimizer"] = SettingRequest.Set(-30);
+        // Factory slots must not introduce undervolting or Windows clock caps.
+        foreach (var field in new[] { "negativeCurveOptimizer", "acMaxFrequencyMhz", "dcMaxFrequencyMhz" })
+            settings[field] = SettingRequest.Keep;
         if (verifiedCpu)
         {
-            // OEM policy does not reset Windows frequency caps left by another preset or process.
-            Resolve("acMaxFrequencyMhz", ac); Resolve("dcMaxFrequencyMhz", dc);
             if (key.Slot != 2)
             {
                 Resolve("temperatureLimitC", temperature, true); Resolve("splWatts", spl, true); Resolve("spptWatts", sppt, true);
@@ -63,6 +64,75 @@ public static class DefaultPerformancePresets
             IsBoostEnabled = settings["isBoostEnabled"].Intent == SettingIntent.Set ? settings["isBoostEnabled"].Value!.Value.GetBoolean() : draft.IsBoostEnabled,
             UseOfficialCpuPolicy = settings["temperatureLimitC"].Intent != SettingIntent.Set && settings["splWatts"].Intent != SettingIntent.Set && settings["spptWatts"].Intent != SettingIntent.Set
         };
+        if (key.Slot == 2 && baseline is not null &&
+            (baseline.SchemaVersion == 1 && DeviceSchedulingBaselineStore.HasCompleteCpuReadback(baseline.Cpu) ||
+             baseline.SchemaVersion == 2 && baseline.CapturedCpuFields is not null) &&
+            (capabilities?.Identity is null || capabilities.Identity == baseline.Identity))
+        {
+            var cpu = baseline.Cpu;
+            bool Captured(string field) => baseline.SchemaVersion == 1 ||
+                baseline.CapturedCpuFields!.Contains(field, StringComparer.OrdinalIgnoreCase);
+            var sourceCores = Captured("advancedCpuTuning") && cpu.NegativeCurveOptimizer is null &&
+                cpu.CurveOptimizerVerification == "hardwareReadback" && cpu.HasCompleteCurveValues() &&
+                cpu.PerCoreCurveOptimizer!.Values.All(value => value <= 0)
+                ? new Dictionary<int, int>(cpu.PerCoreCurveOptimizer) : null;
+            draft = draft with
+            {
+                Mode = baseline.NativeMode, UseOfficialCpuPolicy = true,
+                KnownFields = baseline.SchemaVersion == 2 ? settings.Keys.Where(Captured).Order(StringComparer.Ordinal).ToArray() : null,
+                TemperatureLimitC = Captured("temperatureLimitC") ? cpu.TemperatureLimitC ?? draft.TemperatureLimitC : draft.TemperatureLimitC,
+                SplWatts = Captured("splWatts") ? cpu.SplWatts ?? draft.SplWatts : draft.SplWatts,
+                SpptWatts = Captured("spptWatts") ? cpu.SpptWatts ?? draft.SpptWatts : draft.SpptWatts,
+                AcMaxFrequencyMhz = Captured("acMaxFrequencyMhz") ? cpu.AcMaxFrequencyMhz ?? draft.AcMaxFrequencyMhz : draft.AcMaxFrequencyMhz,
+                DcMaxFrequencyMhz = Captured("dcMaxFrequencyMhz") ? cpu.DcMaxFrequencyMhz ?? draft.DcMaxFrequencyMhz : draft.DcMaxFrequencyMhz,
+                IsBoostEnabled = Captured("isBoostEnabled") ? cpu.BoostEnabled ?? draft.IsBoostEnabled : draft.IsBoostEnabled,
+                BoostPolicy = Captured("isBoostEnabled") ? CpuBoostPolicy.FromState(cpu) : null,
+                WindowsPowerSchemeId = Captured("windowsPowerSchemeId") ? cpu.WindowsPowerSchemeId ?? Guid.Empty : Guid.Empty,
+                AcMinActiveCoresPercent = Captured("acMinActiveCoresPercent") && cpu.AcMinActiveCoresPercent.HasValue && cpu.DcMinActiveCoresPercent.HasValue ? cpu.AcMinActiveCoresPercent : null,
+                DcMinActiveCoresPercent = Captured("dcMinActiveCoresPercent") && cpu.AcMinActiveCoresPercent.HasValue && cpu.DcMinActiveCoresPercent.HasValue ? cpu.DcMinActiveCoresPercent : null,
+                NegativeCurveOptimizer = Captured("negativeCurveOptimizer") && cpu.CurveOptimizerVerification == "hardwareReadback" && cpu.NegativeCurveOptimizer is >= -50 and <= 0
+                    ? cpu.NegativeCurveOptimizer : null,
+                AdvancedCpuTuning = Captured("advancedCpuTuning") && (cpu.PboScalar is >= 1 and <= 10 || sourceCores is not null)
+                    ? new AdvancedCpuTuningDraft { PboScalar = cpu.PboScalar is >= 1 and <= 10 ? cpu.PboScalar : null,
+                        CurveOptimizerMode = sourceCores is null ? null : CpuCurveOptimizerMode.PerCore, PerCoreCurveOptimizer = sourceCores } : null
+            };
+            foreach (var field in settings.Keys.ToArray()) settings[field] = SettingRequest.Keep;
+            void Restore(string field, object? value, bool oem = false)
+            {
+                if (Captured(field)) Resolve(field, value, oem);
+            }
+            // These are targets for an explicit Use action, never startup writes.
+            Restore("acMaxFrequencyMhz", cpu.AcMaxFrequencyMhz);
+            Restore("dcMaxFrequencyMhz", cpu.DcMaxFrequencyMhz);
+            Restore("windowsPowerSchemeId", cpu.WindowsPowerSchemeId);
+            Restore("acMinActiveCoresPercent", draft.AcMinActiveCoresPercent);
+            Restore("dcMinActiveCoresPercent", draft.DcMinActiveCoresPercent);
+            Restore("isBoostEnabled", draft.BoostPolicy);
+            Restore("negativeCurveOptimizer", draft.NegativeCurveOptimizer);
+            bool CanRestoreAdvanced(string field, IEnumerable<int> values) =>
+                DefaultControlPresets.CanResolveDefault(capabilities, field, requireReadback: true) &&
+                values.All(value => PresetValidation.WithinRange(value,
+                    capabilities!.Fields.First(item => item.Key.Equals(field, StringComparison.OrdinalIgnoreCase))));
+            int? pboTarget = draft.AdvancedCpuTuning?.PboScalar is int scalar && CanRestoreAdvanced("pboScalar", [scalar])
+                ? scalar : null;
+            var coreTarget = sourceCores is not null && CanRestoreAdvanced("negativeCurveOptimizer", sourceCores.Values)
+                ? new Dictionary<int, int>(sourceCores) : null;
+            if (pboTarget is not null || coreTarget is not null)
+            {
+                // A Set payload must not carry read-only siblings from the full baseline.
+                var target = new AdvancedCpuTuningDraft
+                { PboScalar = pboTarget, CurveOptimizerMode = coreTarget is null ? null : CpuCurveOptimizerMode.PerCore,
+                    PerCoreCurveOptimizer = coreTarget };
+                if (baseline.SchemaVersion == 1) draft = draft with { AdvancedCpuTuning = target };
+                settings["advancedCpuTuning"] = SettingRequest.Set(target);
+            }
+            if (verifiedCpu)
+            {
+                Restore("temperatureLimitC", cpu.TemperatureLimitC, oem: true);
+                Restore("splWatts", cpu.SplWatts, oem: true);
+                Restore("spptWatts", cpu.SpptWatts, oem: true);
+            }
+        }
         return new PagePresetEnvelope(PagePresetEnvelope.CurrentSchemaVersion, ControlPageId.Performance, key,
             PresetNameCatalog.GetName(new Dictionary<string, string>(), key),
             JsonSerializer.SerializeToElement(draft, Json), DateTimeOffset.UnixEpoch)
@@ -75,7 +145,7 @@ public static class DefaultPerformancePresets
         // Numeric draft fields are editor placeholders; Settings carries the resolved write intent.
         return legacy with { UseOfficialCpuPolicy = true, AcMaxFrequencyMhz = 4500, DcMaxFrequencyMhz = 4500,
             WindowsPowerSchemeId = Guid.Empty, AcMinActiveCoresPercent = null, DcMinActiveCoresPercent = null,
-            NegativeCurveOptimizer = -30 };
+            NegativeCurveOptimizer = null };
     }
 
     internal static PerformanceDraft CreateLegacyDraft(PresetKey key)

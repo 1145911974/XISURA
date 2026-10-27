@@ -55,6 +55,7 @@ public sealed record CpuTuningState(
     public int? PboScalar { get; init; }
     public IReadOnlyDictionary<int, int>? PerCoreCurveOptimizer { get; init; }
     public Jiaolong.Contracts.Commands.AdvancedCpuTuningPlan? AdvancedLimits { get; init; }
+    public double? ObservedSplWatts { get; init; }
     public bool? OemCustomPowerMode { get; init; }
 }
 
@@ -63,7 +64,7 @@ public static class CpuTuningStateExtensions
     public static bool HasCompleteCurveValues(this CpuTuningState state) =>
         state.PerCoreCurveOptimizer is { Count: > 0 and <= 16 } cores &&
         state.EnabledCoreCount is int count && cores.Count == count &&
-        Enumerable.Range(0, cores.Count).All(core => cores.TryGetValue(core, out int value) && value is >= -30 and <= 30);
+        Enumerable.Range(0, cores.Count).All(core => cores.TryGetValue(core, out int value) && value is >= -50 and <= 30);
 
     public static int? AcFrequency(this CpuTuningState state) =>
         state.AcMaxFrequencyMhz ?? state.MaxFrequencyMhz;
@@ -98,6 +99,7 @@ public sealed record HomeControlState(
     public GpuPowerLimitState? GpuPowerLimit { get; init; }
     public GpuPowerPolicyState? GpuPowerPolicy { get; init; }
     public FanEcControlState? FanEcControl { get; init; }
+    public FanEcMappingState? FanEcMapping { get; init; }
 }
 
 public sealed record GpuClockLimitState(int MinimumMhz, int MaximumMhz, int? SubmittedMhz, bool HasSubmission, string? Error);
@@ -106,6 +108,9 @@ public sealed record GpuPowerPolicyState(uint MinimumMilliPercent, uint MaximumM
     uint? CurrentMilliPercent, uint? SubmittedMilliPercent, bool DriverRangeAvailable, string? Error);
 public sealed record FanEcControlState(DateTimeOffset CapturedAtUtc, byte Initialization, byte Control,
     byte CpuTarget, byte GpuTarget, byte? ExpectedInitialization);
+
+public sealed record FanEcMappingState(DateTimeOffset CapturedAtUtc, byte Initialization, byte OriginalInitialization,
+    bool Restored, bool TargetWritesStarted, bool TargetReleaseVerified);
 
 public sealed record GpuVfNode(int VoltageMv, int BaseFrequencyMhz, int OffsetKhz);
 
@@ -121,6 +126,32 @@ public sealed record GpuVfState(GpuVfNode[] Nodes, int MinimumOffsetKhz, int Max
     public int? CoreMaximumOffsetKhz { get; init; }
     public uint? VoltageBoostPercent { get; init; }
     public string? VoltageBoostError { get; init; }
+
+    public (int MinimumKhz, int MaximumKhz)? PstateOffsetRange(bool memory, bool preserveCurve = true)
+    {
+        int vfMinimum = Math.Max(-200_000, MinimumOffsetKhz), vfMaximum = Math.Min(200_000, MaximumOffsetKhz);
+        if (Error is not null || Nodes is not { Length: 127 } || Nodes[0].OffsetKhz != 0 || vfMinimum > vfMaximum ||
+            Nodes.Skip(1).Any(node => node.OffsetKhz < vfMinimum || node.OffsetKhz > vfMaximum)) return null;
+        int? current = memory ? MemoryOffsetKhz : CoreOffsetKhz;
+        int? driverMinimum = memory ? MemoryMinimumOffsetKhz : CoreMinimumOffsetKhz;
+        int? driverMaximum = memory ? MemoryMaximumOffsetKhz : CoreMaximumOffsetKhz;
+        int envelopeMaximum = memory ? 3_000_000 : 1_000_000;
+        if (current is null || driverMinimum is null || driverMaximum is null || driverMinimum > driverMaximum ||
+            current < driverMinimum || current > driverMaximum || current < -1_000_000 || current > envelopeMaximum) return null;
+        int minimum = Math.Max(-1_000_000, driverMinimum.Value), maximum = Math.Min(envelopeMaximum, driverMaximum.Value);
+        if (!memory && preserveCurve)
+        {
+            // A P0 core write shifts every editable V/F node; preserve the whole table.
+            foreach (var node in Nodes.Skip(1))
+            {
+                minimum = Math.Max(minimum, current.Value + vfMinimum - node.OffsetKhz);
+                maximum = Math.Min(maximum, current.Value + vfMaximum - node.OffsetKhz);
+            }
+        }
+        minimum = (int)(Math.Ceiling(minimum / 1000d) * 1000);
+        maximum = (int)(Math.Floor(maximum / 1000d) * 1000);
+        return minimum <= maximum ? (minimum, maximum) : null;
+    }
 }
 
 public sealed record HomeStateSnapshot(

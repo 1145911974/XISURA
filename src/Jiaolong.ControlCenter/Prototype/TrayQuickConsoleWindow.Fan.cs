@@ -12,6 +12,11 @@ public sealed partial class TrayQuickConsoleWindow
     private Action<bool>? fanStrongCoolingRequested;
     private bool fanAutomaticAvailable;
     private bool fanFixedAvailable;
+    private bool fanStrongAvailable;
+    private FrameworkElement? fanCeilingRow;
+    private FrameworkElement? fanFixedSection;
+    private FrameworkElement? fanFixedDivider;
+    private FrameworkElement? fanStrongSection;
     private bool fanConnected;
     private bool fanBusy;
     private bool? fanStrongCooling;
@@ -38,11 +43,12 @@ public sealed partial class TrayQuickConsoleWindow
     }
 
     public void ApplyFanState(bool connected, bool automaticAvailable, bool fixedAvailable,
-        int? ceilingRpm, int? fixedRpm, bool? strongCooling, int maximumRpm = 5800)
+        int? ceilingRpm, int? fixedRpm, bool? strongCooling, int maximumRpm = 5800, bool strongAvailable = false)
     {
         fanConnected = connected;
         fanAutomaticAvailable = automaticAvailable;
         fanFixedAvailable = fixedAvailable;
+        fanStrongAvailable = strongAvailable;
         fanMaximumRpm = Math.Max(1800, maximumRpm);
         confirmedFanCeiling = ceilingRpm is >= 1800 && ceilingRpm <= fanMaximumRpm ? ceilingRpm : null;
         confirmedFixedFanRpm = fixedRpm is >= 1800 && fixedRpm <= fanMaximumRpm ? fixedRpm : null;
@@ -71,10 +77,11 @@ public sealed partial class TrayQuickConsoleWindow
         var help = new Button { Content = "?", Style = (Style)ConsoleRoot.Resources["TrayLinkStyle"], Width = 24, Height = 24 };
         Grid.SetColumn(help, 1);
         AutomationProperties.SetName(help, "风扇控制安全说明");
-        ToolTipService.SetToolTip(help, "EC 自动可限制最大目标转速。固定转速由 CPU 与 GPU 两个风扇共同使用；温度达到安全阈值时交还官方风扇控制。目标值不代表当前实际 RPM，实际读数见监测带。强冷保持当前性能模式。");
+        ToolTipService.SetToolTip(help, "交还官方 EC 自动调速，实际转速请查看监测带。");
         autoHeader.Children.Add(automaticFanButton); autoHeader.Children.Add(help);
         autoSection.Children.Add(autoHeader);
         var ceilingRow = FanValueRow("最大目标", out ceilingValue, out applyCeilingButton);
+        fanCeilingRow = ceilingRow;
         AutomationProperties.SetName(applyCeilingButton, "应用 EC 自动最大目标转速");
         applyCeilingButton.Click += (_, _) => { if ((fanCeilingDraft ?? confirmedFanCeiling) is { } target) RequestAutomaticFan(target); };
         autoSection.Children.Add(ceilingRow);
@@ -82,8 +89,11 @@ public sealed partial class TrayQuickConsoleWindow
         ceilingSlider.ValueChanged += (_, e) => { if (suppressFanControlEvents) return; fanCeilingDraft = (int)e.NewValue; RefreshFanValues(); RefreshFanAvailability(); };
         autoSection.Children.Add(ceilingSlider);
         FanChoicesPanel.Children.Add(autoSection);
-        FanChoicesPanel.Children.Add(new Border { Height = 1, Background = TrayBrush("TrayStrokeBrush") });
+        var divider = new Border { Height = 1, Background = TrayBrush("TrayStrokeBrush") };
+        fanFixedDivider = divider;
+        FanChoicesPanel.Children.Add(divider);
         var fixedSection = new StackPanel { Spacing = 5 };
+        fanFixedSection = fixedSection;
         fixedSection.Children.Add(new TextBlock { Text = "CPU · GPU 固定转速", FontSize = 11, Foreground = TrayBrush("TrayTextBrush") });
         var fixedRow = FanValueRow("共同目标", out fixedValue, out applyFixedButton);
         AutomationProperties.SetName(applyFixedButton, "应用 CPU 与 GPU 共同固定转速");
@@ -98,6 +108,7 @@ public sealed partial class TrayQuickConsoleWindow
         fixedSection.Children.Add(fixedSlider);
         FanChoicesPanel.Children.Add(fixedSection);
         var strongRow = new Grid();
+        fanStrongSection = strongRow;
         strongRow.ColumnDefinitions.Add(new ColumnDefinition()); strongRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         strongRow.Children.Add(new TextBlock { Text = "强冷", FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = TrayBrush("TrayTextBrush"), VerticalAlignment = VerticalAlignment.Center });
         fanStrongToggle = new ToggleSwitch { OnContent = "", OffContent = "", IsOn = fanStrongCooling == true, Style = (Style)Application.Current.Resources["PrototypeModeToggleSwitchStyle"] };
@@ -105,7 +116,7 @@ public sealed partial class TrayQuickConsoleWindow
         AutomationProperties.SetName(fanStrongToggle, "快捷风扇强冷，不改变性能模式");
         fanStrongToggle.Toggled += (_, _) =>
         {
-            if (suppressFanControlEvents || fanStrongCooling is null) return;
+            if (suppressFanControlEvents || !fanStrongAvailable || fanStrongCooling is null) return;
             bool requested = fanStrongToggle.IsOn;
             suppressFanControlEvents = true; fanStrongToggle.IsOn = fanStrongCooling.Value; suppressFanControlEvents = false;
             SetQuickSettingBusy(QuickSettingKind.StrongCooling, true);
@@ -158,6 +169,11 @@ public sealed partial class TrayQuickConsoleWindow
     }
     private void RefreshFanAvailability()
     {
+        if (fanCeilingRow is not null) fanCeilingRow.Visibility = fanAutomaticAvailable ? Visibility.Visible : Visibility.Collapsed;
+        if (ceilingSlider is not null) ceilingSlider.Visibility = fanAutomaticAvailable ? Visibility.Visible : Visibility.Collapsed;
+        if (fanFixedSection is not null) fanFixedSection.Visibility = fanFixedAvailable ? Visibility.Visible : Visibility.Collapsed;
+        if (fanFixedDivider is not null) fanFixedDivider.Visibility = fanFixedAvailable ? Visibility.Visible : Visibility.Collapsed;
+        if (fanStrongSection is not null) fanStrongSection.Visibility = fanStrongAvailable ? Visibility.Visible : Visibility.Collapsed;
         bool automatic = fanConnected && !fanBusy && automaticFanRequested is not null;
         bool fixedAvailable = fanConnected && !fanBusy && fanFixedAvailable && fixedFanRequested is not null;
         if (automaticFanButton is not null) automaticFanButton.IsEnabled = automatic;
@@ -165,6 +181,6 @@ public sealed partial class TrayQuickConsoleWindow
         if (applyCeilingButton is not null) applyCeilingButton.IsEnabled = automatic && fanAutomaticAvailable && (fanCeilingDraft ?? confirmedFanCeiling) is not null;
         if (fixedSlider is not null) fixedSlider.IsEnabled = fixedAvailable;
         if (applyFixedButton is not null) applyFixedButton.IsEnabled = fixedAvailable && (fixedFanDraft ?? confirmedFixedFanRpm) is not null;
-        if (fanStrongToggle is not null) fanStrongToggle.IsEnabled = fanConnected && !fanBusy && fanStrongCooling is not null && !pendingQuickSettings.Contains(QuickSettingKind.StrongCooling) && fanStrongCoolingRequested is not null;
+        if (fanStrongToggle is not null) fanStrongToggle.IsEnabled = fanConnected && !fanBusy && fanStrongAvailable && fanStrongCooling is not null && !pendingQuickSettings.Contains(QuickSettingKind.StrongCooling) && fanStrongCoolingRequested is not null;
     }
 }

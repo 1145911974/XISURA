@@ -1183,6 +1183,8 @@
                                 <ToggleSwitch x:Name="SettingsStartupToggle" Header="开机自启动" IsOn="False" OnContent="开启" OffContent="关闭" Toggled="OnSettingsStartupToggled" Style="{StaticResource PrototypeModeToggleSwitchStyle}" AutomationProperties.Name="开机启动" />
                                 <ToggleSwitch x:Name="SettingsRememberWindowSizeToggle" Grid.Column="1" Header="记住窗口大小" IsOn="False" OnContent="开启" OffContent="关闭" Toggled="OnSettingsRememberWindowSizeToggled" Style="{StaticResource PrototypeModeToggleSwitchStyle}" AutomationProperties.Name="记住窗口大小" />
                             </Grid>
+                            <ToggleSwitch x:Name="SettingsKeepChangesOnExitToggle" Header="退出后保留配置修改" IsOn="False" OnContent="开启" OffContent="关闭" Toggled="OnSettingsKeepChangesOnExitToggled" Style="{StaticResource PrototypeModeToggleSwitchStyle}" AutomationProperties.Name="退出后保留配置修改" />
+                            <TextBlock Text="完全退出时保留已应用设置，并停止自动调度与跟随。关闭时按原规则恢复。" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
                             <!-- 窗口关闭规则说明行 (纯扁平无嵌套) -->
                             <Grid ColumnSpacing="12" Margin="0,4,0,0">
                                 <Grid.ColumnDefinitions>
@@ -1190,7 +1192,7 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="托盘驻留规则" Foreground="{StaticResource ModeAccentBrush}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="关闭窗口后客户端隐藏到托盘；退出客户端后，系统服务继续按负载、温度与供电调度。前台应用及空闲规则需要客户端在线；关闭首页自动开关可停止调度。" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="关闭窗口后客户端隐藏到托盘并继续运行；完全退出时停止调度与跟随，按“退出后保留配置修改”设置保留或恢复配置。" Foreground="{StaticResource PrototypeSecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
                             </Grid>
                         </StackPanel>
                     </Border>

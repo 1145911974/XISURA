@@ -9,6 +9,7 @@ public sealed record UserPreferences(bool MinimizeToTrayOnClose, string Theme, b
 {
     public string LogoStyle { get; init; } = "explore";
     public bool RememberWindowSize { get; init; }
+    public bool KeepChangesOnExit { get; init; }
     public int WindowWidthDip { get; init; }
     public int WindowHeightDip { get; init; }
     public string[] QuickMenuEnabled { get; init; } = [];
@@ -18,9 +19,9 @@ public sealed record UserPreferences(bool MinimizeToTrayOnClose, string Theme, b
     public string TrayTheme { get; init; } = "dark";
     public bool LightingRestoreAtStartup { get; init; }
     public bool LightingRestoreAfterWake { get; init; }
-    public bool PerformanceFollowPreset { get; init; } = true;
-    public bool GpuFollowPreset { get; init; } = true;
-    public bool FanFollowPreset { get; init; } = true;
+    public bool PerformanceFollowPreset { get; init; }
+    public bool GpuFollowPreset { get; init; }
+    public bool FanFollowPreset { get; init; }
     public bool LightingFollowPreset { get; init; }
     public Jiaolong.Contracts.Models.KeyboardLightingPlan? IndependentLighting { get; init; }
     public Dictionary<string, int> LightingPresetSlots { get; init; } = [];
@@ -40,7 +41,7 @@ public sealed record UserPreferences(bool MinimizeToTrayOnClose, string Theme, b
 
     public QuickMenuLayout ResolveTrayQuickMenuLayout() =>
         TrayQuickMenuEnabled is null && TrayQuickMenuOrder is null
-            ? QuickMenuLayout.FromPersisted(QuickMenuEnabled ?? [], QuickMenuOrder ?? [], maxItems: 6)
+            ? QuickMenuLayout.FromPersisted(QuickMenuEnabled ?? [], QuickMenuOrder?.Take(6).ToArray() ?? [], maxItems: 6)
             : QuickMenuLayout.FromPersisted(TrayQuickMenuEnabled ?? [], TrayQuickMenuOrder ?? [],
                 maxItems: 6, useDefaultWhenEmpty: false);
 }

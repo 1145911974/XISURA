@@ -122,7 +122,8 @@ public partial class App : Application
             }
             else _window.Activate();
             if (restorePending) RestoreExistingWindow();
-            _ = Task.Run(() => new Jiaolong_ControlCenter.Services.StartupRegistrationService().RepairEnabledRegistration());
+            if (!PrototypeWindowChrome.IsCandidateBuild)
+                _ = Task.Run(() => new Jiaolong_ControlCenter.Services.StartupRegistrationService().RepairEnabledRegistration());
             Jiaolong_ControlCenter.Services.AppRuntimeLog.Write($"[{DateTime.Now:O}] OnLaunched completed successfully\n");
         }
         catch (Exception ex)

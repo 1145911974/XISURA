@@ -131,9 +131,105 @@ public sealed class GpuVfLifecycleTests
         }
     }
 
-    private static WindowsHomeHardwareProvider Provider(FakeGpu bus, ILogger<WindowsHomeHardwareProvider>? logger = null)
+    [TestMethod]
+    public void Failed_state_refresh_keeps_gpu_recovery_pending_after_raw_offset_restore()
     {
-        var provider = new WindowsHomeHardwareProvider(bus.Create, () => true, _ => 45);
+        var bus = new FakeGpu { FailFirstWrite = true, FailRefreshAfterRollback = true };
+        using var provider = Provider(bus);
+        var command = new SetGpuCoreOffsetCommand(Guid.NewGuid(), 0, 10_000, true)
+        { ExpectedVfOffsetsKhz = bus.Offsets.ToArray() };
+
+        var result = (CommandResult)Invoke(provider, "ExecuteGpuCoreOffsetLocked", command, CancellationToken.None)!;
+
+        Assert.AreEqual(CommandState.RecoveryRequired, result.State);
+        Assert.AreEqual(HardwareMutation.Unknown, result.Mutation);
+        Assert.AreEqual(0, bus.CoreOffset);
+        Assert.IsNotNull(Field(provider, "gpuVfRecoveryOffsets"));
+        Assert.IsNotNull(Field(provider, "gpuPstateRecoverySnapshot"));
+
+        var curveBus = new FakeGpu { FailRefreshAfterWrite = true };
+        using var curveProvider = Provider(curveBus);
+        var baseline = curveBus.Offsets.ToArray();
+        var curveCommand = new SetGpuVfCurveCommand(Guid.NewGuid(), baseline,
+            baseline.Select((value, index) => index == 0 ? 0 : value + 10_000).ToArray(), true);
+        var curveResult = (CommandResult)Invoke(curveProvider, "ExecuteGpuVfLocked", curveCommand, CancellationToken.None)!;
+        Assert.AreEqual(CommandState.RecoveryRequired, curveResult.State);
+        CollectionAssert.AreEqual(baseline, curveBus.Offsets);
+        Assert.IsNotNull(Field(curveProvider, "gpuVfRecoveryOffsets"));
+    }
+
+    [TestMethod]
+    public void Nonfinite_temperature_rejects_direct_gpu_commands_before_any_driver_write()
+    {
+        foreach (var scenario in new[] { (Kind: "core", Temperature: double.NaN), (Kind: "memory", Temperature: double.PositiveInfinity),
+            (Kind: "vf", Temperature: double.NegativeInfinity) })
+        {
+            var bus = new FakeGpu();
+            using var provider = Provider(bus, temperature: _ => scenario.Temperature);
+            var result = ExecuteThermalCommand(provider, bus, scenario.Kind);
+            Assert.AreEqual(CommandState.Rejected, result.State);
+            Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation);
+            Assert.AreEqual(0, bus.Writes);
+        }
+    }
+
+    [TestMethod]
+    public void Lost_thermal_readback_after_gpu_write_rolls_back_complete_original_state()
+    {
+        foreach (string kind in new[] { "core", "memory", "vf" })
+        {
+            var bus = new FakeGpu();
+            int[] original = bus.Offsets.ToArray();
+            using var provider = Provider(bus, temperature: _ => bus.Writes == 0 ? 45 : double.NaN);
+            var result = ExecuteThermalCommand(provider, bus, kind);
+            Assert.AreEqual(CommandState.RolledBack, result.State, kind);
+            Assert.AreEqual(HardwareMutation.Unknown, result.Mutation);
+            CollectionAssert.AreEqual(original, bus.Offsets);
+            Assert.AreEqual(0, bus.CoreOffset);
+            Assert.AreEqual(0, bus.MemoryOffset);
+            Assert.IsNull(Field(provider, "gpuPstateRecoverySnapshot"));
+        }
+        var uncertain = new FakeGpu { FailRefreshAfterRollback = true };
+        using var pending = Provider(uncertain, temperature: _ => uncertain.Writes == 0 ? 45 : double.NaN);
+        var failed = ExecuteThermalCommand(pending, uncertain, "core");
+        Assert.AreEqual(CommandState.RecoveryRequired, failed.State);
+        Assert.IsNotNull(Field(pending, "gpuPstateRecoverySnapshot"));
+        int writes = uncertain.Writes;
+        Assert.AreEqual(CommandState.RecoveryRequired, ExecuteThermalCommand(pending, uncertain, "core").State);
+        Assert.AreEqual(writes, uncertain.Writes);
+    }
+
+    [TestMethod]
+    public void Changed_temperature_or_ac_during_capture_stops_before_first_gpu_value_write()
+    {
+        foreach (bool thermal in new[] { false, true })
+        {
+            var bus = new FakeGpu();
+            using var provider = Provider(bus, temperature: _ => thermal && bus.Reads > 0 ? double.NaN : 45,
+                acPower: () => thermal || bus.Reads == 0);
+            var result = ExecuteThermalCommand(provider, bus, "core");
+            Assert.AreEqual(CommandState.Rejected, result.State);
+            Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation);
+            Assert.AreEqual(0, bus.Writes);
+        }
+    }
+
+    private static CommandResult ExecuteThermalCommand(WindowsHomeHardwareProvider provider, FakeGpu bus, string kind)
+    {
+        HardwareCommand command = kind switch
+        {
+            "core" => new SetGpuCoreOffsetCommand(Guid.NewGuid(), 0, 10000, true) { ExpectedVfOffsetsKhz = bus.Offsets.ToArray() },
+            "memory" => new SetGpuMemoryOffsetCommand(Guid.NewGuid(), 0, 100000, true),
+            _ => new SetGpuVfCurveCommand(Guid.NewGuid(), bus.Offsets.ToArray(), bus.Offsets.Select((value, index) => index == 0 ? 0 : value + 10000).ToArray(), true)
+        };
+        return (CommandResult)Invoke(provider, kind == "core" ? "ExecuteGpuCoreOffsetLocked" : kind == "memory" ? "ExecuteGpuMemoryOffsetLocked" :
+            "ExecuteGpuVfLocked", command, CancellationToken.None)!;
+    }
+
+    private static WindowsHomeHardwareProvider Provider(FakeGpu bus, ILogger<WindowsHomeHardwareProvider>? logger = null,
+        Func<CancellationToken, double?>? temperature = null, Func<bool>? acPower = null)
+    {
+        var provider = new WindowsHomeHardwareProvider(bus.Create, acPower ?? (() => true), temperature ?? (_ => 45));
         if (logger is not null) typeof(WindowsHomeHardwareProvider).GetField("logger", Private)!.SetValue(provider, logger);
         typeof(WindowsHomeHardwareProvider).GetField("compatibilityDecision", Private)!.SetValue(provider,
             new CompatibilityDecision(CompatibilityMode.Writable,
@@ -164,13 +260,14 @@ public sealed class GpuVfLifecycleTests
 
     internal sealed class FakeGpu
     {
-        public bool Allowed = true, ReadAllowed = true, FailFirstWrite;
+        public bool Allowed = true, ReadAllowed = true, FailFirstWrite, FailRefreshAfterRollback, FailRefreshAfterWrite;
         public string? PauseStage;
         public Action? OnPause;
         public Action? BeforeWrite;
         public Func<IntPtr, GpuAdapterIdentity>? IdentityReader = _ => new(0x28E010DE, 1, 0xA1, 0x28E0, 1, 0);
         public int Writes, Reads, CoreOffset, MemoryOffset;
         public int StateCount = 1, ClockCount = 2;
+        public int CoreMinimum = -200000, CoreMaximum = 200000;
         public int[] Offsets = Enumerable.Range(0, 127).Select(i => i == 0 ? 0 : 10_000).ToArray();
         public NvapiVfInterop Create() => new(Resolve, () => [(nint)1], () => Allowed, () => ReadAllowed,
             adapterIdentityReader: IdentityReader);
@@ -198,6 +295,8 @@ public sealed class GpuVfLifecycleTests
                 else
                 {
                     Reads++;
+                    if ((FailRefreshAfterRollback && Writes >= 3 || FailRefreshAfterWrite && Writes >= 1) && function == 559119060u)
+                        throw new IOException("fakeRefreshFailed");
                     switch (function)
                     {
                         case 559119060u:
@@ -210,7 +309,7 @@ public sealed class GpuVfLifecycleTests
                             Put(bytes, 8, StateCount); Put(bytes, 12, ClockCount); Put(bytes, 40, CoreOffset);
                             Put(bytes, 72, 4); Put(bytes, 84, MemoryOffset); Put(bytes, 88, -2_000_000); Put(bytes, 92, 2_000_000);
                             break;
-                        case 1689533034u: Put(bytes, 80, 200_000); Put(bytes, 84, -200_000); break;
+                        case 1689533034u: Put(bytes, 80, CoreMaximum); Put(bytes, 84, CoreMinimum); break;
                     }
                     if (PauseStage == "baseline" && function == 603042099u) Pause();
                 }

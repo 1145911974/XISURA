@@ -9,6 +9,8 @@ public sealed record GpuPstateBaseline(int MemoryOffsetKhz, int MemoryMinimumKhz
 public sealed record GpuRecoveryBaseline(DateTimeOffset CapturedAtUtc, Guid SessionId, long HardwareEpoch,
     string OwnerSid, HardwareIdentity Identity, GpuAdapterIdentity Adapter, int[] VfOffsetsKhz,
     GpuPstateBaseline Pstate);
+public sealed record GpuRecoveryAttempt(Guid StepId, string Kind, GpuRecoveryBaseline Before,
+    int[] VfOffsetsKhz, GpuPstateBaseline Pstate);
 
 public sealed partial class ControlExecutionJournal
 {
@@ -57,7 +59,8 @@ public sealed partial class ControlExecutionJournal
         return pending;
     }
 
-    internal async Task RecordGpuRecoveryAsync(Guid operationId, GpuRecoveryBaseline baseline, CancellationToken token)
+    internal async Task RecordGpuRecoveryAsync(Guid operationId, GpuRecoveryBaseline baseline, CancellationToken token,
+        GpuRecoveryAttempt? attempt = null)
     {
         await gate.WaitAsync(token);
         try
@@ -65,6 +68,8 @@ public sealed partial class ControlExecutionJournal
             var saved = await LoadAsync(token);
             var pending = CheckGpuAdmission(saved, new(operationId, baseline.SessionId, baseline.HardwareEpoch, baseline.OwnerSid));
             if (!ValidGpuRecovery(baseline, pending)) throw new InvalidDataException("gpuRecoveryBaselineInvalid");
+            if (attempt is not null && !ValidGpuAttempt(attempt, pending with { GpuRecovery = pending.GpuRecovery ?? baseline }))
+                throw new InvalidDataException("gpuRecoveryAttemptInvalid");
             if (pending.GpuRecovery is { } first)
             {
                 // A parent can dispatch several GPU steps; retain its first pre-write state.
@@ -73,11 +78,17 @@ public sealed partial class ControlExecutionJournal
                 baseline = first;
             }
             var next = Clone(saved with { Unresolved = saved.Unresolved.Select(item => item.OperationId == operationId
-                ? item with { GpuRecovery = baseline } : item).ToArray() });
+                ? item with { GpuRecovery = baseline, GpuAttempt = attempt ?? item.GpuAttempt } : item).ToArray() });
             await WriteSnapshotAsync(next, token);
             snapshot = next;
         }
         finally { gate.Release(); }
+    }
+
+    internal async Task<GpuRecoveryAttempt> ReadGpuAttemptFromDiskAsync(GpuOperation operation, CancellationToken token)
+    {
+        var fresh = await new ControlExecutionJournal(RootDirectory).ReadAsync(token);
+        return CheckGpuAdmission(fresh, operation).GpuAttempt ?? throw new InvalidDataException("gpuRecoveryAttemptMissing");
     }
 
     internal static bool ValidGpuAdapter(GpuAdapterIdentity? adapter) => adapter is { DeviceId: > 0 and < uint.MaxValue };
@@ -96,6 +107,27 @@ public sealed partial class ControlExecutionJournal
         Jiaolong.Contracts.Commands.ApplyTurboBranchCommand or Jiaolong.Contracts.Commands.ReleaseTurboBranchCommand ||
         command is Jiaolong.Contracts.Commands.ApplyControlRequestCommand request &&
             request.Request?.Pages?.Any(page => page is { Page: ControlPageId.Gpu, Follow: true }) == true;
+    private static bool ValidGpuAttempt(GpuRecoveryAttempt value, UnresolvedControlOperation operation)
+    {
+        if (value.StepId == Guid.Empty || value.Kind is not ("vf" or "core" or "memory") ||
+            value.Before is not { } before || !ValidGpuRecovery(before, operation) || operation.GpuRecovery is not { } first ||
+            before.SessionId != first.SessionId || before.Adapter != first.Adapter || before.Identity != first.Identity ||
+            value.VfOffsetsKhz is not { Length: 127 } curve || curve[0] != before.VfOffsetsKhz[0] ||
+            curve.Any(offset => offset is < -200000 or > 200000) ||
+            value.Pstate is not { } target || !ValidGpuRecovery(before with { VfOffsetsKhz = curve, Pstate = target }, operation) ||
+            target with { CoreOffsetKhz = before.Pstate.CoreOffsetKhz, MemoryOffsetKhz = before.Pstate.MemoryOffsetKhz } != before.Pstate)
+            return false;
+        return value.Kind switch
+        {
+            "vf" => target == before.Pstate,
+            "memory" => target.CoreOffsetKhz == before.Pstate.CoreOffsetKhz && curve.SequenceEqual(before.VfOffsetsKhz),
+            "core" => target.MemoryOffsetKhz == before.Pstate.MemoryOffsetKhz && curve.Select((offset, index) =>
+                (long)offset == (index == 0 ? before.VfOffsetsKhz[index] :
+                    (long)before.VfOffsetsKhz[index] + target.CoreOffsetKhz - before.Pstate.CoreOffsetKhz)).All(matches => matches),
+            _ => false
+        };
+    }
+
     private static bool ValidGpuRecovery(GpuRecoveryBaseline value, UnresolvedControlOperation operation) =>
         value.SessionId != Guid.Empty && value.HardwareEpoch > 0 && value.HardwareEpoch == operation.State.HardwareEpoch &&
         value.OwnerSid == operation.OwnerSid && !string.IsNullOrWhiteSpace(value.OwnerSid) && value.OwnerSid.Length <= 256 &&

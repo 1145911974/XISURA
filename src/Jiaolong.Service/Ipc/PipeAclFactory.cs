@@ -12,7 +12,6 @@ public static class PipeAclFactory
     [
         new("SYSTEM", "FullControl", true),
         new("BUILTIN\\Administrators", "ReadWriteSynchronizeCreateNewInstance", true),
-        new("INTERACTIVE", "ReadWriteSynchronizeCreateNewInstance", true),
         new("ANONYMOUS LOGON", "FullControl", false),
         new("NETWORK", "FullControl", false)
     ];
@@ -27,10 +26,6 @@ public static class PipeAclFactory
             AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(
             new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-            PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize | PipeAccessRights.CreateNewInstance,
-            AccessControlType.Allow));
-        security.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(WellKnownSidType.InteractiveSid, null),
             PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize | PipeAccessRights.CreateNewInstance,
             AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(

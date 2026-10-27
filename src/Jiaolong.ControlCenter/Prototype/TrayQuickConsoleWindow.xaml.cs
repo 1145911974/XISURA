@@ -112,7 +112,8 @@ public sealed partial class TrayQuickConsoleWindow : Window
         var preferences = new UserPreferencesStore().Load();
         var layout = trayQuickMenuLayout ?? QuickMenuLayout.FromPersisted(preferences.QuickMenuEnabled, preferences.QuickMenuOrder);
         var catalog = QuickMenuCatalog.CreateDefault().ToDictionary(item => item.Kind);
-        var items = layout.EnabledOrder.Where(catalog.ContainsKey).Take(6).ToArray();
+        var items = layout.EnabledOrder.Where(kind => catalog.ContainsKey(kind) &&
+            (kind != QuickSettingKind.StrongCooling || StrongCoolingQuickSettingAvailable)).Take(6).ToArray();
         for (var index = 0; index < 6; index++)
         {
             var button = new PrototypeButton { Width = 86, Height = new UISettings().TextScaleFactor > 1 ? double.NaN : 56, MinHeight = 56, Padding = new Thickness(4), CornerRadius = new CornerRadius(11), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch, Style = (Style)Application.Current.Resources["PrototypeQuickActionStyle"] };
@@ -143,9 +144,14 @@ public sealed partial class TrayQuickConsoleWindow : Window
         }
     }
 
+    private bool StrongCoolingQuickSettingAvailable => serviceConnected &&
+        availableQuickSettings?.Contains(QuickSettingKind.StrongCooling) == true;
+
     private void RefreshQuickButton(QuickSettingKind kind)
     {
         if (!quickButtons.TryGetValue(kind, out var button)) return;
+        button.Visibility = kind == QuickSettingKind.StrongCooling && !StrongCoolingQuickSettingAvailable
+            ? Visibility.Collapsed : Visibility.Visible;
         var enabled = quickSettings.GetValueOrDefault(kind);
         var pending = pendingQuickSettings.Contains(kind);
         bool action = kind == QuickSettingKind.DisplayOff;
@@ -204,7 +210,9 @@ public sealed partial class TrayQuickConsoleWindow : Window
     {
         ApplyModeReadback(snapshot.Controls);
         var catalog = QuickMenuCatalog.CreateDefault();
+        bool strongCoolingWasAvailable = StrongCoolingQuickSettingAvailable;
         availableQuickSettings = catalog.Where(item => QuickMenuCatalog.IsAvailable(item, snapshot)).Select(item => item.Kind).ToHashSet();
+        if (strongCoolingWasAvailable != StrongCoolingQuickSettingAvailable) PopulateQuickMenu();
         SetQuickSettingState(QuickSettingKind.StrongCooling, snapshot.Controls.StrongCooling);
         foreach (var setting in snapshot.Controls.QuickSettings) SetQuickSettingState(setting.Setting, setting.Enabled);
         if (snapshot.Telemetry is { } telemetry) ApplyTelemetry(telemetry);
@@ -213,10 +221,7 @@ public sealed partial class TrayQuickConsoleWindow : Window
     public void ApplyModeReadback(HomeControlState? controls)
     {
         observedControls = controls;
-        var evidence = controls?.ModeEvidence;
-        observedMode = TrayIconAssetCatalog.DisplayMode(controls, true, evidence?.CapturedAtUtc ?? DateTimeOffset.UtcNow, confirmedMode);
-        observedModeAt = evidence?.CapturedAtUtc ?? DateTimeOffset.MinValue;
-        observedModeUnverified = !TrayIconAssetCatalog.ReadbackConfirmed(controls);
+        observedMode = TrayIconAssetCatalog.DisplayMode(controls, true, DateTimeOffset.UtcNow, observedMode ?? confirmedMode);
         RefreshModeReadbackText();
     }
 
@@ -224,10 +229,12 @@ public sealed partial class TrayQuickConsoleWindow : Window
     public void ApplyAvailability(bool connected, IReadOnlySet<QuickSettingKind>? available = null)
     {
         bool connectionChanged = serviceConnected != connected;
+        bool strongCoolingWasAvailable = StrongCoolingQuickSettingAvailable;
         serviceConnected = connected;
         if (!connected) { fanConnected = false; fanStrongCooling = null; }
         if (!connected) foreach (var kind in quickSettings.Keys.Where(kind => !QuickMenuCatalog.IsLocal(kind)).ToArray()) quickSettings[kind] = null;
         if (available is not null) availableQuickSettings = available;
+        if (strongCoolingWasAvailable != StrongCoolingQuickSettingAvailable) PopulateQuickMenu();
         foreach (var kind in quickButtons.Keys) RefreshQuickButton(kind);
         RefreshTelemetry();
         RefreshFanValues();

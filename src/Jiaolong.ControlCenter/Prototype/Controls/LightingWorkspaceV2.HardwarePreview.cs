@@ -87,7 +87,7 @@ public sealed partial class LightingWorkspaceV2
         await hardwarePreviewGate.WaitAsync(token);
         try
         {
-            if (stillCurrent is not null && !stillCurrent() || plan.Effect == "Cycle" && !nativeCycleAvailable || session is null) return RejectedLighting();
+            if (stillCurrent is not null && !stillCurrent() || plan.Effect is not ("Static" or "Fixed" or "Gradient") || session is null) return RejectedLighting();
             Catalog?.RecordManualLive(ControlPageId.Lighting);
             followPreset = false;
             PresetToolbar.SetFollowPreset(false);

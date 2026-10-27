@@ -159,7 +159,7 @@ public sealed class GpuRecoveryJournalTests
         await runtime.InitializeAsync(CancellationToken.None);
         var command = new SetGpuMemoryOffsetCommand(fixture.Id, 0, 100_000, true);
         var result = await runtime.ExecuteAsync(command, CancellationToken.None, userSid: "user-a");
-        Assert.IsNotNull(provider.Captured);
+        Assert.IsNotNull(provider.Captured, $"GPU provider was not dispatched: {result.State}, {result.Error?.Code}");
         Assert.AreEqual(command.OperationId, provider.Captured.OperationId);
         Assert.AreEqual(runtime.SessionId, provider.Captured.SessionId);
         Assert.AreEqual(runtime.Execution.HardwareEpoch, provider.Captured.HardwareEpoch);
@@ -198,9 +198,279 @@ public sealed class GpuRecoveryJournalTests
         Assert.AreEqual(reads, provider.Reads);
     }
 
-    private static WindowsHomeHardwareProvider Provider(GpuVfLifecycleTests.FakeGpu bus, ControlExecutionJournal journal)
+    [TestMethod]
+    public async Task Core_curve_memory_exit_sequence_keeps_first_native_baseline_across_provider_retry()
     {
-        var provider = new WindowsHomeHardwareProvider(bus.Create, () => true, _ => 45, journal);
+        using var fixture = new Fixture();
+        await fixture.Seed();
+        var bus = new GpuVfLifecycleTests.FakeGpu { CoreOffset = 10000, MemoryOffset = 1000,
+            Offsets = Enumerable.Range(0, 127).Select(index => index == 0 ? 0 : 20000).ToArray() };
+        int[] original = bus.Offsets.ToArray();
+        using (var provider = Provider(bus, fixture.Journal))
+        using (fixture.Bind())
+        {
+            Assert.AreEqual(CommandState.Applied, Execute(provider, new SetGpuCoreOffsetCommand(Guid.NewGuid(), 10000, 0, true)
+                { ExpectedVfOffsetsKhz = original }).State);
+            Assert.AreEqual(CommandState.Applied, Execute(provider, new SetGpuVfCurveCommand(Guid.NewGuid(), bus.Offsets.ToArray(), new int[127], true)).State);
+        }
+        using (var retry = Provider(bus, fixture.Journal))
+        using (fixture.Bind())
+            Assert.AreEqual(CommandState.Applied, Execute(retry, new SetGpuMemoryOffsetCommand(Guid.NewGuid(), 1000, 0, true)).State);
+        var saved = (await new ControlExecutionJournal(fixture.Root).ReadAsync(CancellationToken.None)).Unresolved.Single().GpuRecovery!;
+        CollectionAssert.AreEqual(original, saved.VfOffsetsKhz);
+        Assert.AreEqual(10000, saved.Pstate.CoreOffsetKhz);
+        Assert.AreEqual(1000, saved.Pstate.MemoryOffsetKhz);
+        Assert.AreEqual(fixture.Session, saved.SessionId);
+        Assert.AreEqual(0, bus.CoreOffset);
+        Assert.AreEqual(0, bus.MemoryOffset);
+        CollectionAssert.AreEqual(new int[127], bus.Offsets);
+        await fixture.Journal.SaveAsync(Pending with { NativeModeApplyState = ApplyState.Confirmed }, Identity, fixture.Id, false,
+            CancellationToken.None, "user-a", "EndClientControlSession");
+        Assert.AreEqual(0, (await fixture.Journal.ReadAsync(CancellationToken.None)).Unresolved.Length);
+    }
+
+    [TestMethod]
+    public async Task Native_recovery_reconciliation_requires_original_scope_adapter_and_exact_latest_snapshot()
+    {
+        using var fixture = new Fixture();
+        await fixture.Seed();
+        var bus = new GpuVfLifecycleTests.FakeGpu { FailFirstWrite = true, FailRefreshAfterRollback = true };
+        using var provider = Provider(bus, fixture.Journal);
+        using var scope = fixture.Bind();
+        Assert.AreEqual(CommandState.RecoveryRequired, Execute(provider, Command("core", Guid.NewGuid(), bus.Offsets.ToArray())).State);
+        bus.FailFirstWrite = bus.FailRefreshAfterRollback = false;
+        int writes = bus.Writes;
+        var hardware = (IHomeHardwareProvider)provider;
+        foreach (string change in new[] { "operation", "owner", "epoch", "session", "adapter", "adapterLate", "core", "memory", "curve", "header", "pause" })
+        {
+            using var wrongScope = change is "operation" or "owner" or "epoch" or "session" ? fixture.Journal.BindGpuOperation(new(
+                change == "operation" ? Guid.NewGuid() : fixture.Id, change == "session" ? Guid.NewGuid() : fixture.Session,
+                change == "epoch" ? 18 : 17, change == "owner" ? "other" : "user-a")) : null;
+            if (change == "adapter") bus.IdentityReader = _ => Adapter with { BusId = 2 };
+            int identityReads = 0;
+            if (change == "adapterLate") bus.IdentityReader = _ => identityReads++ == 0 ? Adapter : Adapter with { BusId = 2 };
+            if (change == "core") bus.CoreOffset = 1;
+            if (change == "memory") bus.MemoryOffset = 1;
+            if (change == "curve") bus.Offsets[7]++;
+            if (change == "header") bus.StateCount = 2;
+            if (change == "pause") provider.SetBackgroundWorkPaused(true);
+            int reads = bus.Reads;
+            Assert.IsFalse(await hardware.ReconcileGpuRecoveryAsync(CancellationToken.None), change);
+            if (change is "operation" or "owner" or "epoch" or "session" or "pause") Assert.AreEqual(reads, bus.Reads);
+            Assert.IsNotNull(typeof(WindowsHomeHardwareProvider).GetField("gpuPstateRecoverySnapshot", Private)!.GetValue(provider));
+            provider.SetBackgroundWorkPaused(false);
+            bus.IdentityReader = _ => Adapter;
+            bus.CoreOffset = bus.MemoryOffset = 0;
+            if (change == "curve") bus.Offsets[7]--;
+            bus.StateCount = 1;
+        }
+        Assert.IsTrue(await hardware.ReconcileGpuRecoveryAsync(CancellationToken.None));
+        Assert.AreEqual(writes, bus.Writes);
+        Assert.IsNull(typeof(WindowsHomeHardwareProvider).GetField("gpuPstateRecoverySnapshot", Private)!.GetValue(provider));
+        Assert.IsFalse((bool)typeof(WindowsHomeHardwareProvider).GetField("gpuCoreRecoveryRequired", Private)!.GetValue(provider)!);
+        Assert.AreEqual(1, (await fixture.Journal.ReadAsync(CancellationToken.None)).Unresolved.Length);
+    }
+
+    [TestMethod]
+    public async Task Native_reconciliation_uses_latest_step_without_restoring_first_parent_values()
+    {
+        using var fixture = new Fixture();
+        await fixture.Seed();
+        var bus = new GpuVfLifecycleTests.FakeGpu { MemoryOffset = 1000 };
+        using var provider = Provider(bus, fixture.Journal);
+        using var scope = fixture.Bind();
+        Assert.AreEqual(CommandState.Applied, Execute(provider, new SetGpuMemoryOffsetCommand(Guid.NewGuid(), 1000, 0, true)).State);
+        bus.Writes = 0;
+        bus.FailFirstWrite = bus.FailRefreshAfterRollback = true;
+        Assert.AreEqual(CommandState.RecoveryRequired, Execute(provider, Command("core", Guid.NewGuid(), bus.Offsets.ToArray())).State);
+        bus.FailFirstWrite = bus.FailRefreshAfterRollback = false;
+        int writes = bus.Writes;
+        Assert.IsTrue(await ((IHomeHardwareProvider)provider).ReconcileGpuRecoveryAsync(CancellationToken.None));
+        Assert.IsFalse((bool)typeof(WindowsHomeHardwareProvider).GetField("gpuCoreRecoveryRequired", Private)!.GetValue(provider)!);
+        Assert.AreEqual(writes, bus.Writes);
+        Assert.AreEqual(0, bus.MemoryOffset);
+        Assert.AreEqual(1000, (await fixture.Journal.ReadAsync(CancellationToken.None)).Unresolved.Single().GpuRecovery!.Pstate.MemoryOffsetKhz);
+    }
+
+    [TestMethod]
+    public async Task Every_native_gpu_step_persists_latest_before_and_target_before_any_write()
+    {
+        foreach (string kind in new[] { "core", "memory", "vf" })
+        {
+            using var fixture = new Fixture();
+            await fixture.Seed();
+            var bus = new GpuVfLifecycleTests.FakeGpu();
+            using var provider = Provider(bus, fixture.Journal);
+            using var scope = fixture.Bind();
+            var command = Command(kind, Guid.NewGuid(), bus.Offsets.ToArray());
+            bus.BeforeWrite = () =>
+            {
+                var attempt = new ControlExecutionJournal(fixture.Root).ReadAsync(CancellationToken.None).GetAwaiter().GetResult().Unresolved.Single().GpuAttempt;
+                Assert.IsNotNull(attempt);
+                Assert.AreEqual(command.OperationId, attempt.StepId);
+                Assert.AreEqual(kind, attempt.Kind);
+                CollectionAssert.AreEqual(fixture.Baseline().VfOffsetsKhz, attempt.Before.VfOffsetsKhz);
+                Assert.AreEqual(kind == "core" ? 10000 : 0, attempt.Pstate.CoreOffsetKhz);
+                Assert.AreEqual(kind == "memory" ? 100000 : 0, attempt.Pstate.MemoryOffsetKhz);
+                Assert.AreEqual(kind == "memory" ? 10000 : 20000, attempt.VfOffsetsKhz[1]);
+            };
+            Assert.AreEqual(CommandState.Applied, Execute(provider, command).State);
+        }
+    }
+
+    [TestMethod]
+    public async Task Latest_native_step_survives_parent_progress_and_keeps_first_parent_baseline()
+    {
+        using var fixture = new Fixture();
+        await fixture.Seed();
+        var bus = new GpuVfLifecycleTests.FakeGpu { MemoryOffset = 1000 };
+        using var provider = Provider(bus, fixture.Journal);
+        using var scope = fixture.Bind();
+        Assert.AreEqual(CommandState.Applied, Execute(provider, new SetGpuMemoryOffsetCommand(Guid.NewGuid(), 1000, 0, true)).State);
+        var command = Command("core", Guid.NewGuid(), bus.Offsets.ToArray());
+        Assert.AreEqual(CommandState.Applied, Execute(provider, command).State);
+        await fixture.Journal.SaveAsync(Pending, Identity, fixture.Id, true, CancellationToken.None, "user-a", "EndClientControlSession");
+        var saved = (await new ControlExecutionJournal(fixture.Root).ReadAsync(CancellationToken.None)).Unresolved.Single();
+        Assert.AreEqual(1000, saved.GpuRecovery!.Pstate.MemoryOffsetKhz);
+        Assert.IsNotNull(saved.GpuAttempt);
+        Assert.AreEqual(command.OperationId, saved.GpuAttempt.StepId);
+        Assert.AreEqual(0, saved.GpuAttempt.Before.Pstate.MemoryOffsetKhz);
+        Assert.AreEqual(10000, saved.GpuAttempt.Pstate.CoreOffsetKhz);
+    }
+
+    [TestMethod]
+    public async Task Corrupt_latest_gpu_attempt_is_rejected_without_replacing_original_file()
+    {
+        using var fixture = new Fixture();
+        await fixture.Seed();
+        var bus = new GpuVfLifecycleTests.FakeGpu();
+        using var provider = Provider(bus, fixture.Journal);
+        using var scope = fixture.Bind();
+        Assert.AreEqual(CommandState.Applied, Execute(provider, Command("core", Guid.NewGuid(), bus.Offsets.ToArray())).State);
+        var valid = await fixture.Journal.ReadAsync(CancellationToken.None);
+        var saved = valid.Unresolved.Single();
+        Assert.IsNotNull(saved.GpuAttempt);
+        var attempt = saved.GpuAttempt;
+        var changedFirstPoint = attempt.VfOffsetsKhz.ToArray(); changedFirstPoint[0] = 1;
+        foreach (var invalid in new[] { attempt with { StepId = Guid.Empty }, attempt with { Kind = "unknown" },
+            attempt with { Before = attempt.Before with { OwnerSid = "foreign" } },
+            attempt with { Before = attempt.Before with { Adapter = Adapter with { BusId = 2 } } },
+            attempt with { VfOffsetsKhz = [0] }, attempt with { VfOffsetsKhz = new int[127] },
+            attempt with { VfOffsetsKhz = changedFirstPoint },
+            attempt with { Pstate = attempt.Pstate with { CoreVoltageDeltaUv = 1 } } })
+        {
+            string text = JsonSerializer.Serialize(valid with { Unresolved = [saved with { GpuAttempt = invalid }] }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            await File.WriteAllTextAsync(fixture.File, text);
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => new ControlExecutionJournal(fixture.Root).ReadAsync(CancellationToken.None));
+            Assert.AreEqual(text, await File.ReadAllTextAsync(fixture.File));
+        }
+    }
+
+    [TestMethod]
+    public async Task Pending_native_recovery_restores_recognized_partial_states_under_original_parent()
+    {
+        foreach (string kind in new[] { "core", "memory", "vf" })
+        {
+            using var fixture = new Fixture();
+            await fixture.Seed();
+            var bus = new GpuVfLifecycleTests.FakeGpu { PauseStage = "partial" };
+            using var provider = Provider(bus, fixture.Journal);
+            bus.OnPause = () => provider.SetBackgroundWorkPaused(true);
+            using var scope = fixture.Bind();
+            int[] before = bus.Offsets.ToArray();
+            Assert.AreEqual(CommandState.RecoveryRequired, Execute(provider, Command(kind, Guid.NewGuid(), before)).State);
+            bus.Allowed = bus.ReadAllowed = true; bus.PauseStage = null;
+            provider.SetBackgroundWorkPaused(false);
+            var recovered = await ((IHomeHardwareProvider)provider).RecoverPendingGpuAsync(fixture.Id, CancellationToken.None);
+            Assert.AreEqual(CommandState.Applied, recovered.State, recovered.Error?.Details.GetValueOrDefault("reason"));
+            Assert.AreEqual(HardwareMutation.Changed, recovered.Mutation);
+            Assert.AreEqual(0, bus.CoreOffset);
+            Assert.AreEqual(0, bus.MemoryOffset);
+            CollectionAssert.AreEqual(before, bus.Offsets);
+            int writes = bus.Writes;
+            Assert.AreEqual(HardwareMutation.NoMutation, (await ((IHomeHardwareProvider)provider).RecoverPendingGpuAsync(fixture.Id, CancellationToken.None)).Mutation);
+            Assert.AreEqual(writes, bus.Writes);
+            Assert.IsNotNull((await fixture.Journal.ReadAsync(CancellationToken.None)).Unresolved.Single().GpuAttempt);
+            var latest = (await fixture.Journal.ReadAsync(CancellationToken.None)).Unresolved.Single().GpuAttempt!;
+            Assert.IsFalse(await provider.VerifyPendingGpuTargetAsync(fixture.Id, CancellationToken.None));
+            bus.CoreOffset = latest.Pstate.CoreOffsetKhz;
+            bus.MemoryOffset = latest.Pstate.MemoryOffsetKhz;
+            bus.Offsets = latest.VfOffsetsKhz.ToArray();
+            Assert.IsTrue(await provider.VerifyPendingGpuTargetAsync(fixture.Id, CancellationToken.None));
+            Assert.AreEqual(writes, bus.Writes, "Verified target checks must only read native values.");
+            bus.IdentityReader = _ => latest.Before.Adapter with { DeviceId = latest.Before.Adapter.DeviceId + 1 };
+            Assert.IsFalse(await provider.VerifyPendingGpuTargetAsync(fixture.Id, CancellationToken.None));
+            Assert.AreEqual(writes, bus.Writes);
+        }
+    }
+
+    [TestMethod]
+    public async Task Pending_native_recovery_rejects_external_state_scope_and_missing_disk_record_without_writes()
+    {
+        using var fixture = new Fixture();
+        await fixture.Seed();
+        var bus = new GpuVfLifecycleTests.FakeGpu { PauseStage = "partial" };
+        bool acPower = true, latePower = false; int powerReads = 0; double temperature = 45;
+        using var provider = Provider(bus, fixture.Journal, () => acPower && (!latePower || ++powerReads < 2), _ => temperature);
+        bus.OnPause = () => provider.SetBackgroundWorkPaused(true);
+        using var scope = fixture.Bind();
+        Assert.AreEqual(CommandState.RecoveryRequired, Execute(provider, Command("core", Guid.NewGuid(), bus.Offsets.ToArray())).State);
+        bus.Allowed = bus.ReadAllowed = true; bus.PauseStage = null;
+        provider.SetBackgroundWorkPaused(false);
+        string disk = await File.ReadAllTextAsync(fixture.File);
+        int writes = bus.Writes;
+        foreach (string change in new[] { "scope", "adapter", "core", "memory", "curve", "header", "missing", "power", "powerLate", "temperature", "temperatureNaN", "range" })
+        {
+            using var wrong = change == "scope" ? fixture.Journal.BindGpuOperation(new(Guid.NewGuid(), fixture.Session, 17, "user-a")) : null;
+            if (change == "adapter") bus.IdentityReader = _ => Adapter with { BusId = 2 };
+            if (change == "core") bus.CoreOffset = 12345;
+            if (change == "memory") bus.MemoryOffset = 32123;
+            if (change == "curve") bus.Offsets[7] = 12345;
+            if (change == "header") bus.StateCount = 2;
+            if (change == "missing") File.Delete(fixture.File);
+            if (change == "power") acPower = false;
+            if (change == "powerLate") { latePower = true; powerReads = 0; }
+            if (change == "temperature") temperature = 75;
+            if (change == "temperatureNaN") temperature = double.NaN;
+            if (change == "range") bus.CoreMinimum = 1;
+            var result = await ((IHomeHardwareProvider)provider).RecoverPendingGpuAsync(fixture.Id, CancellationToken.None);
+            Assert.AreNotEqual(CommandState.Applied, result.State, change);
+            Assert.AreEqual(HardwareMutation.NoMutation, result.Mutation, change);
+            Assert.AreEqual(writes, bus.Writes, change);
+            bus.IdentityReader = _ => Adapter; bus.CoreOffset = 10000; bus.MemoryOffset = 0; bus.Offsets[7] = 0; bus.StateCount = 1;
+            acPower = true; latePower = false; temperature = 45; bus.CoreMinimum = -200000;
+            if (change == "missing") await File.WriteAllTextAsync(fixture.File, disk);
+        }
+    }
+
+    [TestMethod]
+    public async Task Interrupted_pending_recovery_retries_latest_before_without_undoing_earlier_memory_restore()
+    {
+        using var fixture = new Fixture();
+        await fixture.Seed();
+        var bus = new GpuVfLifecycleTests.FakeGpu { MemoryOffset = 1000 };
+        using var provider = Provider(bus, fixture.Journal);
+        using var scope = fixture.Bind();
+        Assert.AreEqual(CommandState.Applied, Execute(provider, new SetGpuMemoryOffsetCommand(Guid.NewGuid(), 1000, 0, true)).State);
+        int[] before = bus.Offsets.ToArray();
+        bus.PauseStage = "partial"; bus.OnPause = () => provider.SetBackgroundWorkPaused(true);
+        Assert.AreEqual(CommandState.RecoveryRequired, Execute(provider, Command("core", Guid.NewGuid(), before)).State);
+        bus.Allowed = bus.ReadAllowed = true; provider.SetBackgroundWorkPaused(false);
+        Assert.AreEqual(CommandState.RecoveryRequired, (await ((IHomeHardwareProvider)provider).RecoverPendingGpuAsync(fixture.Id, CancellationToken.None)).State);
+        bus.Allowed = bus.ReadAllowed = true; bus.PauseStage = null; provider.SetBackgroundWorkPaused(false);
+        Assert.AreEqual(CommandState.Applied, (await ((IHomeHardwareProvider)provider).RecoverPendingGpuAsync(fixture.Id, CancellationToken.None)).State);
+        Assert.AreEqual(0, bus.MemoryOffset);
+        Assert.AreEqual(0, bus.CoreOffset);
+        CollectionAssert.AreEqual(before, bus.Offsets);
+        var saved = (await fixture.Journal.ReadAsync(CancellationToken.None)).Unresolved.Single();
+        Assert.AreEqual(1000, saved.GpuRecovery!.Pstate.MemoryOffsetKhz);
+        Assert.AreEqual(0, saved.GpuAttempt!.Before.Pstate.MemoryOffsetKhz);
+    }
+
+    private static WindowsHomeHardwareProvider Provider(GpuVfLifecycleTests.FakeGpu bus, ControlExecutionJournal journal,
+        Func<bool>? acPower = null, Func<CancellationToken, double?>? temperature = null)
+    {
+        var provider = new WindowsHomeHardwareProvider(bus.Create, acPower ?? (() => true), temperature ?? (_ => 45), journal);
         typeof(WindowsHomeHardwareProvider).GetField("identity", Private)!.SetValue(provider, Identity);
         typeof(WindowsHomeHardwareProvider).GetField("compatibilityDecision", Private)!.SetValue(provider,
             new CompatibilityDecision(CompatibilityMode.Writable,
@@ -239,8 +509,13 @@ public sealed class GpuRecoveryJournalTests
         {
             Reads++;
             return Task.FromResult(new HomeHardwareState(
-            new([new("gpuMemoryOffset", CapabilityState.Available, null)]), DeviceSupportState.Ready, null, Identity, null)
-        { Controls = new(PerformanceMode.Quiet, false, []) { GpuVf = new([], -200_000, 200_000, null) { MemoryOffsetKhz = 0 } } });
+            new([new("gpuMemoryOffset", CapabilityState.Available, null)])
+            { Fields = [new("memoryOffsetKhz", CapabilityState.Available, true, true, -1_000_000, 3_000_000, 1,
+                "kHz", "nvapi", "PreservesSelectedMode", DateTimeOffset.UtcNow, 0)] },
+            DeviceSupportState.Ready, null, Identity, null)
+        { Controls = new(PerformanceMode.Quiet, false, []) { GpuVf = new(
+            Enumerable.Range(0, 127).Select(index => new GpuVfNode(700 + index * 5, 1500, 0)).ToArray(), -200_000, 200_000, null)
+            { MemoryOffsetKhz = 0, MemoryMinimumOffsetKhz = -1_000_000, MemoryMaximumOffsetKhz = 3_000_000 } } });
         }
         public Task<HomeHardwareState> ReinitializeAsync(CancellationToken token) => DiagnoseAsync(token);
         public Task<HardwareSnapshot> ReadTelemetryAsync(CancellationToken token) => throw new InvalidOperationException("unused");

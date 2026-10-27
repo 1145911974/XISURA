@@ -107,7 +107,7 @@ public sealed partial class PagePresetToolbar : UserControl
         string current = CurrentSourceKey is { } key
             ? $"当前使用：{PresetPicker.DisplayNameFor(key)}{(currentModified ? " · 已调整" : string.Empty)}"
             : "当前电脑 · 手动设置";
-        if (submittedPreset is { } submitted) current += $"　｜　已提交：{PresetPicker.DisplayNameFor(submitted)} · 部分设置未读回";
+        if (submittedPreset is { } submitted) current += $"　｜　已提交：{PresetPicker.DisplayNameFor(submitted)}";
         if (ContextText.Text == current) return;
         ContextText.Text = current;
         ToolTipService.SetToolTip(ContextText, ContextText.Text);

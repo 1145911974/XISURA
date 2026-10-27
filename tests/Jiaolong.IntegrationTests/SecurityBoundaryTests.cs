@@ -14,7 +14,7 @@ public sealed class SecurityBoundaryTests
     {
         Assert.IsFalse(ClientIdentityVerifier.IsAuthorized(ClientIdentity.Network("S-1-5-21")));
         Assert.IsFalse(ClientIdentityVerifier.IsAuthorized(ClientIdentity.Anonymous()));
-        Assert.IsTrue(ClientIdentityVerifier.IsAuthorized(ClientIdentity.LocalInteractive("S-1-5-18", 1)));
+        Assert.IsTrue(ClientIdentityVerifier.IsAuthorized(ClientIdentity.LocalAdministrator("S-1-5-18", 1)));
 
         var command = new SetPerformanceModeCommand(Guid.NewGuid(), PerformanceMode.Balanced);
         var unauthorized = CommandPolicy.Validate(command,

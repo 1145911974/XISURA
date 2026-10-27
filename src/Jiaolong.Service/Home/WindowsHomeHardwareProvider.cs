@@ -52,6 +52,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
     private PawnIoCurveOptimizerTransport? pboScalarTransport;
     private CpuSmuLimitSnapshot? smuLimitCache;
     private DateTimeOffset smuLimitCacheAt;
+    private SensorAccess? smuLimitCacheAccess;
     private WindowsCpuTuningTransport? cpuTuningTransport;
     private PerformanceController? performanceController;
     private MiMuxTransport? muxTransport;
@@ -163,6 +164,11 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                     .Select(key => new CapabilityDescriptor(key, CapabilityState.Unavailable, "hardwareInterfaceUnavailable")))
                 .Select(item => item.Key switch
                 {
+                    "strongCooling" => item with
+                    {
+                        State = CapabilityState.Unavailable,
+                        Reason = "fanAdvancedControlNotSupportedInRelease"
+                    },
                     "cpuTuning" when !HasReadableCpuTuning(cpuTuningState) => item with
                     {
                         State = CapabilityState.Unavailable,
@@ -216,10 +222,10 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                         State = CapabilityState.Unavailable,
                         Reason = "gpuCoreOffsetReadFailed"
                     },
-                    "fanControl" when !BldingFanEcTransport.HasVerifiedFiles() => item with
+                    "fanControl" when !PawnIoLpcEcPorts.HasTrustedDependency() => item with
                     {
                         State = CapabilityState.Unavailable,
-                        Reason = "bldingDependencyDiagnosis:" + BldingFanEcTransport.DiagnoseDependency()
+                        Reason = "pawnIoDependencyDiagnosis:" + PawnIoLpcEcPorts.DiagnoseDependency()
                     },
                     "quickSetting:wifi" when radios.WifiEnabled.HasValue => item with
                     {
@@ -236,6 +242,9 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 .GroupBy(item => item.Key, StringComparer.Ordinal)
                 .Select(group => group.Last())
                 .ToArray();
+            var gpuClockLimit = ReadProviderHardware(() => ReadGpuClockLimitLocked(cancellationToken));
+            var fields = CreateFieldCapabilities(items, cpuTuningState);
+            items = HomeCapabilityCatalog.WithFieldAvailability(items, fields);
             supportState = items.Any(item => item.Key != "monitoring" && item.State == CapabilityState.Available)
                 ? DeviceSupportState.Ready : DeviceSupportState.ReadOnly;
             if (supportState == DeviceSupportState.ReadOnly) reason = "hardwareInterfacesUnavailable";
@@ -243,7 +252,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 {
                     Identity = identity,
                     IsOnAcPower = ReadProviderHardware(() => SystemPowerStatusReader.Read()).AcPowerConnected,
-                    Fields = CreateFieldCapabilities(items, cpuTuningState),
+                    Fields = fields,
                     SupportState = supportState,
                     Reason = reason
                 };
@@ -270,18 +279,19 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                     CpuTuning = cpuTuningState,
                     KeyboardLighting = ReadProviderHardware(() => ReadLightingLocked(cancellationToken)),
                     KeyboardLightingPreviewAvailable = true,
-                KeyboardLightingNativeCycleAvailable = true,
+                KeyboardLightingNativeCycleAvailable = false,
                     KeyboardLightingPreviewActive = lightingPreview.Original is not null,
                     FanTargetCeilingAvailable = true,
-                    FanAutomaticCeilingAvailable = true,
+                    FanAutomaticCeilingAvailable = false,
                     GpuCurveFactoryResetAvailable = true,
                     FanAutomaticCeilingActive = activeFanPlan?.Strategy == "Auto",
                     ActiveFanControlPlan = activeFanPlan,
                     KeyboardLightingError = lightingError,
                     KeyboardLightingElapsedSeconds = appliedLighting is null ? null : lightingClock.Elapsed.TotalSeconds,
                     GpuVf = gpuVf,
-                    GpuClockLimit = ReadProviderHardware(() => ReadGpuClockLimitLocked(cancellationToken)),
-                    FanEcControl = ReadProviderHardware(ReadFanEcControlLocked)
+                    GpuClockLimit = gpuClockLimit,
+                    FanEcControl = ReadProviderHardware(ReadFanEcControlLocked),
+                    FanEcMapping = ReadProviderHardware(ReadFanEcMappingLocked)
                 }
             });
         }
@@ -330,9 +340,31 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
 
     public Task<HomeControlState> ReadControlsAsync(CancellationToken cancellationToken) => ReadControlsCoreAsync(cancellationToken, true);
 
-    public Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false) => ReadControlsCoreAsync(token, includeCpuAdvanced);
+    public Task<HomeControlState> ReadControlBaselineAsync(CancellationToken token, bool includeCpuAdvanced = false) =>
+        ReadControlsCoreAsync(token, includeCpuAdvanced, freshSmu: includeCpuAdvanced);
 
-    private Task<HomeControlState> ReadControlsCoreAsync(CancellationToken cancellationToken, bool includeCpuAdvanced)
+    // Explicit diagnostic capture only: saved OEM bytes are not effective SMU limits.
+    public Task<OemCpuConfigurationSnapshot?> ReadOemCpuConfigurationAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        EnsureProviderReadAccess();
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            EnsureProviderReadAccess();
+            if (!string.Equals(identity.BoardProduct, "MRID6-23", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult<OemCpuConfigurationSnapshot?>(null);
+            long work = Volatile.Read(ref backgroundWorkPaused);
+            var lifecycle = Volatile.Read(ref powerLifecycle);
+            long? version = lifecycle?.Version;
+            bool Current() => !disposed && CpuHardwareReadAllowed && Volatile.Read(ref backgroundWorkPaused) == work &&
+                ReferenceEquals(Volatile.Read(ref powerLifecycle), lifecycle) && lifecycle?.Version == version;
+            var reader = new PawnIoOemCpuConfigurationReader(Current);
+            return Task.FromResult<OemCpuConfigurationSnapshot?>(ReadProviderHardware(() => reader.Read(token)));
+        }
+    }
+
+    private Task<HomeControlState> ReadControlsCoreAsync(CancellationToken cancellationToken, bool includeCpuAdvanced, bool freshSmu = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureProviderReadAccess();
@@ -340,6 +372,12 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         {
             ThrowIfDisposed();
             EnsureProviderReadAccess();
+            if (freshSmu)
+            {
+                // Explicit transaction baselines must not reuse a pre-write PM table or confirm one cached sample twice.
+                smuLimitCacheAt = default;
+                smuLimitCacheAccess = null;
+            }
             var provider = telemetryProvider ?? observedMiProvider;
             var radios = ReadProviderHardware(() => radioController.ReadAsync(cancellationToken).GetAwaiter().GetResult());
             var controls = new HomeControlState(
@@ -358,10 +396,10 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 CpuTuning = ReadProviderHardware(() => ReadCpuTuningState(cancellationToken, includeCpuAdvanced)),
                 KeyboardLighting = ReadProviderHardware(() => ReadLightingLocked(cancellationToken)),
                 KeyboardLightingPreviewAvailable = true,
-                KeyboardLightingNativeCycleAvailable = true,
+                KeyboardLightingNativeCycleAvailable = false,
                 KeyboardLightingPreviewActive = lightingPreview.Original is not null,
                 FanTargetCeilingAvailable = true,
-                FanAutomaticCeilingAvailable = true,
+                FanAutomaticCeilingAvailable = false,
                 GpuCurveFactoryResetAvailable = true,
                 FanAutomaticCeilingActive = activeFanPlan?.Strategy == "Auto",
                 ActiveFanControlPlan = activeFanPlan,
@@ -369,7 +407,8 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 KeyboardLightingElapsedSeconds = appliedLighting is null ? null : lightingClock.Elapsed.TotalSeconds,
                 GpuVf = ReadProviderHardware(() => ReadGpuVfLocked(cancellationToken)),
                 GpuClockLimit = ReadProviderHardware(() => ReadGpuClockLimitLocked(cancellationToken)),
-                FanEcControl = ReadProviderHardware(ReadFanEcControlLocked)
+                FanEcControl = ReadProviderHardware(ReadFanEcControlLocked),
+                FanEcMapping = ReadProviderHardware(ReadFanEcMappingLocked)
             };
             return Task.FromResult(controls);
         }
@@ -458,6 +497,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             if (!TryReadControlByte(binding!, out var before, cancellationToken))
                 return Rejected(command.OperationId, ErrorCode.HardwareReadFailed) with { Mutation = HardwareMutation.NoMutation };
             var beforeEvidence = lastModeEvidence;
+            PersistNativeModeRecovery(command, before, payload[0], null, cancellationToken);
             MiReadResult write;
             writeAttempted = true;
             try { write = miInterface.WriteOnceAsync(binding!, payload, cancellationToken).GetAwaiter().GetResult(); }
@@ -467,10 +507,11 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 throw;
             }
             if (write.Quality != DataQuality.Good)
-                return Rejected(command.OperationId, ErrorCode.HardwareWriteFailed);
+                throw new IOException(write.Reason ?? "miWriteResponseUnknown");
 
             if (TryReadControlByte(binding!, out var after, cancellationToken) && after == payload[0])
             {
+                PersistNativeModeRecovery(command, before, payload[0], after, cancellationToken);
                 return new CommandResult(command.OperationId, CommandState.Applied,
                     command is SetPerformanceModeCommand ? null : ReadTelemetryLocked(cancellationToken),
                     RequiredUserAction.None, null, false)
@@ -489,9 +530,16 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             var rollback = miInterface.WriteOnceAsync(binding!, new[] { before }, cancellationToken).GetAwaiter().GetResult();
             var restored = rollback.Quality == DataQuality.Good &&
                            TryReadControlByte(binding!, out var restoredValue, cancellationToken) && restoredValue == before;
+            if (restored) PersistNativeModeRecovery(command, before, payload[0], before, cancellationToken);
             return new CommandResult(command.OperationId, restored ? CommandState.RolledBack : CommandState.RecoveryRequired,
                 null, RequiredUserAction.None,
-                ServiceError.Create(restored ? ErrorCode.ReadBackMismatch : ErrorCode.RollbackFailed, command.OperationId, false), false);
+                ServiceError.Create(restored ? ErrorCode.ReadBackMismatch : ErrorCode.RollbackFailed, command.OperationId, false), false)
+            {
+                Mutation = HardwareMutation.Unknown,
+                ModeEvidence = restored && command is SetPerformanceModeCommand requested && lastModeEvidence is { } rollbackEvidence
+                    ? rollbackEvidence with { RequestedMode = requested.Mode, BeforeRawResponseHex = beforeEvidence?.RawResponseHex, BeforeRawValue = before }
+                    : null
+            };
         }
         catch (Exception error)
         {
@@ -510,7 +558,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         CancellationToken cancellationToken)
     {
         if (!command.RiskConfirmed || cpuTuningTransport is null || performanceController is null)
-            return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable);
+            return Rejected(command.OperationId, ErrorCode.CapabilityUnavailable) with { Mutation = HardwareMutation.NoMutation };
 
         if (command.Plan.TemperatureLimitC.HasValue || command.Plan.SplWatts.HasValue || command.Plan.SpptWatts.HasValue)
             return ExecuteCpuTuningBatchLocked(new SetCpuTuningBatchCommand(command.OperationId, [command.Plan], command.RiskConfirmed), cancellationToken);
@@ -533,7 +581,7 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             int? target = command.Plan.NegativeCurveOptimizer ?? command.Plan.Advanced?.CurveOptimizerAll;
             var otherFields = command.Plan with { NegativeCurveOptimizer = null, Advanced = null };
             // Keep curve transactions separate from OEM limits with no reliable original-value getter.
-            if (target is null or < -30 or > 0 ||
+            if (target is null or < -50 or > 0 ||
                 command.Plan.Advanced?.PerCoreCurveOptimizer is not null ||
                 (command.Plan.NegativeCurveOptimizer is not null && command.Plan.Advanced?.CurveOptimizerAll is not null) ||
                 otherFields != new CpuTuningPlan(null, null, null, null, null, null, null, null) ||
@@ -739,7 +787,8 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             var fast = limitSnapshot?.Limits.FastPptWatts;
             int? spptValue = fast is double watts && watts == Math.Round(watts) ? (int)watts : null;
             var temperatureLimit = temperatureValue is >= 40 and <= 100 ? temperatureValue : null;
-            var splWatts = splValue is > 0 and <= 200 ? splValue : null;
+            int? splWatts = splValue is > 0 and <= 200 && splValue == Math.Round(splValue.Value)
+                ? (int)splValue.Value : null;
             var spptWatts = spptValue is > 0 and <= 250 ? spptValue : null;
             var windows = cpuTuningTransport.ReadWindowsPowerSettingsAsync(cancellationToken).GetAwaiter().GetResult();
             var parking = windows.AcMinActiveCoresPercent is int acParking && windows.DcMinActiveCoresPercent is int dcParking
@@ -770,12 +819,13 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 PboScalar = includeAdvanced ? ReadOptionalCpuField(CpuTuningField.PboScalar, cancellationToken) as int? : null,
                 PerCoreCurveOptimizer = curveCores,
                 AdvancedLimits = limitSnapshot?.Limits,
+                ObservedSplWatts = splValue,
                 OemCustomPowerMode = cpuTuningTransport.OemCustomPowerMode
             };
             EnsureProviderReadAccess();
             return result;
         }
-        catch (Exception) when (CpuHardwareReadAllowed)
+        catch (Exception error) when (CpuHardwareReadAllowed && error is not OperationCanceledException)
         {
             return null;
         }
@@ -787,10 +837,29 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
     private CpuSmuLimitSnapshot? ReadSmuLimits(CancellationToken cancellationToken)
     {
         if (smuPmTableUnsupported) return null;
-        if (DateTimeOffset.UtcNow - smuLimitCacheAt < TimeSpan.FromSeconds(1)) return smuLimitCache;
-        try { smuLimitCache = (curveOptimizer ?? pboScalarTransport)?.ReadLimitSnapshot(cancellationToken); }
+        var access = CaptureSensorAccess();
+        EnsureSensorReadAccess(access);
+        if (!cancellationToken.IsCancellationRequested && smuLimitCacheAccess == access &&
+            DateTimeOffset.UtcNow - smuLimitCacheAt < TimeSpan.FromSeconds(1)) return smuLimitCache;
+        smuLimitCache = null;
+        smuLimitCacheAccess = null;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = (curveOptimizer ?? pboScalarTransport)?.ReadLimitSnapshot(cancellationToken);
+            EnsureSensorReadAccess(access);
+            smuLimitCache = snapshot;
+            smuLimitCacheAccess = access;
+        }
         catch (InvalidOperationException error) when (error.Message == "advancedCpuPmTableUnsupported")
         { smuLimitCache = null; smuPmTableUnsupported = true; }
+        catch (OperationCanceledException)
+        {
+            smuLimitCache = null;
+            smuLimitCacheAccess = null;
+            smuLimitCacheAt = default;
+            throw;
+        }
         catch { smuLimitCache = null; }
         smuLimitCacheAt = DateTimeOffset.UtcNow;
         return smuLimitCache;
@@ -823,13 +892,19 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
         plan.NegativeCurveOptimizer is not null ||
         plan.Advanced is not null;
 
-    private void DisposeCpuTuning()
+    private void DisposeCpuTuning(Action? ensureAccess = null)
     {
+        smuLimitCache = null;
+        smuLimitCacheAt = default;
+        smuLimitCacheAccess = null;
         smuPmTableUnsupported = false;
+        ensureAccess?.Invoke();
         curveOptimizer?.Dispose();
         curveOptimizer = null;
+        ensureAccess?.Invoke();
         pboScalarTransport?.Dispose();
         pboScalarTransport = null;
+        ensureAccess?.Invoke();
         cpuTuningTransport = null;
         performanceController = null;
         powerSettings = null;
@@ -845,6 +920,20 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
     }
 
     private PerformanceModeEvidence? lastModeEvidence;
+
+    public Task<PerformanceModeEvidence?> ReadNativeModeEvidenceAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        EnsureProviderReadAccess();
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            EnsureProviderReadAccess();
+            ReadProviderHardware(() => ReadPerformanceMode(telemetryProvider ?? observedMiProvider, token));
+            EnsureProviderReadAccess();
+            return Task.FromResult(lastModeEvidence);
+        }
+    }
 
     public Task<PerformanceModeEvidence?> ReadModeEvidenceAsync(CancellationToken token)
     {
@@ -872,8 +961,8 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 }
                 var cpu = ReadProviderHardware(() => ReadCpuTuningState(token));
                 fields["oemTemperatureLimitC"] = cpu?.TemperatureLimitC?.ToString() ?? "unreadable";
-                fields["oemSplWatts"] = cpu?.SplWatts?.ToString() ?? "unreadable";
-                fields["oemSpptWatts"] = cpu?.SpptWatts?.ToString() ?? "unreadable";
+                fields["oemSplWatts"] = ((double?)cpu?.SplWatts ?? cpu?.ObservedSplWatts)?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable";
+                fields["oemSpptWatts"] = ((double?)cpu?.SpptWatts ?? cpu?.AdvancedLimits?.FastPptWatts)?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable";
                 fields["oemCustomPowerMode"] = cpu?.OemCustomPowerMode?.ToString() ?? "unreadable";
                 if (compatibilityDecision is not null && MiCpuPowerBindingFactory.TryCreate(compatibilityDecision, out var cpuBinding))
                 {
@@ -970,8 +1059,13 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
             disposed = true;
             try
             {
-                if (!BackgroundWorkPaused) ReleaseFanLocked();
-                else if (fanTouched || strongCoolingActive || fanPreviousStrongCooling is not null || lightingPreview.Original is not null)
+                if (!BackgroundWorkPaused)
+                {
+                    FinishFanLocked();
+                    fanTransport?.Dispose();
+                    fanTransport = null;
+                }
+                else if (fanTouched || strongCoolingActive || fanTransport?.HasMappingLease == true || fanPreviousStrongCooling is not null || lightingPreview.Original is not null)
                     TryLogShutdown(() => logger?.LogWarning("Shutdown hardware restoration deferred while access is paused; fan and lighting snapshots remain unconfirmed"),
                         "Shutdown fan and lighting restoration deferred while access is paused.");
             }
@@ -1189,7 +1283,8 @@ public sealed partial class WindowsHomeHardwareProvider : IHomeHardwareProvider,
                 .ThenBy(item => item.HardwareType == HardwareType.GpuNvidia ? 0 : item.HardwareType == HardwareType.GpuAmd ? 1 : 2)
                 .FirstOrDefault();
             var gpu = sensors.Where(item => ReferenceEquals(item.Hardware, gpuHardware)).ToArray();
-            var memory = sensors.Where(item => item.Hardware.HardwareType == HardwareType.Memory).ToArray();
+            var memory = sensors.Where(item => item.Hardware.HardwareType == HardwareType.Memory &&
+                item.Hardware.Identifier.ToString() == "/ram").ToArray();
             var fans = sensors.Where(item => item.SensorType == SensorType.Fan).ToArray();
             var verifiedNvidiaAdapter = identity.GpuName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase);
             var nvidiaReading = verifiedNvidiaAdapter

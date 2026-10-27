@@ -9,6 +9,7 @@ namespace Jiaolong_ControlCenter.Prototype;
 public sealed partial class PrototypeWindow
 {
     private ControlModeId? confirmedControlMode;
+    private ControlModeId? requestedDisplayMode;
     private PresetKey? confirmedPerformancePreset;
     private DateTimeOffset? confirmedAutomaticApply;
     private string? confirmedCpuSignature;
@@ -65,8 +66,7 @@ public sealed partial class PrototypeWindow
 
     private void PublishSystemIcons()
     {
-        var mode = TrayIconAssetCatalog.DisplayMode(homeSession.State?.Controls, homeSession.Status == HomeSessionStatus.Connected,
-            DateTimeOffset.UtcNow, confirmedControlMode);
+        var mode = displayedBranding?.Mode;
         string path = TrayIconAssetCatalog.ResolveAbsolute(AppContext.BaseDirectory, userPreferences.LogoStyle, mode);
         if (trayIconPath == path && taskbarIconPath == path) return;
         if (!File.Exists(path))
@@ -93,18 +93,11 @@ public sealed partial class PrototypeWindow
     {
         var controls = homeSession.State?.Controls;
         bool connected = homeSession.Status == HomeSessionStatus.Connected;
-        var mode = TrayIconAssetCatalog.DisplayMode(controls, connected, DateTimeOffset.UtcNow, confirmedControlMode);
-        HomeModeVerificationText.Text = !connected ? "服务未连接" : mode is null ? "模式未读取" :
-            TrayIconAssetCatalog.ReadbackConfirmed(controls) ? "当前模式已确认" : "接口读回 · 实际效果待验证";
-        if (mode is not null && controls?.ExecutionState is { } execution &&
-            execution.NativeMode == controls.ModeEvidence?.ParsedMode &&
-            execution.Pages.Any(page => page.Page == ControlPageId.Gpu &&
-                page.SkippedFields.Contains("coreFrequencyLimitMhz", StringComparer.OrdinalIgnoreCase)))
-            HomeModeVerificationText.Text = controls.GpuClockLimit is { HasSubmission: true, SubmittedMhz: int submittedMhz }
-                ? $"接口读回 · GPU 上限未应用（此前提交 {submittedMhz} MHz，当前限制未读回）"
-                : "接口读回 · GPU 上限未应用（当前限制未读回）";
+        var mode = TrayIconAssetCatalog.DisplayMode(controls, connected, DateTimeOffset.UtcNow,
+            displayedBranding?.Mode ?? confirmedControlMode, requestedDisplayMode);
         var target = (userPreferences.LogoStyle, mode);
-        if (mode is { } readback && !isModeCommandPending && !customActivationPending && queuedModeRequest is null)
+        HomeModeBar.SetModeSelectionKnown(mode is not null);
+        if (mode is { } readback)
         {
             var visualMode = PrototypeModeCommandCoordinator.Map(AdaptiveTargetMap.PerformanceModeFor(PresetKey.Create(readback, 2)));
             var profile = readback is ControlModeId.Custom1 or ControlModeId.Custom2 or ControlModeId.Custom3
@@ -116,8 +109,6 @@ public sealed partial class PrototypeWindow
         {
             displayedBranding = target;
             Hero.SetBrandingState(target.LogoStyle, mode, animate);
-            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(Hero, "图标对应当前接口读回；实际功耗与性能须独立验证。");
-            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(HomeModeBar, "当前选中项对应接口读回；实际功耗与性能须独立验证。");
         }
         PublishSystemIcons();
     }
@@ -227,7 +218,8 @@ public sealed partial class PrototypeWindow
             return null;
         }
         var plan = PerformanceCommandFactory.CreatePresetCommands(draft, snapshot?.Controls.CpuTuning,
-            Available("cpuTuning"), Available("cpuTuning:smu"), Available("cpuTuning:pbo"), Available("cpuTuning:curveOptimizer"));
+            Available("cpuTuning"), Available("cpuTuning:smu"), Available("cpuTuning:pbo"), Available("cpuTuning:curveOptimizer"),
+            capabilities: snapshot?.Capabilities, hardwareEpoch: snapshot?.Controls.ExecutionState?.HardwareEpoch);
         return plan.Error ?? (plan.Skipped.Count > 0 ? $"未提供完整读回：{string.Join("、", plan.Skipped)}" : null);
     }
 
@@ -251,7 +243,7 @@ public sealed partial class PrototypeWindow
         int revision = ++presetCatalogRevision;
         var catalog = new Dictionary<PresetKey, (string Name, bool Available, string? Reason)>();
         var drafts = new Dictionary<PresetKey, PerformanceDraft>();
-        var store = new ControlPresetStore(capabilities: () => homeSession.State?.Capabilities);
+        var store = new ControlPresetStore(capabilities: () => homeSession.State?.Capabilities, baseline: () => homeSession.SchedulingBaseline);
         var names = preferences.Load().PresetNames ?? [];
         foreach (var mode in Enum.GetValues<ControlModeId>())
         for (int slot = 1; slot <= 3; slot++)

@@ -1,4 +1,7 @@
 using System.Xml.Linq;
+using System.Reflection;
+using Jiaolong.Contracts.Models;
+using Jiaolong_ControlCenter.Prototype.Controls;
 using Jiaolong_ControlCenter.ViewModels;
 
 namespace Jiaolong.ControlCenter.Tests;
@@ -6,6 +9,77 @@ namespace Jiaolong.ControlCenter.Tests;
 [TestClass]
 public sealed class PerformanceWorkspaceV2ContractTests
 {
+    [TestMethod]
+    public void Read_only_cpu_readback_keeps_observed_values_without_granting_write_access()
+    {
+        var cpu = new CpuTuningState(99, 60, 120, 4700, true, 8, Guid.NewGuid(), -50, "hardwareReadback")
+        {
+            PerCoreCurveOptimizer = Enumerable.Range(0, 8).ToDictionary(core => core, _ => -50)
+        };
+        var snapshot = new HomeStateSnapshot(
+            new CapabilitySnapshot([new("cpuTuning", CapabilityState.ReadOnly, null)]) { SupportState = DeviceSupportState.ReadOnly },
+            null, new(PerformanceMode.Balanced, false, []) { CpuTuning = cpu });
+
+        var presentation = CpuReadbackPresentation.From(snapshot);
+
+        Assert.IsFalse(presentation.CanWrite);
+        Assert.IsNotNull(presentation.HardwareState, "A read-only capability must not discard successful CPU readback.");
+        Assert.AreEqual(99, presentation.HardwareState.TemperatureLimitC);
+        Assert.AreEqual(60, presentation.HardwareState.SplWatts);
+        Assert.AreEqual(120, presentation.HardwareState.SpptWatts);
+        Assert.AreEqual(4700, presentation.HardwareState.MaxFrequencyMhz);
+        CollectionAssert.AreEqual(Enumerable.Repeat(-50, 8).ToArray(), presentation.HardwareState.PerCoreCurveOptimizer!.OrderBy(pair => pair.Key).Select(pair => pair.Value).ToArray());
+    }
+
+    [TestMethod]
+    public void Read_only_partial_cpu_readback_preserves_unknowns_and_writability_stays_separate()
+    {
+        var partial = new CpuTuningState(null, null, null, 4700, null, null, null, null, null);
+        var snapshot = new HomeStateSnapshot(new CapabilitySnapshot([new("cpuTuning", CapabilityState.Available, null)]),
+            null, new(PerformanceMode.Balanced, false, []) { CpuTuning = partial });
+        var writable = CpuReadbackPresentation.From(snapshot);
+        Assert.IsTrue(writable.CanWrite);
+        Assert.AreSame(partial, writable.HardwareState);
+
+        var readOnly = CpuReadbackPresentation.From(snapshot with
+        { Capabilities = new CapabilitySnapshot([new("cpuTuning", CapabilityState.ReadOnly, null)]) });
+        Assert.IsFalse(readOnly.CanWrite);
+        Assert.IsNotNull(readOnly.HardwareState, "Partial readback remains useful without writable capability.");
+        Assert.AreEqual(4700, readOnly.HardwareState.MaxFrequencyMhz);
+        Assert.IsNull(readOnly.HardwareState.TemperatureLimitC);
+        Assert.IsNull(readOnly.HardwareState.SplWatts);
+        Assert.IsNull(readOnly.HardwareState.PboScalar);
+        Assert.IsNull(readOnly.HardwareState.PerCoreCurveOptimizer);
+
+        var missing = CpuReadbackPresentation.From(snapshot with
+        { Capabilities = new CapabilitySnapshot([]), Controls = snapshot.Controls with { CpuTuning = null } });
+        Assert.IsFalse(missing.CanWrite);
+        Assert.IsNull(missing.HardwareState);
+    }
+
+    [TestMethod]
+    public void Numeric_editors_follow_verified_field_writability_and_oem_safety()
+    {
+        var method = typeof(PerformanceWorkspaceV2).GetMethod("CanEditField", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        bool Editable(CapabilitySnapshot capabilities, string key, bool oem) =>
+            (bool)method.Invoke(null, [capabilities, key, oem])!;
+
+        var verified = new FieldCapability("splWatts", CapabilityState.Available, true, true, 45, 75, 1,
+            "W", "hardwareReadback", "PreservesSelectedMode", DateTimeOffset.UtcNow, 1);
+        var capabilities = new CapabilitySnapshot([new("cpuTuning", CapabilityState.Available, null)])
+        { IsOnAcPower = true, Fields = [verified] };
+        Assert.IsTrue(Editable(capabilities, "splWatts", true));
+        Assert.IsFalse(Editable(capabilities with { Fields = [verified with { Writable = false }] }, "splWatts", true));
+        Assert.IsFalse(Editable(capabilities with { IsOnAcPower = false }, "splWatts", true));
+        Assert.IsFalse(Editable(capabilities with { Fields = [verified with { NativeModeSideEffect = "Unknown" }] }, "splWatts", true));
+        Assert.IsFalse(Editable(capabilities with { Fields = [verified with { Minimum = null }] }, "splWatts", true));
+        Assert.IsFalse(Editable(capabilities with { Fields = [verified with { VerifiedAtUtc = null }] }, "splWatts", true));
+        Assert.IsFalse(Editable(capabilities with { Fields = [verified, verified with { Key = "pptWatts", HardwareEpoch = 2 }] }, "splWatts", true));
+        Assert.IsTrue(Editable(capabilities with { Fields = [verified with { Key = "advancedCpuTuning", Minimum = null, Maximum = null }] },
+            "advancedCpuTuning", false));
+    }
+
     [TestMethod]
     public void Replacement_workspace_preserves_the_window_integration_contract()
     {
@@ -234,7 +308,7 @@ public sealed class PerformanceWorkspaceV2ContractTests
         StringAssert.Contains(code, "UpdateCoreTopology(state?.EnabledCoreCount)");
         StringAssert.Contains(code, "AdvancedWorkspace.SetCoreCount(enabledCores)");
         StringAssert.Contains(code, "ApplyPresetRecommendationsAsync");
-        StringAssert.Contains(code, "DefaultPerformancePresets.CreateDraft(key)");
+        StringAssert.Contains(code, "DefaultPerformancePresets.Create(selectedPreset, session?.State?.Capabilities, session?.SchedulingBaseline)");
         StringAssert.Contains(code, "SetRecommendedValueAnimatedAsync");
         StringAssert.Contains(workspace, "Title=\"曲线优化\"");
         StringAssert.Contains(workspace, "使用已保存的性能预设后才提交");

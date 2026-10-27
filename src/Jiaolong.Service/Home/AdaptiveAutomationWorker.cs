@@ -78,7 +78,13 @@ public sealed class AdaptiveAutomationWorker(
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var saved = await store.ReadAsync(deadline.Token);
-        if (runtime.IsSuspended) { ruleSession.Reset(); return; }
+        if (runtime.IsSuspended || !runtime.CanRunClientAutomation(saved.OwnerSid)) { ruleSession.Reset(); return; }
+        if (saved.Recovery is not null)
+        {
+            ruleSession.Reset();
+            await PublishStatusAsync(saved.Configuration, false, "原自动调度恢复记录尚未处理，自动执行已暂停。", null, cancellationToken);
+            return;
+        }
         if (saved.Revision != seenRevision)
         {
             seenRevision = saved.Revision;
@@ -353,6 +359,7 @@ public sealed class AdaptiveAutomationWorker(
         if (plan.MaxFrequencyMhz is not null && state.MaxFrequencyMhz is null) return false;
         if (plan.AcMaxFrequencyMhz is not null && (state.AcMaxFrequencyMhz is null || state.DcMaxFrequencyMhz is null)) return false;
         if (plan.BoostEnabled is not null && state.BoostEnabled is null) return false;
+        if (plan.BoostPolicy is not null && CpuBoostPolicy.FromState(state) is null) return false;
         if (plan.WindowsPowerSchemeId is not null && state.WindowsPowerSchemeId is null) return false;
         return plan.AcMinActiveCoresPercent is null || state.AcMinActiveCoresPercent is not null && state.DcMinActiveCoresPercent is not null;
     }
@@ -364,7 +371,9 @@ public sealed class AdaptiveAutomationWorker(
             (state.AcMaxFrequencyMhz is null || state.AcMaxFrequencyMhz == plan.MaxFrequencyMhz) &&
             (state.DcMaxFrequencyMhz is null || state.DcMaxFrequencyMhz == plan.MaxFrequencyMhz)) &&
             (plan.AcMaxFrequencyMhz is null || state.AcMaxFrequencyMhz == plan.AcMaxFrequencyMhz && state.DcMaxFrequencyMhz == plan.DcMaxFrequencyMhz) &&
-            (plan.BoostEnabled is null || state.BoostEnabled == plan.BoostEnabled) &&
+            (plan.BoostEnabled is null || (CpuBoostPolicy.FromState(state) is { } actualBoost
+                ? actualBoost.MatchesToggle(plan.BoostEnabled.Value) : state.BoostEnabled == plan.BoostEnabled)) &&
+            (plan.BoostPolicy is null || CpuBoostPolicy.FromState(state) == plan.BoostPolicy) &&
             (plan.WindowsPowerSchemeId is null || state.WindowsPowerSchemeId == plan.WindowsPowerSchemeId) &&
             (plan.AcMinActiveCoresPercent is null || state.AcMinActiveCoresPercent == plan.AcMinActiveCoresPercent && state.DcMinActiveCoresPercent == plan.DcMinActiveCoresPercent) &&
             (plan.Advanced?.PboScalar is null || state.PboScalar == plan.Advanced.PboScalar) &&
@@ -376,7 +385,7 @@ public sealed class AdaptiveAutomationWorker(
     }
 
     private static bool IsNonEmptySafePlan(CpuTuningPlan plan) =>
-        plan.MaxFrequencyMhz is not null || plan.AcMaxFrequencyMhz is not null || plan.BoostEnabled is not null ||
+        plan.MaxFrequencyMhz is not null || plan.AcMaxFrequencyMhz is not null || plan.BoostEnabled is not null || plan.BoostPolicy is not null ||
         plan.WindowsPowerSchemeId is not null || plan.AcMinActiveCoresPercent is not null || plan.Advanced?.PboScalar is not null || HasCurveTargets(plan);
 
     private static bool HasCurveTargets(CpuTuningPlan plan) => plan.NegativeCurveOptimizer is not null ||

@@ -5,7 +5,25 @@ public sealed partial class WindowsHomeHardwareProvider
     private volatile bool sensorLifecycleUnknown;
     private volatile bool sensorInitializationDeferred;
     private bool sensorDependencyCleanupStarted;
+    private bool sensorDependencyCleanupCompleted;
+    private int sensorShutdownRequested;
+    private SensorAccess? sensorShutdownAccess;
     private sealed record SensorAccess(PowerLifecycleState? Lifecycle, long State, long LegacyState);
+
+    public long? PrepareShutdownCleanup()
+    {
+        Volatile.Write(ref sensorShutdownRequested, 1);
+        Volatile.Write(ref sensorShutdownAccess, null);
+        var access = CaptureSensorAccess();
+        if (disposed || sensorLifecycleUnknown || (access.LegacyState & 1) != 0 || access.Lifecycle is null) return null;
+        var version = access.Lifecycle.TryPauseForShutdown(access.State);
+        if (version is not null)
+            Volatile.Write(ref sensorShutdownAccess, access with { State = version.Value | 1 });
+        return version;
+    }
+
+    private bool HasSensorShutdownAccess(SensorAccess access) =>
+        (access.LegacyState & 1) == 0 && access == Volatile.Read(ref sensorShutdownAccess) && access == CaptureSensorAccess();
 
     private SensorAccess CaptureSensorAccess()
     {
@@ -24,6 +42,12 @@ public sealed partial class WindowsHomeHardwareProvider
 
     private void EnsureSensorDriverAccess(SensorAccess access, bool allowDisposed = false)
     {
+        if (allowDisposed && Volatile.Read(ref sensorShutdownRequested) != 0)
+        {
+            if (!HasSensorShutdownAccess(access)) throw new OperationCanceledException("staleSensorShutdown");
+            if (sensorLifecycleUnknown) throw new IOException("sensorLifecycleUnknown");
+            return;
+        }
         EnsureSensorReadAccess(access, allowDisposed);
         if (BackgroundWorkPaused) throw new IOException("hardwareAccessPaused");
         if (sensorLifecycleUnknown) throw new IOException("sensorLifecycleUnknown");
@@ -87,7 +111,11 @@ public sealed partial class WindowsHomeHardwareProvider
     {
         lock (sensorGate)
         {
-            if (sensorLifecycleUnknown || BackgroundWorkPaused)
+            if (sensorDependencyCleanupCompleted) return;
+            var access = CaptureSensorAccess();
+            bool shutdownAllowed = Volatile.Read(ref sensorShutdownRequested) != 0
+                ? HasSensorShutdownAccess(access) : !BackgroundWorkPaused;
+            if (sensorLifecycleUnknown || !shutdownAllowed)
             {
                 TryLogShutdown(() => logger?.LogWarning("Sensor shutdown deferred; opened={Opened}, lifecycleUnknown={Unknown}, paused={Paused}",
                     opened, sensorLifecycleUnknown, BackgroundWorkPaused),
@@ -96,13 +124,17 @@ public sealed partial class WindowsHomeHardwareProvider
             }
             try
             {
-                var access = CaptureSensorAccess();
                 CloseSensorComputer(access, allowDisposed: true);
                 if (sensorDependencyCleanupStarted) return;
                 EnsureSensorDriverAccess(access, allowDisposed: true);
                 sensorDependencyCleanupStarted = true;
-                DisposeCpuTuning();
+                DisposeCpuTuning(() => EnsureSensorDriverAccess(access, allowDisposed: true));
+                EnsureSensorDriverAccess(access, allowDisposed: true);
                 packagePowerReader.Dispose();
+                EnsureSensorDriverAccess(access, allowDisposed: true);
+                sensorDependencyCleanupCompleted = true;
+                TryLogShutdown(() => logger?.LogInformation("Sensor shutdown completed; opened={Opened}, dependencyCleanupCompleted={Completed}",
+                    opened, sensorDependencyCleanupCompleted), "Sensor shutdown completed; dependencies disposed.");
             }
             catch (Exception error)
             {

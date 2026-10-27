@@ -78,17 +78,54 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     ? "服务未报告 EC 自动目标上限能力。"
                     : automaticCeilingActive ? "当前 EC 自动目标上限已启用。" : "当前 EC 自动目标上限未启用。"
             };
-        UpdateMaximumRpmAvailability();
         UpdateFanPresetAvailability();
     }
-    private bool FanHardwareAvailable => session?.Status == HomeSessionStatus.Connected &&
-        session.State?.Capabilities.IsAvailable("fanControl") == true;
+    private static bool CanEditFanDraft(HomeSessionStatus? status, CapabilitySnapshot? capabilities, bool editingPreset) =>
+        (editingPreset || status == HomeSessionStatus.Connected && capabilities?.IsAvailable("fanControl") == true) &&
+        new[] { "fixedRpm", "maximumRpm", "cpu", "gpu", "shared" }.Any(key => FanFieldWritable(capabilities, key));
+    private static bool FanFieldWritable(CapabilitySnapshot? capabilities, string key) =>
+        capabilities?.Fields.Any(field => field.Key == key && field.Availability == CapabilityState.Available && field.Writable) == true;
+    private bool FanHardwareAvailable => CanEditFanDraft(session?.Status, session?.State?.Capabilities, false);
+    private bool FanDraftEditable => !savingPreset && !applyingPreset && !fanEditorLoading &&
+        CanEditFanDraft(session?.Status, session?.State?.Capabilities, PresetToolbar.IsEditingPreset);
 
     private void UpdateFanPresetAvailability()
     {
         bool idle = !savingPreset && !applyingPreset && !fanEditorLoading;
+        var capabilities = session?.State?.Capabilities;
+        bool fixedAvailable = FanFieldWritable(capabilities, "fixedRpm");
+        bool curveAvailable = new[] { "cpu", "gpu", "shared" }.Any(key => FanFieldWritable(capabilities, key));
+        bool ceilingAvailable = FanFieldWritable(capabilities, "maximumRpm");
+        bool advancedAvailable = fixedAvailable || curveAvailable || ceilingAvailable;
+        FanAdvancedPanel.Visibility = PresetToolbar.Visibility = advancedAvailable ? Visibility.Visible : Visibility.Collapsed;
+        FixedStrategyPanel.Visibility = fixedAvailable ? Visibility.Visible : Visibility.Collapsed;
+        FanCurveWorkspace.Visibility = CurveStrategy.Visibility = curveAvailable ? Visibility.Visible : Visibility.Collapsed;
+        AutomaticCeilingPanel.Visibility = ceilingAvailable ? Visibility.Visible : Visibility.Collapsed;
+        ReleaseFanButton.IsEnabled = idle && session?.Status == HomeSessionStatus.Connected && capabilities?.IsAvailable("fanControl") == true;
         PresetToolbar.SetActionAvailability(idle, idle && PresetToolbar.IsEditingPreset && FanHardwareAvailable);
-        if (PresetToolbar.IsEditingPreset) FanCurveWorkspace.SetEditingEnabled(idle);
+        bool editable = FanDraftEditable;
+        AutoStrategy.IsEnabled = FixedStrategy.IsEnabled = CurveStrategy.IsEnabled = editable;
+        FixedTarget.IsEnabled = FixedTargetSlider.IsEnabled = editable && FixedStrategy.IsChecked == true;
+        FanCurveWorkspace.SetEditingEnabled(editable && (PresetToolbar.IsEditingPreset || CurveStrategy.IsChecked == true));
+        UpdateMaximumRpmAvailability();
+    }
+    private async void OnReleaseFanControl(object sender, RoutedEventArgs e)
+    {
+        if (session is null || !ReleaseFanButton.IsEnabled) return;
+        applyingPreset = true;
+        UpdateFanPresetAvailability();
+        try
+        {
+            var result = await session.ExecuteAsync(new ReleaseFanControlCommand(Guid.NewGuid(), ReleaseReason.UserRequested), CancellationToken.None);
+            ToolTipService.SetToolTip(ReleaseFanButton, result.State == CommandState.Applied && result.Error is null
+                ? "已交还 EC 自动控制" : "交还未完成，请重试");
+        }
+        catch (Exception error)
+        {
+            AppRuntimeLog.Write($"Fan release: {error}");
+            ToolTipService.SetToolTip(ReleaseFanButton, "交还未完成，请检查服务连接");
+        }
+        finally { applyingPreset = false; UpdateFanPresetAvailability(); }
     }
     private readonly HashSet<PresetKey> dirtyPresets = [];
     private readonly HashSet<PresetKey> savedPresets = [];
@@ -135,7 +172,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
 
     public FanWorkspaceV2()
     {
-        presetStore = new(capabilities: () => session?.State?.Capabilities);
+        presetStore = new(capabilities: () => session?.State?.Capabilities, baseline: () => session?.SchedulingBaseline);
         InitializeComponent();
         PresetToolbar.PresetRenamed += async (_, key) =>
         {
@@ -480,29 +517,47 @@ public sealed partial class FanWorkspaceV2 : UserControl
                     FixedRpm = state.Strategy == "Fixed" ? state.FixedRpm : null,
                     MaximumRpm = automaticCeilingRequested ? state.MaximumRpm : null
                 }, RiskConfirmed: true) { PreserveStrongCooling = preserveStrongCooling };
-            if (!preserveStrongCooling) pendingFanFollowTarget = null;
-            Catalog?.RecordManualLive(ControlPageId.Fan);
-            IsFollowingPreset = false;
-            PresetToolbar.SetFollowPreset(false);
             var result = await session.ExecuteAsync(command, CancellationToken.None);
-            if (Catalog is not null) await Catalog.PublishManualLiveAsync();
             if (preserveStrongCooling && result.Error?.Code == Jiaolong.Contracts.Errors.ErrorCode.CommandInProgress)
             {
                 pendingFanFollowTarget = key;
                 return false;
             }
             bool succeeded = result.State == CommandState.Applied && result.Error is null;
+            bool followPreferenceSaved = true;
+            if (succeeded)
+            {
+                try
+                {
+                    if (Catalog is null)
+                        followPreferences.Update(value => value with { FanFollowPreset = false, AdaptiveModeEnabled = false });
+                    else Catalog.RecordManualLive(ControlPageId.Fan);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+                { followPreferenceSaved = false; AppRuntimeLog.Write($"Fan follow preference save: {ex}"); }
+                if (followPreferenceSaved)
+                {
+                    if (!preserveStrongCooling) pendingFanFollowTarget = null;
+                    IsFollowingPreset = false;
+                    PresetToolbar.SetFollowPreset(false);
+                    if (Catalog is not null) await Catalog.PublishManualLiveAsync();
+                }
+            }
             if (succeeded) await PresetToolbar.ShowStatusAsync(
-                state.Strategy == "Auto"
+                !followPreferenceSaved ? "风扇指令已下发，但跟随状态未保存；请检查自动调度"
+                : state.Strategy == "Auto"
                     ? automaticCeilingRequested ? $"已设置 EC 自动最大目标转速 {state.MaximumRpm} RPM；实际 RPM 请查看风扇总览" : "已交还 EC 自动控制"
                     : "指令已下发 · 请查看实际 RPM");
             else if (result.Error is null) session.ReportOperationFailure("风扇设置未确认生效，请重试或导出日志反馈。");
-            appliedFanPreset = succeeded && liveState is null ? state : null;
-            appliedFanKey = appliedFanPreset is null ? null : key;
+            if (succeeded)
+            {
+                appliedFanPreset = liveState is null ? state : null;
+                appliedFanKey = appliedFanPreset is null ? null : key;
+            }
             if (succeeded && liveState is null)
             {
                 try { followPreferences.Update(value => value with { FanPresetSlots = new(value.FanPresetSlots) { [key.Mode.ToString()] = key.Slot } }); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await PresetToolbar.ShowStatusAsync("配置已应用，但记忆档位保存失败"); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { await PresetToolbar.ShowStatusAsync("风扇指令已下发，但记忆档位保存失败"); }
             }
             if (session.State is { } confirmed) UpdateFanActiveBadge(confirmed);
             else PresetToolbar.SetConfirmedActivePreset(null);
@@ -548,11 +603,8 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private void OnStrategyChanged(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded) return;
-        bool enabled = (sender as FrameworkElement)?.Tag?.ToString() == "Fixed";
-        if (FixedTarget is not null) FixedTarget.IsEnabled = enabled;
-        if (FixedTargetSlider is not null) FixedTargetSlider.IsEnabled = enabled;
         UpdateStrategyPanels();
-        UpdateMaximumRpmAvailability();
+        UpdateFanPresetAvailability();
         if (!PresetToolbar.IsEditingPreset && !importingPreset) UpdateLiveFanPresentation();
         if (FanCurveWorkspace is not null) MarkDraftChanged();
     }
@@ -611,7 +663,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
     private void UpdateMaximumRpmAvailability()
     {
         if (MaximumRpmToggle is null || MaximumRpmTarget is null) return;
-        MaximumRpmToggle.IsEnabled = maximumRpmAvailable && AutoStrategy.IsChecked == true;
+        MaximumRpmToggle.IsEnabled = FanDraftEditable && maximumRpmAvailable && AutoStrategy.IsChecked == true;
         MaximumRpmTarget.IsEnabled = MaximumRpmToggle.IsEnabled && MaximumRpmToggle.IsOn;
     }
     private void OnMaximumRpmChanged(object sender, RoutedEventArgs e)
@@ -645,6 +697,7 @@ public sealed partial class FanWorkspaceV2 : UserControl
         try
         {
             StrongCoolingButton.IsEnabled = available && enabled.HasValue;
+            StrongCoolingPanel.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
             StrongCoolingButton.IsChecked = enabled == true;
         }
         finally { syncingStrongCooling = false; }
