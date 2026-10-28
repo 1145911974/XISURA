@@ -1,0 +1,38 @@
+{
+  "At": "2026-10-28T10:46:09.2974999+08:00",
+  "SourceHashes": [
+    {
+      "Path": "src/Jiaolong.ControlCenter/Prototype/PrototypeWindow.xaml.cs",
+      "SHA256": "02B27F737AF72BEC90104EF5F05344EF15A71FEA6FFBC0A2DD65DB2B03DD1ACB"
+    },
+    {
+      "Path": "src/Jiaolong.ControlCenter/Services/WorkAreaFitSizingSession.cs",
+      "SHA256": "65A5151EE23DCD05DB6196E04DF0F23A27994E56E49A97F5C146F510BD6AF0F0"
+    },
+    {
+      "Path": "tests/Jiaolong.ControlCenter.Tests/WorkAreaFitSizingSessionTests.cs",
+      "SHA256": "C164F64E6A8E8E83207EEB4031B860498AEF4463C4E471D065CBEB7A0E532CAE"
+    }
+  ],
+  "BuiltGuiDllSHA256": "2705E9BA0996DA49A3BDF6451E9C5BDF44B03642877D56A9801B2533A1238C3B",
+  "BuiltFileVersion": "1.0.113.0",
+  "Regression": {
+    "At": "2026-10-28T10:44:25.3016237+08:00",
+    "Passed": true,
+    "Total": 8,
+    "PassedTests": 8,
+    "Skipped": 0,
+    "TrxSHA256": "94C508A06448C71E853350F2FA7E6B48C9B49472142BD6E5AE986EE5B8948EA5",
+    "GuiStarted": false,
+    "HardwareWrites": false,
+    "TemporaryPath": "C:/Users/Administrator/AppData/Local/Temp"
+  },
+  "GuiStarted": false,
+  "HardwareWrites": false,
+  "Installed": false,
+  "Published": false,
+  "PreviousTempEvidenceRootExists": false,
+  "ConcurrentCleanup": "User confirmed another tool is still cleaning",
+  "BuildsStopped": true,
+  "FreeMiB": 7683.5
+}

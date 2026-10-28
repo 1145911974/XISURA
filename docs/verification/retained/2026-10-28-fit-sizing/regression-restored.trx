@@ -1,0 +1,72 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="589cb72b-8acd-4ad5-bbba-c800be376d8f" name="Administrator@强风吹拂 2026-10-28 10:44:25" runUser="强风吹拂\Administrator" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-28T10:44:25.1859157+08:00" queuing="2026-10-28T10:44:25.1859160+08:00" start="2026-10-28T10:44:24.4225560+08:00" finish="2026-10-28T10:44:25.1919486+08:00" />
+  <TestSettings name="default" id="d279eede-465f-405b-ae85-dcefe8e600df">
+    <Deployment runDeploymentRoot="Administrator_强风吹拂_2026-10-28_10_44_25" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="49596002-8739-4967-828e-c038ca436987" testId="118f1473-fed6-82c3-b276-cdcdc91b7884" testName="Startup_position_centers_the_client_inside_the_primary_work_area" computerName="强风吹拂" duration="00:00:00.0143380" startTime="2026-10-28T10:44:25.0147143+08:00" endTime="2026-10-28T10:44:25.0663763+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="49596002-8739-4967-828e-c038ca436987" />
+    <UnitTestResult executionId="9a819530-4602-491d-92c9-824926fae51b" testId="1fb0f40c-bea6-8b03-af07-3856758dd799" testName="Cancelled_resize_or_return_to_original_size_preserves_fit" computerName="强风吹拂" duration="00:00:00.0143535" startTime="2026-10-28T10:44:25.0146830+08:00" endTime="2026-10-28T10:44:25.0645772+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9a819530-4602-491d-92c9-824926fae51b" />
+    <UnitTestResult executionId="09d744f5-b94d-4f46-98ed-2bc816a6c0ea" testId="130c6d36-10cc-8c61-8466-e400e9d6e7a4" testName="Dpi_only_change_preserves_fit_but_logical_resize_ends_it" computerName="强风吹拂" duration="00:00:00.0143350" startTime="2026-10-28T10:44:25.0147097+08:00" endTime="2026-10-28T10:44:25.0695625+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="09d744f5-b94d-4f46-98ed-2bc816a6c0ea" />
+    <UnitTestResult executionId="23811f97-77a5-4e36-9649-729d53e429eb" testId="13f7def5-543f-8b5c-983f-f274c3a1f339" testName="Movement_and_unfitted_interactions_do_not_end_fit" computerName="强风吹拂" duration="00:00:00.0143354" startTime="2026-10-28T10:44:25.0147037+08:00" endTime="2026-10-28T10:44:25.0645866+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="23811f97-77a5-4e36-9649-729d53e429eb" />
+    <UnitTestResult executionId="77644a49-d893-416c-aa0c-578a71eaf6a5" testId="1fa53ab7-6400-8ecd-ac72-b23ffd6f7cd9" testName="Saved_window_size_is_dpi_normalized_and_round_trips" computerName="强风吹拂" duration="00:00:00.0143507" startTime="2026-10-28T10:44:25.0147171+08:00" endTime="2026-10-28T10:44:25.0645773+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="77644a49-d893-416c-aa0c-578a71eaf6a5" />
+    <UnitTestResult executionId="393eab06-3dd2-4c9e-8e64-04f0083ad271" testId="1e5bfd9e-aca1-815f-8a98-8b1435276e1f" testName="Completed_resize_ends_fit_and_does_not_leak_into_next_interaction" computerName="强风吹拂" duration="00:00:00.0143365" startTime="2026-10-28T10:44:25.0146961+08:00" endTime="2026-10-28T10:44:25.0645777+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="393eab06-3dd2-4c9e-8e64-04f0083ad271" />
+    <UnitTestResult executionId="9cbf1d69-8353-4406-a615-ac48a4565621" testId="1bb9caf1-1408-8094-9bae-191836961fa9" testName="Invalid_saved_size_is_ignored" computerName="强风吹拂" duration="00:00:00.0143466" startTime="2026-10-28T10:44:25.0146902+08:00" endTime="2026-10-28T10:44:25.0645837+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9cbf1d69-8353-4406-a615-ac48a4565621" />
+    <UnitTestResult executionId="bc9e730d-471e-4162-b7f6-f17849d1604f" testId="1839abc8-9e7b-8c6f-9a7d-f4c71f10d198" testName="Native_window_uses_edge_resize_and_preserves_current_default_size" computerName="强风吹拂" duration="00:00:00.0143777" startTime="2026-10-28T10:44:25.0146630+08:00" endTime="2026-10-28T10:44:25.0663809+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bc9e730d-471e-4162-b7f6-f17849d1604f" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Dpi_only_change_preserves_fit_but_logical_resize_ends_it" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="130c6d36-10cc-8c61-8466-e400e9d6e7a4">
+      <Execution id="09d744f5-b94d-4f46-98ed-2bc816a6c0ea" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.WorkAreaFitSizingSessionTests" name="Dpi_only_change_preserves_fit_but_logical_resize_ends_it" />
+    </UnitTest>
+    <UnitTest name="Native_window_uses_edge_resize_and_preserves_current_default_size" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="1839abc8-9e7b-8c6f-9a7d-f4c71f10d198">
+      <Execution id="bc9e730d-471e-4162-b7f6-f17849d1604f" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.PrototypeContractTests" name="Native_window_uses_edge_resize_and_preserves_current_default_size" />
+    </UnitTest>
+    <UnitTest name="Movement_and_unfitted_interactions_do_not_end_fit" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="13f7def5-543f-8b5c-983f-f274c3a1f339">
+      <Execution id="23811f97-77a5-4e36-9649-729d53e429eb" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.WorkAreaFitSizingSessionTests" name="Movement_and_unfitted_interactions_do_not_end_fit" />
+    </UnitTest>
+    <UnitTest name="Saved_window_size_is_dpi_normalized_and_round_trips" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="1fa53ab7-6400-8ecd-ac72-b23ffd6f7cd9">
+      <Execution id="77644a49-d893-416c-aa0c-578a71eaf6a5" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.WindowPlacementTests" name="Saved_window_size_is_dpi_normalized_and_round_trips" />
+    </UnitTest>
+    <UnitTest name="Invalid_saved_size_is_ignored" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="1bb9caf1-1408-8094-9bae-191836961fa9">
+      <Execution id="9cbf1d69-8353-4406-a615-ac48a4565621" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.WindowPlacementTests" name="Invalid_saved_size_is_ignored" />
+    </UnitTest>
+    <UnitTest name="Cancelled_resize_or_return_to_original_size_preserves_fit" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="1fb0f40c-bea6-8b03-af07-3856758dd799">
+      <Execution id="9a819530-4602-491d-92c9-824926fae51b" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.WorkAreaFitSizingSessionTests" name="Cancelled_resize_or_return_to_original_size_preserves_fit" />
+    </UnitTest>
+    <UnitTest name="Startup_position_centers_the_client_inside_the_primary_work_area" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="118f1473-fed6-82c3-b276-cdcdc91b7884">
+      <Execution id="49596002-8739-4967-828e-c038ca436987" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.WindowPlacementTests" name="Startup_position_centers_the_client_inside_the_primary_work_area" />
+    </UnitTest>
+    <UnitTest name="Completed_resize_ends_fit_and_does_not_leak_into_next_interaction" storage="c:\users\administrator\documents\chatgpt\蛟龙\.worktrees\release108\tests\jiaolong.controlcenter.tests\bin\release\net10.0-windows10.0.26100.0\win-x64\jiaolong.controlcenter.tests.dll" id="1e5bfd9e-aca1-815f-8a98-8b1435276e1f">
+      <Execution id="393eab06-3dd2-4c9e-8e64-04f0083ad271" />
+      <TestMethod codeBase="C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll" adapterTypeName="executor://mstestadapter/v4" className="Jiaolong.ControlCenter.Tests.WorkAreaFitSizingSessionTests" name="Completed_resize_ends_fit_and_does_not_leak_into_next_interaction" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="118f1473-fed6-82c3-b276-cdcdc91b7884" executionId="49596002-8739-4967-828e-c038ca436987" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1fb0f40c-bea6-8b03-af07-3856758dd799" executionId="9a819530-4602-491d-92c9-824926fae51b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="130c6d36-10cc-8c61-8466-e400e9d6e7a4" executionId="09d744f5-b94d-4f46-98ed-2bc816a6c0ea" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="13f7def5-543f-8b5c-983f-f274c3a1f339" executionId="23811f97-77a5-4e36-9649-729d53e429eb" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1fa53ab7-6400-8ecd-ac72-b23ffd6f7cd9" executionId="77644a49-d893-416c-aa0c-578a71eaf6a5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1e5bfd9e-aca1-815f-8a98-8b1435276e1f" executionId="393eab06-3dd2-4c9e-8e64-04f0083ad271" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1bb9caf1-1408-8094-9bae-191836961fa9" executionId="9cbf1d69-8353-4406-a615-ac48a4565621" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1839abc8-9e7b-8c6f-9a7d-f4c71f10d198" executionId="bc9e730d-471e-4162-b7f6-f17849d1604f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="列表中未列出的结果" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="所有已加载的结果" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="8" executed="8" passed="8" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>已为 C:\Users\Administrator\Documents\ChatGPT\蛟龙\.worktrees\release108\tests\Jiaolong.ControlCenter.Tests\bin\Release\net10.0-windows10.0.26100.0\win-x64\Jiaolong.ControlCenter.Tests.dll 启用测试并行化(Workers: 16，Scope: MethodLevel)&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

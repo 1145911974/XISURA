@@ -64,6 +64,7 @@ public sealed partial class PrototypeWindow : Window
     private Task? customActivationTask;
     private bool serviceConnectionStarted;
     private bool fittedToWorkArea;
+    private readonly WorkAreaFitSizingSession fitSizingSession = new();
     private string activePage = "Home";
     private HardwareSnapshot? latestTelemetry;
     private Storyboard? pageTransitionStoryboard;
@@ -310,6 +311,21 @@ public sealed partial class PrototypeWindow : Window
             return IntPtr.Zero;
         }
 
+        if (message == 0x0231) // WM_ENTERSIZEMOVE
+        {
+            fitSizingSession.Begin(fittedToWorkArea && GetClientRect(hwnd, out var initialClient) &&
+                initialClient.Width > 0 && initialClient.Height > 0
+                ? WindowSizePersistence.FromPixels(new SizeInt32(initialClient.Width, initialClient.Height), GetWindowDpi())
+                : null);
+        }
+        if (message == 0x0232) // WM_EXITSIZEMOVE: cancelled sizing and pure movement keep the fit cache.
+        {
+            var finalSize = GetClientRect(hwnd, out var finalClient) && finalClient.Width > 0 && finalClient.Height > 0
+                ? WindowSizePersistence.FromPixels(new SizeInt32(finalClient.Width, finalClient.Height), GetWindowDpi())
+                : default;
+            if (fitSizingSession.Complete(finalSize)) fittedToWorkArea = false;
+        }
+
         if (message == PrototypeWindowChrome.WmSizing && lParam != IntPtr.Zero &&
             Enum.IsDefined(typeof(WindowSizingEdge), wParam.ToInt32()) &&
             GetWindowRect(hwnd, out var outer) && GetClientRect(hwnd, out var client))
@@ -324,6 +340,7 @@ public sealed partial class PrototypeWindow : Window
                 new NativeRect(constrained.Left, constrained.Top, constrained.Right, constrained.Bottom),
                 lParam,
                 false);
+            fitSizingSession.RecordSizing();
             return new IntPtr(1);
         }
 
