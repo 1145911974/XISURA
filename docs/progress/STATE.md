@@ -1,32 +1,33 @@
 # XISURA 当前状态
 
-更新2026-10-27。唯一当前状态；[目标](FEATURE-COMPLETION-GOAL.md)、[固定台账](FEATURE-COMPLETION-LEDGER.csv)。用户最新决定优先。
+更新2026-10-28。唯一当前状态；[目标](FEATURE-COMPLETION-GOAL.md)、[固定台账](FEATURE-COMPLETION-LEDGER.csv)。用户最新决定优先。
 
-**79项：完成29，剩余50，36.7%；本目标新增4/54（EXT-07、SET-06、CPU-21、HOME-09），本轮新增0。** 配置保存、Partial、声明不支持不计完成。EC/OEM/NVIDIA协议及禁测依赖未闭合，全量ETA暂不可可靠估算。
+**79项：完成31，剩余48，39.2%；本目标新增6/54（EXT-07、SET-06、CPU-21、HOME-09、HOME-06、HOME-07），本轮新增完成0。** 配置保存、Partial、声明不支持不计完成。全量ETA受EC/OEM/NVIDIA协议及禁测/实机验收依赖限制，暂不能可靠估算。
 
-**本机113已安装验收；GitHub正式[1.0.113](https://github.com/1145911974/XISURA/releases/tag/v1.0.113)已发布，五项资产大小/SHA经服务端核验；冻结源码`daa4ea5b6254e8f120cafad19592319d27852a30`，MSI SHA256 `22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A`。旧113候选及重复MSI清理被自动审批以`blocked by policy`拒绝，暂留C盘；原恢复证据保留。** Release自包含GUI/Service/Diagnostics，1369/1369软件测试通过、零跳过、构建源SHA前后一致。MSI退出0、无需重启、用户文件及13组控制保持；安装后两轮副屏启动/托盘/正常退出重开、服务停止/重启通过，当前Automatic/Running。MSI SHA256：22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A。
+**本轮修复SET-02铺满后手动缩放误存旧尺寸，仍Open。** 原生ENTER/SIZING/EXIT捕获并比较实际逻辑尺寸，真实改变才清铺满标志，取消/纯移动保留缓存；新增4方法，Release及定向8/8零跳过、Sol窄审通过。未启动候选/操作硬件/安装/发布。见[补丁、TRX及边界](../verification/2026-10-28-set02-fit-manual-sizing.md)。
 
-113移除启动/激活强制微软拼音和释放豆包的整个主动层。后续测试GUI固定`--accept-secondary`，主窗/托盘菜单使用副屏；后台助手Hidden，不改输入法、显示布局或鼠标。不要启动旧112GUI触发输入法。
+上轮HOME-06/07闭合：用户确认正式113触控板开关和Fn Lock“两项都实际用过，均正常”；结合既有CIM读回、立即原值恢复、反向GUI及113安装生命周期证据，限本机基础开关，不外推所有Fn组合键或机型。见[用户验收](../verification/2026-10-28-home06-home07-user-acceptance.md)。
 
-托盘故障：run4/延迟Hide候选的dump/SOS定位ShowNearCursor定位调用，c000027b/80070578。主窗SW_HIDE及延迟Hide均撤回。当前菜单重开先Show(false)恢复可见再定位，首次先定位副屏；窄验两轮通过。run5可见主窗观察失败并准确恢复；助手保留原断言，增加3秒有界观察。正式配套run6三轮Keep退出/重开/立即准确恢复通过，method20为0→1→保留重开1→恢复0，method21始终51；配置/13控制恢复、Completed/fields0、候选exit0、原服务恢复。原始失败与恢复证据保留。
+候选运行障碍仍在：GUI验收助手生成/启动被自动审批拒绝；历史三轮审计见`feature-completion-r10-settings/blocker-audit-20261028.json`。不重试被拒动作、不重复构建/同源调查。SET-02继续依赖候选运行审批环境变化，EC/OEM/NVIDIA支线需新的设备协议/恢复证据；用户本次反馈未解除这些障碍。
 
-剩余共同根因：
-- EC：1060两传输当前读回失败；第三方Read_EC_EX实际写0并返回0。V35 method21读51真实，单位/模式契约未知，本轮未写21；不把强冷开关外推为固定RPM/曲线效果。
-- CPU：可靠PPT/TDC/EDC/MP1；STAPM/SlowPPT布局、OEM复合SPL当前值/单位/恢复契约缺失。
-- GPU：锁频缺原外部min/max getter，当前频率/范围/私有Lock表不能代替；任意电压未实现，功率只读。
+**正式113已安装且GitHub[1.0.113](https://github.com/1145911974/XISURA/releases/tag/v1.0.113)已发布**，五项资产SHA/大小核验通过；冻结源码`daa4ea5b6254e8f120cafad19592319d27852a30`，MSI SHA `22C4596E13055242153FBCF95A726BF1E3186A78EC1BBCDB8DC142BC853B231A`。113冻结版本1369/1369、零跳过；Release自包含GUI/Service/Diagnostics，安装及副屏启动/托盘/退出重开/Keep验收已过。当前安装GUI/Service SHA本轮复核相同，服务Automatic/Running。见[113交付](../verification/2026-10-27-release113.md)。
 
-边界：MRID6-23／7745HX／RTX4070 Laptop／V35、EC0.35。每个数值点立即准确恢复并独立核验，Keep不豁免；保留用户主动状态。禁游戏/跑分/轨迹/卡顿复现/显示或MUX切换/睡眠/重启/EC盲写/驱动安装；不启动109或不兼容新证据的110服务。所有输出C盘；不reset/clean。正式可用版本已有安装本机及上传GitHub持续授权。完全退出停止Follow/AUTO；保留静态值不代表动态控制继续运行。
+113已移除整个强制微软拼音及释放豆包主动层。所有GUI验收固定`--accept-secondary`，主窗/托盘均副屏；后台助手Hidden。不主动切换输入法、鼠标或显示布局。
 
-证据根：C:/Users/Administrator/AppData/Local/Temp/XisuraUsableRelease-20261026/；最终构建completion113/final-20261027-170255-196、feature-completion-r1/keep-release113-run6、install-publish-113。详见[113说明](../verification/2026-10-27-release113.md)、[本轮证据](../verification/2026-10-27-feature-completion-r1.md)。权威journal= C:/ProgramData/JiaolongControlCenter/control-journal-110。
+**既有SET-02新鲜HWND诊断及铺满尺寸DPI缓存的单文件修复，无新正式安装/发布。** 已安装113副屏显示→关闭隐藏→托盘重开保持同HWND/1573×983/DPI96，原生与UIA可见性一致。修复铺满缓存旧DPI像素导致跨DPI误存尺寸：改存DIP、保存直接使用缓存、还原先移动再按目标DPI换算。Release构建成功，定向4/4、GUI回归583/583零跳过；候选运行未执行，SET-02仍Open。见[窗口证据与限制](../verification/2026-10-28-set02-hwnd-fit-dpi.md)。
 
-CPU-21已闭合为B级配置能力：已安装113的index1至7分别−50→−49→立即恢复−50，每点生产Confirmed、稀疏单核计划、独立八核读回，恢复先于退出；13组受控配置及用户配置哈希一致。index0沿用2026-10-24同V35原件；PawnIO、CpuPerCore及高级CPU XAML与113冻结输入同SHA，不把不同的UI/恢复源码说成完全一致，不宣称113同轮八核实测或负载稳定性。最终Completed、fields0/pending0/unresolved0、GUI0、113服务Auto/Running。见[CPU-21证据](../verification/2026-10-27-cpu21-per-core-closure.md)；本轮仅验收，无新构建/安装包。
+AUTO-11沿用r8服务585/585及R9自然后台Explorer规则局部证据：Gaming→条件5.997秒→Office2提交，最终SubmittedUnverified/CurrentTarget=null；原脚本恢复后ZIP解析错误Accepted=false保留，独立只读核验Passed。RequireActivity=true、应用启停、跨native及硬件页派发恢复仍未验，AUTO-11仍Open。见[自然后台证据](../verification/2026-10-28-auto11-natural-background.md)。过程采样及尺寸补丁使用同一[草稿PR #1](https://github.com/1145911974/XISURA/pull/1)评审；尺寸增量`cc32607aa5c9c1f605731f60ce1e3ce822a713df`已同步，6文件blob/SHA、parent、draft及main/113标签不变均经独立GET核验；未形成正式版本。
 
-本轮GPU-07：113副屏UI显示当前111/最高140W，独立SMI109.87/140W、服务异时109.18/140W；动态执行值不冒称同步精确相等。完整查询可用，未加字段回退。正常退出及13组受控配置对账通过，原始GPU全快照逐字比较false不外推为全部相同；详见[只读复核](../verification/2026-10-27-gpu07-readonly-display.md)。固定请求功率上限及恢复仍缺，GPU-07保持Open。
+最近已登记硬件边界（非本轮实时捕获）：权威journal=`C:/ProgramData/JiaolongControlCenter/control-journal-110`，会话`aa57a973-7406-4a30-aad9-7ec898136940` Completed、5恢复步骤Verified、fields0/pending0/unresolved0、GUI0，113服务Running。2026-10-28 00:24:46 +08捕获Balanced、13组/6OEM与当轮试前一致；偏好SHA `0AEA2036B1278756E5AC797E6FCD3E018EE03B02B6DF1EF07D0025DB49CAC74E`，自动化SHA `41DCF1D5682DE181CB207931CBA4BEAA06DA2EA3057DD779157E84CDA0CC028A`；AUTO/Follow/Keep全off。不沿用该快照写回；原Temp证据现缺失，下一硬件会话须先核权威journal及新鲜基线。
 
-本轮SET-02：首轮助手路径比较失败，配置未动且主会正常退出；第二轮UIA缩放后失去唯一可见主窗，目标1280×800而退出保存848×531。只读证实helper系统DPI144、副屏96，改初始化前PMv2的run3退出保存准确1280×800，但可见UIA查询仍失败，未完成记忆重开。两轮主会均按同一Completed会话/GUI0/非目标字段一致/独占SHA检查，恢复偏好原字节（SHA256 0AEA2036B1278756E5AC797E6FCD3E018EE03B02B6DF1EF07D0025DB49CAC74E），独立13组受控配置及最终权威检查Passed；详见[尝试与恢复](../verification/2026-10-27-set02-window-size-attempt.md)。SET-02保持Open，停止重复此Transform路径；手动拖拽、跨DPI未验。原始证据feature-completion-r3-gpu07、feature-completion-r3-settings保留在C盘；本轮无产品源码改动及新构建。
+剩余共同根因：EC1060两传输当前读回失败，第三方Read_EC_EX会写0并返回0；V35 method21读51但单位/模式未知，不能外推强冷20为固定RPM/曲线。CPU可靠PPT/TDC/EDC/MP1，STAPM/SlowPPT布局及OEM复合SPL单位/当前值/逆向恢复缺失。GPU锁频缺原外部min/max getter、任意电压未实现、功率只读；[GPU-07](../verification/2026-10-27-gpu07-readonly-display.md)仍Open。
 
-HOME-09本轮闭合：继承10-16用户左Win关/开实际确认；补齐113冻结controller/UI调用与安装DLL SHA关联，真实副屏UIA最终“Win键已开启”、正常退出及配置保持。未重新按键或屏蔽输入。10-16原临时候选/原始UIA目录已缺，不宣称旧新二进制逐字相同，详见[安装关联](../verification/2026-10-27-home09-installed-association.md)。本轮仅证据闭合，无产品新构建。
+已闭合：CPU-21为B级单核配置读回/恢复，index1–7为113逐点往返，index0继承10-24同V35证据；不宣称113同轮八核或负载稳定性。HOME-09继承10-16用户实效确认并关联113源码/安装SHA，非本轮重新阻断按键。详见对应[CPU-21](../verification/2026-10-27-cpu21-per-core-closure.md)、[HOME-09](../verification/2026-10-27-home09-installed-association.md)。
 
-AUTO-11本轮：已安装113副屏8次只读采样，CPU/GPU各6个不同新鲜时间戳；正常退出，主会独立13组控制/偏好SHA及Completed/fields0复核通过，AUTO未启、未改输入法。定位RequireActivity=true缺生产进程CPU/GPU输入，不能用全局占用或孤立过滤器测试冒充；false路径并不等同失效。五个相关源码与113冻结输入同SHA，见[遥测及输入缺口](../verification/2026-10-27-auto11-telemetry-input-gap.md)。本轮未改产品、未构建安装，原始证据feature-completion-r5-auto-context保留C盘。
+SET-02仍Open：普通HWND/托盘生命周期已有证据；旧Transform缩放后UIA缺失未定因，不重复Resize。铺满DPI缓存及本轮手动缩放状态均已修；最新候选GUI DLL SHA `2705E9BA0996DA49A3BDF6451E9C5BDF44B03642877D56A9801B2533A1238C3B`，FileVersion仍113但非正式安装二进制，未运行/安装。Remember保存重开、关闭开关、手动拖拽及跨DPI仍待；[旧失败及恢复报告](../verification/2026-10-27-set02-window-size-attempt.md)保留，不宣称其Temp原件仍可读。
 
-下一步：根修AUTO-11匹配进程活动输入，绑定实际客户端SID/session、准确差分及unknown边界，再验自然规则与立即恢复；SET-02仅既有HWND只读分层诊断，不重复Resize。协议/禁测项保留未完成，不重复已过数值点。
+边界：MRID6-23／7745HX／RTX4070 Laptop／V35 BIOS、EC0.35。每个数值点立即恢复新鲜准确试前值并独立核验，Keep不豁免；保留用户主动状态，不按旧65W盲写。禁游戏/跑分/轨迹/卡顿复现/显示或MUX切换/睡眠/自行重启/EC盲写/驱动安装；不启动109或不兼容110服务。完全退出停止Follow/AUTO，保留静态值不代表动态运行。正式可用版本已有安装本机及GitHub上传持续授权。
+
+并行清理：用户确认另一个工具仍在清理，要求本对话同步检查/清理、不等待。原Temp证据根及测试obj已缺失；未删除或伪造恢复记录。exit0无TRX空跑已标失败，C盘还原后实际8/8原件留存`docs/verification/retained/2026-10-28-fit-sizing/`。已审查22个可重建输出/npm缓存目录约1.76GiB；删除命令在启动前被自动审批整体以`blocked by policy`拒绝，删除0/释放0，未绕过。完整磁盘盘点仅保留本地维护报告，不上传用户磁盘索引。不把其他工具释放空间记为本轮成果，保留源码、候选、正式交付及恢复证据。
+
+下一步按可用权限推进，不以另一个工具清理为等待条件；被拒删除和候选启动不重试绕过。新硬件会话先核源码/证据/journal完整性及新鲜基线，再补齐SET-02实际记忆重开及AUTO-11活动/应用启停/跨native恢复。不重复已证明的HWND或同模式规则；必要运行验收后再冻结正式版安装/上传。所有应用验证固定副屏，不主动切换输入法。

@@ -1,0 +1,10 @@
+{
+  "At": "2026-10-28T10:42:05.3852815+08:00",
+  "Passed": false,
+  "ExitCode": 0,
+  "TemporaryPath": "C:/Users/Administrator/AppData/Local/Temp",
+  "GuiStarted": false,
+  "HardwareWrites": false,
+  "Reason": "Original Temp evidence root absent; retain current regression in worktree",
+  "VerificationError": "Exit0 without TRX: obj NuGet imports absent; no tests executed"
+}

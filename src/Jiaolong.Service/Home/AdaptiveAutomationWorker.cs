@@ -10,7 +10,9 @@ public sealed class AdaptiveAutomationWorker(
     HomeServiceRuntime runtime,
     AdaptiveAutomationHardwareProvider hardware,
     ILogger<AdaptiveAutomationWorker> logger,
-    TimeProvider? timeProvider = null) : BackgroundService
+    TimeProvider? timeProvider = null,
+    AdaptiveProcessCpuReader? processCpuReader = null,
+    AdaptiveProcessGpuReader? processGpuReader = null) : BackgroundService
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan TelemetryMaxAge = TimeSpan.FromSeconds(3);
@@ -19,6 +21,8 @@ public sealed class AdaptiveAutomationWorker(
     private readonly SemaphoreSlim cycleGate = new(1, 1);
     private readonly AdaptiveRuleSession ruleSession = new();
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
+    private readonly AdaptiveProcessCpuReader processCpu = processCpuReader ?? new(timeProvider);
+    private readonly AdaptiveProcessGpuReader processGpu = processGpuReader ?? new(timeProvider);
     private readonly long startedAt = (timeProvider ?? TimeProvider.System).GetTimestamp();
     private long publishedRevision = -1;
     private readonly Dictionary<PresetKey, PageSelection[]> publishedSelections = new();
@@ -56,7 +60,7 @@ public sealed class AdaptiveAutomationWorker(
                 catch (Exception exception)
                 {
                     logger.LogWarning(exception, "Adaptive service tick failed; retrying after {seconds}s", FailureBackoff.TotalSeconds);
-                    ruleSession.Reset();
+                    ResetObservations();
                     retryAfterUtc = clock.GetUtcNow() + FailureBackoff;
                     lastError = exception is OperationCanceledException ? "自动执行超过时限；保留恢复状态，稍后重试。" : "自动执行失败；保留恢复状态，稍后重试。";
                     var failed = await store.ReadAsync(CancellationToken.None);
@@ -78,17 +82,17 @@ public sealed class AdaptiveAutomationWorker(
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var saved = await store.ReadAsync(deadline.Token);
-        if (runtime.IsSuspended || !runtime.CanRunClientAutomation(saved.OwnerSid)) { ruleSession.Reset(); return; }
+        if (runtime.IsSuspended || !runtime.CanRunClientAutomation(saved.OwnerSid)) { ResetObservations(); return; }
         if (saved.Recovery is not null)
         {
-            ruleSession.Reset();
+            ResetObservations();
             await PublishStatusAsync(saved.Configuration, false, "原自动调度恢复记录尚未处理，自动执行已暂停。", null, cancellationToken);
             return;
         }
         if (saved.Revision != seenRevision)
         {
             seenRevision = saved.Revision;
-            ruleSession.Reset();
+            ResetObservations();
             runtimePolicy = null;
             configurationChanged = true;
             failures.Clear(); pausedTarget = null; retryAfterUtc = default;
@@ -96,14 +100,14 @@ public sealed class AdaptiveAutomationWorker(
 
         if (saved.Configuration is not { Enabled: true } configuration)
         {
-            ruleSession.Reset();
+            ResetObservations();
             // Disable transfers control to the user; it never restores an old whole-machine snapshot.
             await PublishStatusAsync(saved.Configuration, false, "自动调度已关闭。", null, cancellationToken);
             return;
         }
         if (saved.ManualOverrideUntilUtc is { } manualUntil && now < manualUntil)
         {
-            ruleSession.Reset();
+            ResetObservations();
             if (saved.ManualModeChanged)
             {
                 currentTarget = null;
@@ -118,7 +122,7 @@ public sealed class AdaptiveAutomationWorker(
         if (seenHardwareEpoch != runtime.Execution.HardwareEpoch)
         {
             seenHardwareEpoch = runtime.Execution.HardwareEpoch;
-            ruleSession.Reset(); failures.Clear(); pausedTarget = null;
+            ResetObservations(); failures.Clear(); pausedTarget = null;
             retryAfterUtc = default; submittedRevision = -1;
         }
         var unresolved = await runtime.ReadUnresolvedOperationsAsync(deadline.Token);
@@ -129,14 +133,14 @@ public sealed class AdaptiveAutomationWorker(
         if (state.Capabilities.SupportState != DeviceSupportState.Ready || state.Controls.PerformanceMode is not { } mode ||
             telemetry is null || now - telemetry.CapturedAtUtc > TelemetryMaxAge || telemetry.CapturedAtUtc > now.AddSeconds(1))
         {
-            ruleSession.Reset();
+            ResetObservations();
             await PublishStatusAsync(configuration, false, "服务/硬件状态不可用或遥测超过 3 秒，暂停自动判定。", null, cancellationToken);
             return;
         }
         var currentStage = ResolveCurrentStage(mode);
         if (currentStage is null)
         {
-            ruleSession.Reset();
+            ResetObservations();
             await PublishStatusAsync(configuration, false, "当前性能模式无法映射为办公、游戏或狂飙阶段。", telemetry.CapturedAtUtc, cancellationToken);
             return;
         }
@@ -151,6 +155,18 @@ public sealed class AdaptiveAutomationWorker(
             : context?.RunningExecutables?.Contains(rule.Executable, StringComparer.OrdinalIgnoreCase) == true);
         var executable = matchedApplication?.Executable ?? context?.ForegroundExecutable ?? string.Empty;
         var idleSeconds = policy.Advanced.IdleReturnEnabled ? context?.IdleSeconds ?? 0 : 0;
+        double? processCpuPercent = null;
+        double? processGpuPercent = null;
+        if (context is not null && matchedApplication is { RequireActivity: true } &&
+            runtime.GetClientAutomationProcessScope(saved.OwnerSid) is { } processOwner)
+        {
+            var processScope = $"{processOwner.ClientSessionId:N}/{saved.Revision}/{runtime.Execution.HardwareEpoch}";
+            processCpuPercent = processCpu.Read(matchedApplication.Executable, processOwner.OwnerSid, processOwner.SessionId,
+                processScope);
+            processGpuPercent = processGpu.Read(matchedApplication.Executable, processOwner.OwnerSid, processOwner.SessionId,
+                processScope);
+        }
+        else { processCpu.Reset(); processGpu.Reset(); }
         var input = new AdaptiveTrialInput
         {
             CpuObservedAtUtc = telemetry.CpuUsageObservedAtUtc ?? telemetry.CapturedAtUtc,
@@ -164,6 +180,8 @@ public sealed class AdaptiveAutomationWorker(
             AcConnected = telemetry.AcPowerConnected,
             BatteryPercent = telemetry.BatteryPercent,
             BatterySaver = telemetry.BatterySaver,
+            ProcessCpuPercent = processCpuPercent,
+            ProcessGpuPercent = processGpuPercent,
             Executable = executable,
             Foreground = context?.ForegroundExecutable is { } foreground && string.Equals(executable, foreground, StringComparison.OrdinalIgnoreCase),
             IdleSeconds = idleSeconds,
@@ -286,9 +304,11 @@ public sealed class AdaptiveAutomationWorker(
             return;
         }
         submittedTarget = key; submittedRevision = saved.Revision;
-        unverifiedNativeMode = applied.VerifiedPerformanceMode != preset.PerformanceMode;
-        targetApplyState = unverifiedNativeMode ? ApplyState.SubmittedUnverified : ApplyState.Confirmed;
-        if (!unverifiedNativeMode)
+        bool modeVerified = applied.VerifiedPerformanceMode == preset.PerformanceMode;
+        // Retaining the current mode creates no new uncertain write, but cannot clear an earlier one.
+        unverifiedNativeMode = !modeVerified && (unverifiedNativeMode || applied.Mutation != HardwareMutation.NoMutation);
+        targetApplyState = modeVerified ? ApplyState.Confirmed : ApplyState.SubmittedUnverified;
+        if (modeVerified)
         {
             currentTarget = key;
             currentStageOverride = target;
@@ -455,9 +475,16 @@ public sealed class AdaptiveAutomationWorker(
 
     private void BackOff(PresetKey? target = null)
     {
-        ruleSession.Reset();
+        ResetObservations();
         int count = target is { } key ? failures[key] = failures.GetValueOrDefault(key) + 1 : 1;
         if (count > 3 && target is { } failed) pausedTarget = failed;
         retryAfterUtc = clock.GetUtcNow().AddSeconds(count switch { 1 => 5, 2 => 15, _ => 30 });
+    }
+
+    private void ResetObservations()
+    {
+        ruleSession.Reset();
+        processCpu.Reset();
+        processGpu.Reset();
     }
 }

@@ -13,6 +13,14 @@ public sealed partial class HomeServiceRuntime
             session.Phase == ClientControlSessionPhase.Active && Volatile.Read(ref clientSessionClosing) == 0 && SessionEpochMatches(session);
     }
 
+    internal (string OwnerSid, int SessionId, Guid ClientSessionId)? GetClientAutomationProcessScope(string? ownerSid)
+    {
+        var session = Volatile.Read(ref activeClientSession);
+        return session is not null && session.OwnerSid == ownerSid && session.OwnerSessionId > 0 &&
+            session.Phase == ClientControlSessionPhase.Active && Volatile.Read(ref clientSessionClosing) == 0 && SessionEpochMatches(session)
+            ? (session.OwnerSid, session.OwnerSessionId, session.Handle.SessionId) : null;
+    }
+
     public async Task<CommandResult?> RecoverExitedClientSessionAsync(IClientProcessProbe probe, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();

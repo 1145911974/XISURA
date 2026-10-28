@@ -1397,9 +1397,11 @@ public sealed partial class ClientSessionExitRecoveryTests
         public bool ChangeModeOnSecondEvidence { get; set; }
         public int ChangeModeOnEvidenceRead { get; set; }
         private int nativeEvidenceReads;
+        public Func<int, Task<PerformanceModeEvidence?>>? NativeModeReadOverride { get; set; }
         public Task<PerformanceModeEvidence?> ReadNativeModeEvidenceAsync(CancellationToken token)
         {
             int observation = ++nativeEvidenceReads;
+            if (NativeModeReadOverride is { } read) return read(observation);
             if (observation == 2 && ChangeModeOnSecondEvidence || observation == ChangeModeOnEvidenceRead) mode = PerformanceMode.Quiet;
             byte raw = mode == PerformanceMode.Turbo ? (byte)1 : mode == PerformanceMode.Quiet ? (byte)2 : (byte)0;
             return Task.FromResult<PerformanceModeEvidence?>(NativeEvidenceAvailable ? new(DateTimeOffset.UtcNow - ModeEvidenceAge,
